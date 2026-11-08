@@ -812,7 +812,13 @@
       }
       const dIn = prm.stops && incoming ? ds + (stopW * m) / 2 : cwOut;
       const dOut = oneWay && incoming && prm.stops ? dIn : cwOut;
-      poly.push(at(dIn, -lg.leftExt - 1), at(dOut, lg.rightExt + 1));
+      // Outline steps from the stop line (incoming half) to the crosswalk edge (outgoing half).
+      // With a median the step sits on the median's incoming edge, so the median ends at the crosswalk;
+      // otherwise just past the centre line, so the centre line ends at the stop line.
+      const median = el.lanesB > 0 && el.centerType === 'median';
+      const step = median ? -(el.medianWidth / 2) : 0.3;
+      if (oneWay || Math.abs(dIn - dOut) < 1e-6) poly.push(at(dIn, -lg.leftExt - 1), at(dOut, lg.rightExt + 1));
+      else poly.push(at(dIn, -lg.leftExt - 1), at(dIn, step), at(dOut, step), at(dOut, lg.rightExt + 1));
     }
     out.unshift({ id: jid, type: 'junction', pts: poly });
     return out;

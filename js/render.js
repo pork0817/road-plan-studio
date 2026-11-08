@@ -455,7 +455,13 @@ window.Render = (function () {
         if (pts.length < 2) continue;
         for (const b of R.sectionLayout(el).bands) if (b.kind === 'median') {
           const poly = G.offset(pts, -b.width / 2 * ppm).concat(G.offset(pts, b.width / 2 * ppm).reverse());
-          drawSidewalk(ctx, { pts: poly, style: 'island' }, ppm, P);
+          if (!junctions.length) { drawSidewalk(ctx, { pts: poly, style: 'island' }, ppm, P); continue; }
+          // median stops at intersections: cut by the junction area, with a curb along the cut end
+          ctx.save(); cutJunctions(); drawSidewalk(ctx, { pts: poly, style: 'island' }, ppm, P); ctx.restore();
+          ctx.save(); path(ctx, poly, true); ctx.clip(); cutJunctions();
+          ctx.strokeStyle = '#b9b5ab'; ctx.lineWidth = 0.5 * ppm; ctx.lineJoin = 'round'; ctx.setLineDash([]);
+          for (const j of junctions) { path(ctx, j.pts, true); ctx.stroke(); }
+          ctx.restore();
         }
       }
     }

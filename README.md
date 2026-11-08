@@ -17,7 +17,7 @@ Sidewalks always draw on top of markings, so a crosswalk that runs into a sidewa
 ## Intersections
 1. Draw a **road section** (② 路段) along the centre line of each road, running straight through the junction.
 2. Pick **路口 (自動) Intersection** and click where the roads cross.
-3. It builds the junction area (lane lines are cut inside it), a crosswalk on every leg set back 3 m from the crossing road's edge (§185), and stop lines on the incoming half of each leg, 2 m behind the crosswalk (§170). Four-way, T and skewed junctions all work; one-way legs only get a stop line on the side traffic arrives from.
+3. It builds the junction area (lane lines and road-section medians are cut inside it; medians end at the crosswalk with a curb), a crosswalk on every leg set back 3 m from the crossing road's edge (§185), and stop lines on the incoming half of each leg, 2 m behind the crosswalk (§170). Four-way, T and skewed junctions all work; one-way legs only get a stop line on the side traffic arrives from.
 4. Everything it makes is a normal object you can edit, move or delete. Drag the purple dashed junction outline's corners to change where lane lines stop (it is not exported).
 
 ## Aligning and the magnet
