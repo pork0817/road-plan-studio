@@ -895,7 +895,16 @@
     const sOfPt = (q) => G.dot(G.sub(q, lg.X), lg.v);
     const step = 0.4 * Math.PI / 180, dirn = sOfPt(pt(a0 + step)) < sOfPt(pt(a0 - step)) ? 1 : -1;
     const out = [P1], target = stopR * m;
-    if (G.dist(P1, C) <= target) return out;
+    if (G.dist(P1, C) <= target) {
+      // The bend would start inside the ring (a side of an off-centre road that meets the ring head-on):
+      // no bend on this side — the line runs straight along the road and ends where it reaches stopR.
+      const line = (sv) => G.add(G.add(lg.X, G.mul(lg.v, sv * m)), G.mul(lg.nv, side * o * m));
+      let hi = k.sAlong; while (G.dist(line(hi), C) <= target && hi < k.sAlong + 200) hi += 1;
+      let lo = hi - 1;
+      if (G.dist(line(lo), C) > target) lo = k.sAlong;
+      for (let j = 0; j < 30; j++) { const md = (lo + hi) / 2; if (G.dist(line(md), C) > target) hi = md; else lo = md; }
+      return [line(Math.max(hi + 0.5, 0.5)), line(hi)];
+    }
     let a = a0;
     for (let i = 0; i < 900; i++) {
       const nb = a + dirn * step, q = pt(nb);
