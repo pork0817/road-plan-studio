@@ -349,16 +349,27 @@ window.Render = (function () {
   };
   R.arrowKinds = Object.keys(ARROWS);
 
+  // Each arrow is centred on p by its whole outline (not its shaft), so turn and combined arrows — whose arm
+  // sticks out to one side — sit visually in the middle of the lane like a straight arrow does.
+  const arrowBox = {};
+  R.arrowBox = (kind) => {
+    if (!arrowBox[kind]) {
+      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+      for (const poly of ARROWS[kind] || ARROWS.S) for (const [x, y] of poly) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+      arrowBox[kind] = { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, w: x1 - x0, h: y1 - y0 };
+    }
+    return arrowBox[kind];
+  };
   function drawArrow(ctx, el, ppm, P) {
-    const polys = ARROWS[el.kind] || ARROWS.S;
+    const polys = ARROWS[el.kind] || ARROWS.S, bx = R.arrowBox(el.kind);
     const k = (el.length / 5) * ppm;
     ctx.save();
     ctx.translate(el.p.x, el.p.y); ctx.rotate(el.dir);
-    // local: +x forward, +y right. Arrow data: y forward, x right; centre the 5 m length on p.
+    // local: +x forward, +y right. Arrow data: y forward, x right; the outline's centre sits on p.
     ctx.fillStyle = P.colors.white;
     for (const poly of polys) {
       ctx.beginPath();
-      poly.forEach(([x, y], i) => { const X = (y - 2.5) * k, Y = x * k; i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); });
+      poly.forEach(([x, y], i) => { const X = (y - bx.cy) * k, Y = (x - bx.cx) * k; i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); });
       ctx.closePath(); ctx.fill();
     }
     ctx.restore();
