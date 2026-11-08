@@ -48,7 +48,7 @@ window.RoadPresets = window.RoadPresets || {};
   const typeNames = {
     road: '車道範圍 Road area', sidewalk: '人行道/分隔島 Sidewalk', surface: '彩色鋪面 Surface', section: '路段 Road section',
     line: '標線 Line', crosswalk: '行人穿越道 Crosswalk', stopline: '停止線 Stop line', scooterbox: '機車停等區 Scooter box',
-    junction: '路口範圍 Intersection', roundabout: '圓環 Roundabout', bikelane: '自行車道 Bike lane', roundaboutTool: '圓環 Roundabout', yield: '讓路線 Yield line', arrow: '指向線 Arrow', symbol: '圖示 Icon', text: '路面文字 Text', chevron: '槽化線 Channelizing', yellowbox: '網狀線 Box junction',
+    junction: '路口範圍 Intersection', roundabout: '圓環 Roundabout', bikelane: '自行車道 Bike lane', buslane: '公車專用道 Bus lane', roundaboutTool: '圓環 Roundabout', yield: '讓路線 Yield line', arrow: '指向線 Arrow', symbol: '圖示 Icon', text: '路面文字 Text', chevron: '槽化線 Channelizing', yellowbox: '網狀線 Box junction',
   };
 
   const sec = (label, en, o) => ({ id: 'sec_' + label, label, en, mode: 'polyline', icon: { glyph: '═' },
@@ -90,9 +90,11 @@ window.RoadPresets = window.RoadPresets || {};
       { id: 'chevron', label: '槽化線', en: 'Channelizing', mode: 'poly', icon: { glyph: '⫽' }, defaults: { type: 'chevron', color: 'white', border: 0.15, stripe: 0.20, gap: 0.30, dir: 0 } },
       { id: 'yellowbox', label: '網狀線', en: 'Box junction', mode: 'poly', icon: { glyph: '▦' }, defaults: { type: 'yellowbox', border: 0.20, stripe: 0.10, gap: 1.50, dir: 0 } },
     ] },
-    { title: '🚲 自行車道 Cycling', items: [
+    { title: '🚲🚌 自行車道・公車道 Bike & bus lanes', items: [
       { id: 'bike_excl', label: '自行車專用車道', en: 'Bike lane (§174)', mode: 'polyline', icon: { fill: C.bike }, defaults: { type: 'bikelane', kind: 'exclusive', width: 1.5, twoWay: false, surface: true, sep: 'left', spacing: 40, icons: true, diamonds: true, smooth: true } },
       { id: 'bike_two', label: '雙向自行車道', en: 'Two-way bike lane', mode: 'polyline', icon: { fill: C.bike }, defaults: { type: 'bikelane', kind: 'exclusive', width: 2.5, twoWay: true, surface: true, sep: 'both', spacing: 40, icons: true, diamonds: true, smooth: true } },
+      { id: 'bus_curb', label: '公車專用道 (路側)', en: 'Bus lane, kerbside (§174)', mode: 'polyline', icon: { fill: C.bus }, defaults: { type: 'buslane', kind: 'exclusive', width: 3.5, surface: false, sep: 'left', sepStyle: 'double', spacing: 50, text: '公車專用', smooth: true } },
+      { id: 'bus_median', label: '公車專用道 (中央)', en: 'Bus lane, median (§174)', mode: 'polyline', icon: { fill: C.bus }, defaults: { type: 'buslane', kind: 'exclusive', width: 3.5, surface: false, sep: 'both', sepStyle: 'double', spacing: 50, text: '公車專用', smooth: true } },
       { id: 'bike_prio', label: '自行車優先車道', en: 'Bike priority lane (§174-4)', mode: 'polyline', icon: { glyph: '🚲' }, defaults: { type: 'bikelane', kind: 'priority', width: 1.5, twoWay: false, surface: false, sep: 'none', spacing: 40, icons: true, diamonds: false, smooth: true } },
     ] },
     { title: '⑤ 指向線 Arrows (§188)', items: [arrow('S', '↑'), arrow('L', '↰'), arrow('R', '↱'), arrow('SL', '⬉'), arrow('SR', '⬈'), arrow('LR', '⇄'), arrow('SLR', '⇈'), arrow('U', '↶')] },
@@ -222,6 +224,15 @@ window.RoadPresets = window.RoadPresets || {};
           { kind: 'btn', action: 'flip', label: '反轉方向 Flip' });
         return f;
       }
+      case 'buslane': return [num('width', '車道寬 Width', 3.0, 4.5, 0.05, '≈ 常用 3.25–3.5 m'),
+        { kind: 'sel', key: 'sep', label: '分隔線位置 Separator side', options: [['left', '左側 (車道側) Left'], ['right', '右側 Right'], ['both', '兩側 Both (中央式)'], ['none', '無 None']] },
+        { kind: 'sel', key: 'sepStyle', label: '分隔線 Separator', options: [['double', '雙白實線 Double white (不可跨越)'], ['mixed', '單邊禁止變換車道線 (公車可駛出)']] },
+        num('spacing', '標記間距 Spacing', 30, 60, 1, '§174 菱形每 30–60 m'), { kind: 'txt', key: 'text', label: '標字 Wording (§175)' },
+        { kind: 'chk', key: 'surface', label: '彩色鋪面 Coloured surface (法規未規定)' }, { kind: 'color', key: 'color', label: '鋪面顏色 Surface colour' },
+        { kind: 'chk', key: 'smooth', label: '平滑曲線 Smooth curve' },
+        { kind: 'law', text: '§174 車種專用車道線：白色菱形 縱250cm 橫100cm 線寬15cm，自車道起點每30–60m一組，過路口後重繪；兩菱形間縱向標寫「公車專用」(§175 白色變體字)；以雙白實線分隔，准許駛出處用單邊禁止變換車道線 (線寬10cm 間隔10cm)。' },
+        { kind: 'info', text: '沿車道中心線畫線；畫線方向的左側為一般車道側。下方車道線自動讓出，遇行人穿越道自動中斷。' },
+        { kind: 'btn', action: 'flip', label: '反轉方向 Flip' }];
       case 'symbol': return [{ kind: 'sel', key: 'kind', label: '圖示 Icon', options: [['scooter', '機車 0.9×2.5m (§174-1)'], ['scooterSmall', '機車 0.65×1.8m (§183-1)'], ['bike', '自行車 1.0×1.8m (§183-1)']] },
         { kind: 'chk', key: 'small', label: '縮小型 Reduced (×0.7, §183-1)' }, { kind: 'deg', key: 'dir', label: '方向 Angle' },
         { kind: 'law', text: '§183-1 慢車道於路口進口處繪設機車及自行車圖示，超過500m 每500m 增設；慢車道寬<2m 用縮小型' },

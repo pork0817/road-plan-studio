@@ -750,7 +750,7 @@ window.Render = (function () {
   function drawBikeSurface(ctx, el, ppm, P) {
     if (!el.surface) return;
     const band = R.bikeBand(el, ppm); if (!band) return;
-    ctx.fillStyle = P.colors.bike; path(ctx, band, true); ctx.fill();
+    ctx.fillStyle = el.type === 'buslane' ? (el.color || P.colors.bus) : P.colors.bike; path(ctx, band, true); ctx.fill();
   }
   function drawBikeLane(ctx, el, ppm, P) {
     const pts = R.basePts(el, ppm); if (pts.length < 2) return;
@@ -762,7 +762,13 @@ window.Render = (function () {
       for (const sg of [-1, 1]) R.drawStyled(ctx, G.offset(pts, sideOff(sg, solid) * ppm), solid, ppm);
     } else {
       const sides = el.sep === 'both' ? [-1, 1] : el.sep === 'right' ? [1] : el.sep === 'none' ? [] : [-1];
-      for (const sg of sides) R.drawStyled(ctx, G.offset(pts, sideOff(sg, dbl) * ppm), dbl, ppm);
+      // §174: 雙白實線; where the lane's vehicles may move to the next lane, 單邊禁止變換車道線 (solid on the
+      // traffic side, dashed on the lane side, 10 cm lines 10 cm apart)
+      const mixed = { color: white, width: 0.10, sep: 0.10, pattern: 'solid-dashed', dash: [4, 6] };
+      for (const sg of sides) {
+        const st = el.sepStyle === 'mixed' ? mixed : dbl, line = G.offset(pts, sideOff(sg, st) * ppm);
+        R.drawStyled(ctx, sg > 0 && st === mixed ? line.slice().reverse() : line, st, ppm);
+      }
     }
     if (el.twoWay) R.drawStyled(ctx, pts, { color: white, width: 0.10, pattern: 'dashed', dash: [1, 1] }, ppm); // ≈ centre line
     // symbols along the lane
@@ -771,27 +777,34 @@ window.Render = (function () {
       const q = atLen(pts, cum, s * ppm), dirv = flip ? G.mul(q.t, -1) : q.t, p = G.add(q.p, G.mul(G.rightN(q.t), off * ppm));
       drawIcon(ctx, { kind: 'bike', small: (el.twoWay ? w / 2 : w) < 1.5, p, dir: G.angle(dirv) }, ppm, P);
     };
-    for (let s = Math.min(6, total / 2); s < total - 2; s += sp) {
-      if (el.icons !== false) {
-        if (el.twoWay) { icon(s, w / 4, false); icon(s, -w / 4, true); } else icon(s, 0, false);
-      }
-      if (el.kind !== 'priority' && el.diamonds !== false && s + sp / 2 < total - 2) { // diamond between icons
-        const q = atLen(pts, cum, (s + sp / 2) * ppm), n = G.rightN(q.t), L = 1.25 * ppm, Wd = Math.min(0.5, w / 2 - 0.2) * ppm;
-        ctx.save(); ctx.strokeStyle = white; ctx.lineWidth = 0.15 * ppm; ctx.lineJoin = 'miter'; ctx.setLineDash([]);
-        path(ctx, [G.add(q.p, G.mul(q.t, L)), G.add(q.p, G.mul(n, Wd)), G.sub(q.p, G.mul(q.t, L)), G.sub(q.p, G.mul(n, Wd))], true); ctx.stroke();
-        ctx.restore();
+    // §174: a diamond at the start of the lane and every 30–60 m; the wording / icon sits midway between diamonds
+    const diamond = (sd) => {
+      const q = atLen(pts, cum, sd * ppm), n = G.rightN(q.t), L = 1.25 * ppm, Wd = Math.min(0.5, w / 2 - 0.2) * ppm;
+      ctx.save(); ctx.strokeStyle = white; ctx.lineWidth = 0.15 * ppm; ctx.lineJoin = 'miter'; ctx.setLineDash([]);
+      path(ctx, [G.add(q.p, G.mul(q.t, L)), G.add(q.p, G.mul(n, Wd)), G.sub(q.p, G.mul(q.t, L)), G.sub(q.p, G.mul(n, Wd))], true); ctx.stroke();
+      ctx.restore();
+    };
+    const hasDiamonds = el.kind !== 'priority' && el.diamonds !== false;
+    for (let sd = Math.min(2, total / 4); sd < total - 1.3; sd += sp) {
+      if (hasDiamonds) diamond(sd);
+      const mid = sd + sp / 2;
+      if (el.type === 'buslane') { // §175 white lane wording, written along the lane
+        const txt = el.text || '公車專用', n = Array.from(txt).length, len = n * 2.5 + (n - 1) * 1.0;
+        if (mid + len / 2 < total - 1) { const q = atLen(pts, cum, mid * ppm); drawText(ctx, P, q.p, G.angle(q.t), txt, 2.5 * ppm, 1.0 * ppm, white, 'far', 1.0 * ppm); }
+      } else if (el.icons !== false && mid < total - 1.5) {
+        if (el.twoWay) { icon(mid, w / 4, false); icon(mid, -w / 4, true); } else icon(mid, 0, false);
       }
     }
   }
 
   // ---------- scene ----------
-  const MARK = new Set(['bikelane', 'roundabout', 'yield', 'symbol', 'line', 'section', 'crosswalk', 'stopline', 'scooterbox', 'arrow', 'text', 'chevron', 'yellowbox']);
+  const MARK = new Set(['buslane', 'bikelane', 'roundabout', 'yield', 'symbol', 'line', 'section', 'crosswalk', 'stopline', 'scooterbox', 'arrow', 'text', 'chevron', 'yellowbox']);
 
   const ppm_ = (o) => o.ppm;
   R.drawScene = function (ctx, o) {
     const crossCutsEarly = (o.preview ? o.els.concat([o.preview]) : o.els).filter((e) => e.type === 'crosswalk' && e.a && e.b && e.dir != null)
       .map((e) => R.crosswalkPad(e, ppm_(o), 0.3));
-    const bikeMasks = (o.preview ? o.els.concat([o.preview]) : o.els).filter((e) => e.type === 'bikelane').map((e) => R.bikeBand(e, ppm_(o), -0.3)).filter(Boolean);
+    const bikeMasks = (o.preview ? o.els.concat([o.preview]) : o.els).filter((e) => e.type === 'bikelane' || e.type === 'buslane').map((e) => R.bikeBand(e, ppm_(o), -0.3)).filter(Boolean);
     R._els = o.preview ? o.els.concat([o.preview]) : o.els;
     const clipOutside = (pts) => {
       if (!pts || pts.length < 3) return;
@@ -857,7 +870,7 @@ window.Render = (function () {
     // Layer 1: coloured surfaces
     for (const el of els) {
       if (el.type === 'surface') { ctx.save(); yieldToRoundabouts(el); drawSurface(ctx, el, ppm, P); ctx.restore(); }
-      if (el.type === 'bikelane') { ctx.save(); yieldToRoundabouts(el); for (const c of crossCutsEarly) clipOutside(c); drawBikeSurface(ctx, el, ppm, P); ctx.restore(); }
+      if (el.type === 'bikelane' || el.type === 'buslane') { ctx.save(); yieldToRoundabouts(el); for (const c of crossCutsEarly) clipOutside(c); drawBikeSurface(ctx, el, ppm, P); ctx.restore(); }
       if (el.type === 'section') {
         const pts = R.basePts(el, ppm);
         if (pts.length < 2) continue;
@@ -882,11 +895,11 @@ window.Render = (function () {
       if (el.type === 'line' || el.type === 'section') {
         cutJunctions(); for (const c of crossCutsEarly) clipOutside(c); // crosswalks take priority
         for (const b of bikeMasks) clipOutside(b); // road lane lines give way to bike lanes drawn over them
-      } else if (el.type === 'bikelane') { for (const c of crossCutsEarly) clipOutside(c); }
+      } else if (el.type === 'bikelane' || el.type === 'buslane') { for (const c of crossCutsEarly) clipOutside(c); }
       else yieldToRoundabouts(el);
       switch (el.type) {
         case 'line': R.drawStyled(ctx, R.basePts(el, ppm), P.lineStyles[el.style], ppm); break;
-        case 'bikelane': drawBikeLane(ctx, el, ppm, P); break;
+        case 'bikelane': case 'buslane': drawBikeLane(ctx, el, ppm, P); break;
         case 'section': {
           const pts = R.basePts(el, ppm);
           if (pts.length < 2) break;
@@ -951,7 +964,7 @@ window.Render = (function () {
   R.shape = function (el, ppm, P) {
     switch (el.type) {
       case 'road': case 'sidewalk': case 'surface': case 'chevron': case 'yellowbox': case 'junction': return { poly: R.areaPts(el) };
-      case 'bikelane': { const b = R.bikeBand(el, ppm); return b ? { poly: b } : { line: el.pts, w: 4 }; }
+      case 'bikelane': case 'buslane': { const b = R.bikeBand(el, ppm); return b ? { poly: b } : { line: el.pts, w: 4 }; }
       case 'line': { const st = P.lineStyles[el.style]; return { line: R.basePts(el, ppm), w: ((st ? st.width + (st.sep || 0) * 2 : 0.2) * ppm) }; }
       case 'section': { const p = R.sectionPoly(el, ppm); return p ? { poly: p } : { line: el.pts, w: 4 }; }
       case 'crosswalk': return { poly: R.crosswalkQuad(el, ppm) };

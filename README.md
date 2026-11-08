@@ -45,6 +45,8 @@ Set a crosswalk's 形狀 Shape to 梯形 Trapezoid, then drag its four corners t
 ## Bike lanes
 Pick 🚲 自行車專用車道, 雙向自行車道 or 自行車優先車道 and draw along the lane's centre line (straight or curved). The lane builds itself: brick-red surface and 雙白實線 separator (§174), 2.5 × 1.0 m diamonds every 30–60 m, bike icons (§183-1); priority lanes get two white solid lines (§174-4). Road lane lines underneath give way, and the markings break at crosswalks. Widths follow the design manual (≈ one-way ≥ 1.2 m, two-way ≥ 2.5 m).
 
+**Bus lanes** (公車專用道, kerbside or median) work the same way and follow §174/§175: a white diamond (2.5 × 1.0 m, 15 cm line) at the start and every 30–60 m, 「公車專用」 written along the lane between diamonds, 雙白實線 separation, or 單邊禁止變換車道線 where buses may move out. A coloured surface is optional (the regulation doesn't specify one).
+
 ## Aligning and the magnet
 - **Align (A)**: select a crosswalk, stop line, scooter box, arrow, text or icon, press **A** (or click 📐 對齊至…), then click the object to line it up with. A stop line aligned to a crosswalk becomes parallel and sits the §170 2.0 m edge-to-edge gap away. The panel then offers left / centre / right and top / middle / bottom alignment, measured either in the target's frame (up = direction of travel, left/right = the driver's left/right) or in screen directions. Any object can be aligned this way; crosswalks, stop lines, boxes, arrows, text and icons can also take the target's direction.
 - **🧲 Magnet** (top bar): while drawing, dragging or rotating, angles lock to horizontal, vertical, or parallel/perpendicular to the nearest lane within 3°, and points snap to existing corners. Hold Alt to turn it off for one move.

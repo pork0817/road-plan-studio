@@ -131,7 +131,7 @@
     if (el.pts) {
       // vertices, plus a "+" handle in the middle of every segment: drag it to add a point there
       const hs = el.pts.map((p, i) => ({ key: 'pts', i, p }));
-      const open = ['line', 'section', 'bikelane'].includes(el.type);
+      const open = ['line', 'section', 'bikelane', 'buslane'].includes(el.type);
       const n = el.pts.length, segs = open ? n - 1 : n;
       for (let i = 0; i < segs; i++) {
         // open lines: ⊕ adds a point; areas: ◆ bends that edge into a curve (double-click an edge to add a point)
@@ -339,7 +339,7 @@
     if (sel) {
       const sh = R.shape(sel, ppm(), P());
       if (sh) strokeShape(sh, '#3fb6ff', 1.5);
-      if (sel.type === 'section' || sel.type === 'line' || sel.type === 'bikelane') { ctx.setLineDash([4, 4]); strokeShape({ line: sel.pts }, '#ffffffaa', 1, true); ctx.setLineDash([]); }
+      if (sel.type === 'section' || sel.type === 'line' || sel.type === 'bikelane' || sel.type === 'buslane') { ctx.setLineDash([4, 4]); strokeShape({ line: sel.pts }, '#ffffffaa', 1, true); ctx.setLineDash([]); }
       for (const h of handlesOf(sel)) {
         const s = toScreen(h.p);
         const isRot = h.key === 'rot' || h.key === 'rot2' || h.key === 'rad';
@@ -431,7 +431,7 @@
       const h = hitHandle(s.x, s.y);
       const sel = findEl(S.sel);
       if (h && e.altKey && h.key === 'pts') {
-        const min = ['line', 'section', 'bikelane'].includes(sel.type) ? 2 : 3;
+        const min = ['line', 'section', 'bikelane', 'buslane'].includes(sel.type) ? 2 : 3;
         if (sel.pts.length > min) {
           sel.pts.splice(h.i, 1);
           if (sel.bend) { sel.bend.splice(h.i, 1); const pi = (h.i - 1 + sel.pts.length) % sel.pts.length; sel.bend[pi] = null; }
@@ -595,7 +595,7 @@
     if (S.tool === 'select') {
       const el = findEl(S.sel);
       if (el && el.pts) {
-        const closed = !['line', 'section', 'bikelane'].includes(el.type);
+        const closed = !['line', 'section', 'bikelane', 'buslane'].includes(el.type);
         const r = G.nearestOnPolyline(w, el.pts, closed);
         if (r && r.d < 10 / S.view.s) {
           el.pts.splice(r.i + 1, 0, r.proj);
@@ -690,7 +690,7 @@
     if (!el) return;
     if (a === 'flip') {
       if (el.dir != null) el.dir += Math.PI;
-      if (el.type === 'line' || el.type === 'section' || el.type === 'bikelane') el.pts.reverse();
+      if (['line', 'section', 'bikelane', 'buslane'].includes(el.type)) el.pts.reverse();
     }
     if (a === 'realign') { if (el.a) alignTwo(el, false); else if (!alignPoint(el)) alert('附近找不到車道 — 請先畫路段或車道線。No lane found nearby.'); }
     if (a === 'square') alignTwo(el, true);
@@ -723,7 +723,7 @@
   function dirOf(el, near) {
     if (el.a || el.p) return el.dir || 0;
     const pts = R.basePts(el, ppm());
-    const r = G.nearestOnPolyline(near || G.centroid(pts), pts, !['line', 'section', 'bikelane'].includes(el.type));
+    const r = G.nearestOnPolyline(near || G.centroid(pts), pts, !['line', 'section', 'bikelane', 'buslane'].includes(el.type));
     if (!r) return 0;
     let t = r.tangent;
     if (el.type === 'section' && el.lanesB > 0 && near && G.dot(G.sub(near, r.proj), G.rightN(t)) < 0) t = G.mul(t, -1);
@@ -836,7 +836,7 @@
     const src = findEl(A.srcId);
     A.opts.gap = defaultGap(src, el);
     A.opts.parallel = BAND.has(src.type) || POINT.has(src.type);
-    A.opts.frame = (el.a || el.p || ['line', 'section', 'bikelane'].includes(el.type)) ? 'target' : 'screen';
+    A.opts.frame = (el.a || el.p || ['line', 'section', 'bikelane', 'buslane'].includes(el.type)) ? 'target' : 'screen';
     applyAlign(); commit(); updateHint();
   }
 
