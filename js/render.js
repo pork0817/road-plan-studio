@@ -392,13 +392,7 @@ window.Render = (function () {
     ctx.setLineDash([]); ctx.lineWidth = 0.15 * ppm; // §183 路面邊線 15 cm
     ctx.beginPath(); ctx.arc(c.x, c.y, (Ra + 0.25) * ppm, 0, 2 * Math.PI); ctx.stroke();
     const rr = Ro - 0.225;
-    const gaps = (el.legs || []).map((g) => ({ c: g.ang, h: g.h != null ? g.h : Math.asin(Math.min(0.99, (g.w + 0.6) / rr)) })).sort((a, b) => a.c - b.c);
-    if (!gaps.length) { ctx.beginPath(); ctx.arc(c.x, c.y, rr * ppm, 0, 2 * Math.PI); ctx.stroke(); }
-    for (let i = 0; i < gaps.length; i++) {
-      const a0 = gaps[i].c + gaps[i].h, nx = gaps[(i + 1) % gaps.length];
-      let a1 = nx.c - nx.h; if (i === gaps.length - 1) a1 += 2 * Math.PI;
-      if (a1 > a0) { ctx.beginPath(); ctx.arc(c.x, c.y, rr * ppm, a0, a1); ctx.stroke(); }
-    }
+    edgeWithGaps(ctx, el, ppm, () => rr * ppm, el.legs, openMouth(el, ppm));
     ctx.restore();
   }
   function drawRoundaboutIsland(ctx, el, ppm, P) {
@@ -451,8 +445,17 @@ window.Render = (function () {
     const inner = ringPts(el, g, 0, ppm, d0, d1, (d) => R.turboR(g, mid, g.al + d) - half * k(d));
     return outer.concat(inner.reverse());
   }
-  function edgeWithGaps(ctx, el, ppm, radiusAt, legs) {
-    const inGap = (th) => (legs || []).some((g) => { const r = radiusAt(g.ang) / ppm; const h = g.h != null ? g.h : Math.asin(Math.min(0.99, (g.w + 0.6) / Math.max(r, 1))); return Math.abs(Math.atan2(Math.sin(th - g.ang), Math.cos(th - g.ang))) < h; });
+  // true where the ring edge faces paving outside the ring (a road mouth), so no kerb line belongs there
+  function openMouth(el, ppm) {
+    const pav = R.cornerPaving(el, ppm);
+    return (th) => {
+      const r = (el.turbo ? R.turboR(R.turboGeom(el), R.turboGeom(el).Rout + 0.4, th) : el.R + 0.4) * ppm;
+      const q = { x: el.p.x + r * Math.cos(th), y: el.p.y + r * Math.sin(th) };
+      return pav.some((pv) => G.pointInPoly(q, pv));
+    };
+  }
+  function edgeWithGaps(ctx, el, ppm, radiusAt, legs, extraGap) {
+    const inGap = (th) => (extraGap && extraGap(th)) || (legs || []).some((g) => { const r = radiusAt(g.ang) / ppm; const h = g.h != null ? g.h : Math.asin(Math.min(0.99, (g.w + 0.6) / Math.max(r, 1))); return Math.abs(Math.atan2(Math.sin(th - g.ang), Math.cos(th - g.ang))) < h; });
     const N = 360; let open = false;
     ctx.beginPath();
     for (let i = 0; i <= N; i++) {
@@ -473,7 +476,7 @@ window.Render = (function () {
       for (const [d0, d1] of dividerRanges(g)) for (const r of [g.Rdi + 0.05, g.Rdo - 0.05]) { path(ctx, ringPts(el, g, r, ppm, d0, d1)); ctx.stroke(); }
     }
     ctx.lineWidth = 0.15 * ppm;
-    edgeWithGaps(ctx, el, ppm, (th) => R.turboR(g, g.Rout - 0.225, th) * ppm, el.legs);
+    edgeWithGaps(ctx, el, ppm, (th) => R.turboR(g, g.Rout - 0.225, th) * ppm, el.legs, openMouth(el, ppm));
     ctx.restore();
   }
   function drawTurboIsland(ctx, el, ppm, P) {
@@ -494,13 +497,23 @@ window.Render = (function () {
     shortArc(k.Q, k.rf * ppm, k.T1, k.T2).concat(shortArc(k.C, k.Rb * ppm, k.T2, k.E).slice(1)));
   function drawCornerLines(ctx, rb, ppm, P) {
     ctx.save(); ctx.strokeStyle = P.colors.white; ctx.lineWidth = 0.15 * ppm; ctx.setLineDash([]); ctx.lineCap = 'butt';
-    for (const k of rb.corners || []) {
+    const cs = rb.corners || [];
+    const pav = cs.map((k) => (k.E ? shortArc(k.Q, k.rf * ppm, k.T1, k.T2).concat(shortArc(k.C, k.Rb * ppm, k.T2, k.E).slice(1)) : null));
+    cs.forEach((k, i) => {
       // start a hair before the tangent point so the straight edge line and the curve overlap (no gap)
       const r = (k.rf + 0.225) * ppm, a1 = Math.atan2(k.T2.y - k.Q.y, k.T2.x - k.Q.x);
       let a0 = Math.atan2(k.T1.y - k.Q.y, k.T1.x - k.Q.x); const d = Math.atan2(Math.sin(a1 - a0), Math.cos(a1 - a0));
       a0 -= Math.sign(d) * (0.05 * ppm) / r;
-      ctx.beginPath(); ctx.arc(k.Q.x, k.Q.y, r, a0, a0 + d + Math.sign(d) * (0.05 * ppm) / r, d < 0); ctx.stroke();
-    }
+      const span = d + Math.sign(d) * (0.05 * ppm) / r, n = Math.max(8, Math.ceil(Math.abs(span) / (Math.PI / 180)));
+      const pts = [];
+      for (let j = 0; j <= n; j++) {
+        const a = a0 + (span * j) / n, q = { x: k.Q.x + r * Math.cos(a), y: k.Q.y + r * Math.sin(a) };
+        // a neighbouring road's paved corner overlaps here: the kerb ends where the two roads meet
+        if (j > 0 && cs.some((o, oi) => o.leg !== k.leg && pav[oi] && G.pointInPoly(q, pav[oi]))) break;
+        pts.push(q);
+      }
+      if (pts.length > 1) { path(ctx, pts); ctx.stroke(); }
+    });
     ctx.restore();
   }
 
@@ -654,7 +667,7 @@ window.Render = (function () {
     // Layer 2: markings. Lane lines are interrupted inside intersection areas.
     const junctions = els.filter((e) => e.type === 'junction' && e.pts.length >= 3)
       .concat(els.filter((e) => e.type === 'roundabout').map((e) => ({ pts: R.rbOutline(e, ppm, 1.2) })))
-      .concat(els.filter((e) => e.type === 'roundabout').flatMap((e) => (e.corners || []).map((k) => ({ pts: k.mask })).concat((e.legMasks || []).map((pts) => ({ pts })))));
+      .concat(els.filter((e) => e.type === 'roundabout').flatMap((e) => (e.corners || []).map((k) => ({ pts: k.mask })).concat((e.legMasks || []).concat(e.cornerMasks || []).map((pts) => ({ pts })))));
     const cutJunctions = () => {
       // one clip per area, so overlapping areas can't cancel each other out
       for (const j of junctions) clipOutside(j.pts);

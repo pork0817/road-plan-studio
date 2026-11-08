@@ -843,7 +843,7 @@
   // edge and to the ring. Stored in px on the roundabout for drawing (paving, edge line, cut-outs, ring gaps).
   function rbCorners(rb, legs) {
     const m = ppm(), C = rb.p, rf = (rb.cornerR != null ? rb.cornerR : 12) * m;
-    rb.corners = [];
+    rb.corners = []; rb.cornerMasks = [];
     legs.forEach((lg, li) => {
       const Rb = G.dist(lg.X, C);
       const angs = [];
@@ -863,9 +863,13 @@
         const curve = rb.curveLanes !== false;
         const cwk = rb.laneStop !== false && S.els.find((e) => e.owner === rb.id && e.type === 'crosswalk' && e.legKey === lg.key);
         const sCap = cwk ? (RB_YD + 0.54 + (cwk.setback || 0)) * m : Infinity;   // crosswalk inner edge
-        const lo = curve ? 0 : ext - 0.75 * m, hi = ext + 0.6 * m, s1 = Math.min(sq, sCap), s0 = -4 * m;
+        const lo = ext - 0.75 * m, hi = ext + 0.6 * m, s1 = sq, s0 = -4 * m;
+        // edge line: hidden all the way to where the kerb curve starts (the curve replaces it);
+        // other lines on that half: only up to the crosswalk when lane markings stop there
+        const sL = Math.min(sq, sCap);
+        if (curve && sL > s0) (rb.cornerMasks = rb.cornerMasks || []).push([at(s0, 0), at(sL, 0), at(sL, lo), at(s0, lo)]);
         rb.corners.push({ leg: li, side, Q, rf: rb.cornerR != null ? rb.cornerR : 12, T1, T2, E, C: G.copy(C), Rb: Rb / m,
-          sAlong: sq / m, ext: ext / m, mask: [at(s0, lo), at(s1, lo), at(s1, hi), at(s0, hi)] });
+          sAlong: sq / m, sT2: G.dot(G.sub(T2, lg.X), lg.v) / m, ext: ext / m, mask: [at(s0, lo), at(s1, lo), at(s1, hi), at(s0, hi)] });
         angs.push(G.angle(G.sub(T2, C)));
       }
       if (angs.length === 2) { // exact ring edge-line gap for this leg: between its two corner tangent points
@@ -879,6 +883,8 @@
   // From the corner's tangent point, a line at lateral offset o (m, on that side) follows a circle around the
   // corner centre Q with radius rf + ext - o (concentric with the kerb), so lane widths stay constant.
   // Returns the path (px) from the tangent point until it reaches stopR (m) from the roundabout centre.
+  // True parallel offset of the kerb curve: concentric with the corner circle, so every lane keeps its full
+  // width measured across the lane at every point; the splitter is whatever space remains between the halves.
   function bendPath(rb, lg, k, o, stopR) {
     const m = ppm(), C = rb.p, side = k.side;
     const P1 = G.add(G.add(lg.X, G.mul(lg.v, k.sAlong * m)), G.mul(lg.nv, side * o * m));
@@ -908,7 +914,7 @@
     return acc + G.dist(line[r.i], r.proj);
   }
   const rbStopGap = (rb) => G.clamp(rb.stopGap != null ? rb.stopGap : 2, 1, 3); // §170 net distance to the crosswalk
-  const splitBase = (lg) => (lg.median ? lg.el.medianWidth / 2 : 0.6); // splitter island half-width at its start
+  const splitBase = (lg) => (lg.median ? lg.el.medianWidth / 2 : 0.25); // splitter half-width where it starts (covers the centre line only)
   function rbCurves(rb, legs) {
     const m = ppm();
     rb.curves = []; rb.splits = []; rb.legMasks = [];
