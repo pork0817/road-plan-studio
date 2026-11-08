@@ -838,10 +838,84 @@
     }
     return legs;
   }
+
+  // Curved kerb returns where each road meets the ring: a fillet circle of radius rf tangent to the road
+  // edge and to the ring. Stored in px on the roundabout for drawing (paving, edge line, cut-outs, ring gaps).
+  function rbCorners(rb, legs) {
+    const m = ppm(), C = rb.p, rf = (rb.cornerR != null ? rb.cornerR : 12) * m;
+    rb.corners = [];
+    legs.forEach((lg, li) => {
+      const Rb = G.dist(lg.X, C);
+      const angs = [];
+      for (const side of [1, -1]) {
+        const ext = (side > 0 ? lg.rightExt : lg.leftExt) * m;
+        const base = G.sub(G.add(lg.X, G.mul(lg.nv, side * (ext + rf))), C);
+        const b = G.dot(base, lg.v), q = b * b - (G.dot(base, base) - (Rb + rf) ** 2);
+        if (q < 0) continue;
+        const sq = -b + Math.sqrt(q);                                   // outer solution: fillet sits on the approach
+        const Q = G.add(G.add(lg.X, G.mul(lg.v, sq)), G.mul(lg.nv, side * (ext + rf)));
+        const T1 = G.sub(Q, G.mul(lg.nv, side * rf));                  // tangent point on the road edge
+        const T2 = G.add(C, G.mul(G.norm(G.sub(Q, C)), Rb));            // tangent point on the ring
+        const ep = G.add(lg.X, G.mul(lg.nv, side * ext)), f = G.sub(ep, C), bb = G.dot(f, lg.v), qq = bb * bb - (G.dot(f, f) - Rb * Rb);
+        const E = qq >= 0 ? G.add(ep, G.mul(lg.v, -bb + (Math.abs(-bb + Math.sqrt(qq)) < Math.abs(-bb - Math.sqrt(qq)) ? Math.sqrt(qq) : -Math.sqrt(qq)))) : null;
+        // strip that hides the road's own straight edge line between T1 and the ring
+        const at = (sAlong, off) => G.add(G.add(lg.X, G.mul(lg.v, sAlong)), G.mul(lg.nv, side * off));
+        const lo = ext - 0.75 * m, hi = ext + 0.6 * m, s1 = sq + 0.05 * m, s0 = -4 * m;
+        rb.corners.push({ leg: li, side, Q, rf: rb.cornerR != null ? rb.cornerR : 12, T1, T2, E, C: G.copy(C), Rb: Rb / m,
+          mask: [at(s0, lo), at(s1, lo), at(s1, hi), at(s0, hi)] });
+        angs.push(G.angle(G.sub(T2, C)));
+      }
+      if (angs.length === 2) { // exact ring edge-line gap for this leg: between its two corner tangent points
+        const d = Math.atan2(Math.sin(angs[1] - angs[0]), Math.cos(angs[1] - angs[0]));
+        rb.legs[li].ang = angs[0] + d / 2; rb.legs[li].h = Math.abs(d) / 2;
+      }
+    });
+  }
+  // One triangle per entry lane, placed on that lane's own path (the road section, curved or straight):
+  // tip toward approaching cars, base square to the lane's direction of travel. Stored in px.
+  function yieldTriangles(lg, y) {
+    const m = ppm(), el = lg.el, pts = R.basePts(el, m), n = Math.max(1, y.lanes | 0);
+    const offA = lg.inner, offB = -lg.leftExt + 0.3, out = [];
+    const C = y.arcC, r0 = y.arcR * m;
+    for (let k = 0; k < n; k++) {
+      const offV = offA + ((k + 0.5) / n) * (offB - offA);          // lateral offset in the leg frame (m)
+      const offS = lg.sgn > 0 ? offV : -offV;                       // same offset in the section's own frame
+      const lane = G.offset(pts, offS * m);
+      // walk the lane path: find where it crosses the yield arc, then go upstream (away from the ring)
+      const cum = [0]; for (let i = 1; i < lane.length; i++) cum.push(cum[i - 1] + G.dist(lane[i - 1], lane[i]));
+      const pointAt = (sl) => {
+        let i = 1; while (i < lane.length - 1 && cum[i] < sl) i++;
+        const a = lane[i - 1], b = lane[i], u = (sl - cum[i - 1]) / Math.max(1e-9, cum[i] - cum[i - 1]);
+        return { p: G.add(a, G.mul(G.sub(b, a), G.clamp(u, 0, 1))), t: G.norm(G.sub(b, a)) };
+      };
+      // where the lane path crosses the yield arc (segment–circle intersection), nearest this leg
+      let sHit = null, best = Infinity;
+      for (let i = 1; i < lane.length; i++) {
+        const a = lane[i - 1], d = G.sub(lane[i], a), f = G.sub(a, C), A = G.dot(d, d);
+        if (!A) continue;
+        const B = 2 * G.dot(f, d), Cc = G.dot(f, f) - r0 * r0, disc = B * B - 4 * A * Cc;
+        if (disc < 0) continue;
+        for (const root of [-1, 1]) {
+          const u = (-B + root * Math.sqrt(disc)) / (2 * A);
+          if (u < 0 || u > 1) continue;
+          const q = G.add(a, G.mul(d, u)), dd = G.dist(q, lg.X);
+          if (dd < best) { best = dd; sHit = cum[i - 1] + (cum[i] - cum[i - 1]) * u; }
+        }
+      }
+      if (sHit == null) continue;
+      const fwdOut = G.dist(pointAt(sHit + m).p, C) > G.dist(pointAt(sHit).p, C) ? 1 : -1; // direction along the polyline that leaves the ring
+      const mid = pointAt(sHit + fwdOut * (0.54 + 2.25 + 1.5) * m);
+      const travel = G.mul(mid.t, -fwdOut);                         // toward the ring
+      out.push({ x: mid.p.x, y: mid.p.y, dir: G.angle(travel) });
+    }
+    return out;
+  }
+
   function syncRoundabout(rb) {
     if (rb.curvedYield === undefined) rb.curvedYield = true;
     const m = ppm(), legs = rbLegs(rb);
     rb.legs = legs.map((lg) => ({ ang: G.angle(G.sub(lg.X, rb.p)), w: Math.max(lg.rightExt, lg.leftExt) }));
+    rbCorners(rb, legs);
     if (rb.yields === undefined) adoptLegacy(rb, legs); // roundabouts made before pieces were linked
     const kids = S.els.filter((e) => e.owner === rb.id);
     // remember how far each crosswalk was moved along its leg (measured against where its leg was last time)
@@ -858,6 +932,7 @@
         y.a = at(RB_YD, lg.inner); y.b = at(RB_YD, -lg.leftExt + 0.3); y.dir = G.angle(G.mul(lg.v, -1));
         // follow the roundabout's edge (arc around the edge circle at this entry); toggle on the roundabout or per yield
         y.arcC = G.copy(lg.bc); y.arcR = lg.br + RB_YD;
+        y.tris = yieldTriangles(lg, y);
         const cv = rb.curvedYield !== false;
         if (y.curvedFrom !== cv) { y.curved = cv; y.curvedFrom = cv; }
         keep.add(y.id);
@@ -910,7 +985,7 @@
   const syncAll = () => { for (const e of S.els.slice()) if (e.type === 'roundabout') syncRoundabout(e); };
   function buildRoundabout(C, prm) {
     return { id: newId(), type: 'roundabout', p: G.copy(C), R: prm.R, lanes: prm.turbo ? 2 : prm.lanes, laneWidth: prm.laneWidth, apron: prm.turbo ? 0 : prm.apron,
-      turbo: !!prm.turbo, divider: prm.divider || 'raised', turboAxis: prm.turboAxis || 0, turboTaper: 20, curvedYield: prm.curvedYield !== false,
+      turbo: !!prm.turbo, divider: prm.divider || 'raised', turboAxis: prm.turboAxis || 0, turboTaper: 20, cornerR: prm.cornerR != null ? prm.cornerR : 12, curvedYield: prm.curvedYield !== false,
       island: prm.island || 'island', legs: [], yields: prm.yields, crosswalks: prm.crosswalks, cwKind: prm.cwKind, cwWidth: prm.cwWidth, cwSetback: prm.cwSetback, removed: [] };
   }
 

@@ -382,7 +382,7 @@ window.Render = (function () {
     ctx.setLineDash([]); ctx.lineWidth = 0.15 * ppm; // §183 路面邊線 15 cm
     ctx.beginPath(); ctx.arc(c.x, c.y, (Ra + 0.25) * ppm, 0, 2 * Math.PI); ctx.stroke();
     const rr = Ro - 0.3;
-    const gaps = (el.legs || []).map((g) => ({ c: g.ang, h: Math.asin(Math.min(0.99, (g.w + 0.6) / rr)) })).sort((a, b) => a.c - b.c);
+    const gaps = (el.legs || []).map((g) => ({ c: g.ang, h: g.h != null ? g.h : Math.asin(Math.min(0.99, (g.w + 0.6) / rr)) })).sort((a, b) => a.c - b.c);
     if (!gaps.length) { ctx.beginPath(); ctx.arc(c.x, c.y, rr * ppm, 0, 2 * Math.PI); ctx.stroke(); }
     for (let i = 0; i < gaps.length; i++) {
       const a0 = gaps[i].c + gaps[i].h, nx = gaps[(i + 1) % gaps.length];
@@ -442,7 +442,7 @@ window.Render = (function () {
     return outer.concat(inner.reverse());
   }
   function edgeWithGaps(ctx, el, ppm, radiusAt, legs) {
-    const inGap = (th) => (legs || []).some((g) => { const r = radiusAt(g.ang) / ppm; const h = Math.asin(Math.min(0.99, (g.w + 0.6) / Math.max(r, 1))); return Math.abs(Math.atan2(Math.sin(th - g.ang), Math.cos(th - g.ang))) < h; });
+    const inGap = (th) => (legs || []).some((g) => { const r = radiusAt(g.ang) / ppm; const h = g.h != null ? g.h : Math.asin(Math.min(0.99, (g.w + 0.6) / Math.max(r, 1))); return Math.abs(Math.atan2(Math.sin(th - g.ang), Math.cos(th - g.ang))) < h; });
     const N = 360; let open = false;
     ctx.beginPath();
     for (let i = 0; i <= N; i++) {
@@ -470,6 +470,22 @@ window.Render = (function () {
     const g = R.turboGeom(el);
     drawSidewalk(ctx, { pts: ringPts(el, g, g.R1, ppm, -Math.PI, Math.PI, (d, r) => R.turboR(g, r, g.al + d, g.nose)), style: el.island || 'island' }, ppm, P);
     if (el.divider !== 'double') for (const [d0, d1] of dividerRanges(g)) drawSidewalk(ctx, { pts: dividerPoly(el, g, ppm, d0, d1), style: 'concrete' }, ppm, P); // raised lane divider
+  }
+
+
+  // ---------- roundabout corners (curved kerb returns) ----------
+  const shortArc = (c, r, p0, p1) => {
+    const a0 = Math.atan2(p0.y - c.y, p0.x - c.x), a1 = Math.atan2(p1.y - c.y, p1.x - c.x);
+    const d = Math.atan2(Math.sin(a1 - a0), Math.cos(a1 - a0)), n = Math.max(6, Math.ceil(Math.abs(d) / (Math.PI / 90)));
+    const o = []; for (let i = 0; i <= n; i++) { const a = a0 + (d * i) / n; o.push({ x: c.x + r * Math.cos(a), y: c.y + r * Math.sin(a) }); }
+    return o;
+  };
+  R.cornerPaving = (rb, ppm) => (rb.corners || []).filter((k) => k.E).map((k) =>
+    shortArc(k.Q, k.rf * ppm, k.T1, k.T2).concat(shortArc(k.C, k.Rb * ppm, k.T2, k.E).slice(1)));
+  function drawCornerLines(ctx, rb, ppm, P) {
+    ctx.save(); ctx.strokeStyle = P.colors.white; ctx.lineWidth = 0.15 * ppm; ctx.setLineDash([]); ctx.lineCap = 'butt';
+    for (const k of rb.corners || []) { path(ctx, shortArc(k.Q, (k.rf + 0.225) * ppm, k.T1, k.T2)); ctx.stroke(); }
+    ctx.restore();
   }
 
   // ---------- §172 讓路線 yield line ----------
@@ -506,18 +522,23 @@ window.Render = (function () {
       ctx.beginPath(); ctx.arc(C.x, C.y, rr, a0, a0 + d, d < 0); ctx.stroke();
     }
     ctx.setLineDash([]);
-    if (el.triangles) {
+    if (el.triangles && el.tris && el.tris.length) drawLaneTriangles(ctx, el.tris, ppm);
+    else if (el.triangles) {
       const n = Math.max(1, el.lanes | 0), L = G.dist(el.a, el.b), ab = G.norm(G.sub(el.b, el.a));
       for (let k = 0; k < n; k++) {
-        const mk = G.add(el.a, G.mul(ab, (L * (k + 0.5)) / n));
-        const Pk = hit(mk, r0);
-        let tan = G.rightN(G.norm(G.sub(Pk, C)));
-        if (G.dot(tan, u) < 0) tan = G.mul(tan, -1);
-        const us = G.mul(tan, 1 / Math.max(0.35, G.dot(tan, u))); // sheared lateral axis: base follows the curve
-        yieldTriangle(ctx, (sv, wv) => G.add(G.add(Pk, G.mul(t, sv * ppm)), G.mul(us, wv * ppm)));
+        const Pk = hit(G.add(el.a, G.mul(ab, (L * (k + 0.5)) / n)), r0);
+        yieldTriangle(ctx, (sv, wv) => G.add(G.add(Pk, G.mul(t, sv * ppm)), G.mul(u, wv * ppm)));
       }
     }
     ctx.restore();
+  }
+  // triangles placed on each lane's own path: tip toward approaching cars, base square to that lane's travel
+  function drawLaneTriangles(ctx, tris, ppm) {
+    for (const tr of tris) {
+      const t = G.fromAngle(tr.dir), u = G.rightN(t), lead = (0.54 + 2.25 + 1.5) * ppm;
+      const cpt = { x: tr.x + t.x * lead, y: tr.y + t.y * lead };
+      yieldTriangle(ctx, (sv, wv) => G.add(G.add(cpt, G.mul(t, sv * ppm)), G.mul(u, wv * ppm)));
+    }
   }
   function drawYield(ctx, el, ppm, P) {
     if (el.curved && el.arcC) { drawYieldCurved(ctx, el, ppm, P); return; }
@@ -526,7 +547,8 @@ window.Render = (function () {
     ctx.lineWidth = 0.18 * ppm; ctx.setLineDash([0.36 * ppm, 0.24 * ppm]);
     for (const sv of [-0.09, -0.45]) { const o = G.mul(t, sv * ppm); path(ctx, [G.add(el.a, o), G.add(el.b, o)]); ctx.stroke(); }
     ctx.setLineDash([]);
-    if (el.triangles) {
+    if (el.triangles && el.tris && el.tris.length) drawLaneTriangles(ctx, el.tris, ppm);
+    else if (el.triangles) {
       const n = Math.max(1, el.lanes | 0);
       for (let k = 0; k < n; k++) {
         const cpt = G.add(el.a, G.mul(u, (L * (k + 0.5)) / n));
@@ -551,7 +573,7 @@ window.Render = (function () {
     for (const el of els) {
       if (el.type === 'road' && el.pts.length >= 3) { ctx.fillStyle = tones[el.tone] || P.colors.asphalt; path(ctx, el.pts, true); ctx.fill(); }
       if (el.type === 'section' && el.pave) { const poly = R.sectionPoly(el, ppm); if (poly) { ctx.fillStyle = P.colors.asphalt; path(ctx, poly, true); ctx.fill(); } }
-      if (el.type === 'roundabout') { ctx.fillStyle = P.colors.asphalt; path(ctx, R.rbOutline(el, ppm), true); ctx.fill(); }
+      if (el.type === 'roundabout') { ctx.fillStyle = P.colors.asphalt; path(ctx, R.rbOutline(el, ppm), true); ctx.fill(); for (const pv of R.cornerPaving(el, ppm)) { path(ctx, pv, true); ctx.fill(); } }
     }
     ctx.restore();
 
@@ -562,7 +584,7 @@ window.Render = (function () {
       for (const el of els) {
         if (el.type === 'road' && el.pts.length >= 3) polys.push(el.pts);
         if (el.type === 'section') { const p = R.sectionPoly(el, ppm); if (p) polys.push(p); } // a road section always counts as road surface
-        if (el.type === 'roundabout') polys.push(R.rbOutline(el, ppm));
+        if (el.type === 'roundabout') { polys.push(R.rbOutline(el, ppm)); polys.push(...R.cornerPaving(el, ppm)); }
       }
       if (polys.length) {
         ctx.beginPath();
@@ -587,7 +609,8 @@ window.Render = (function () {
     }
     // Layer 2: markings. Lane lines are interrupted inside intersection areas.
     const junctions = els.filter((e) => e.type === 'junction' && e.pts.length >= 3)
-      .concat(els.filter((e) => e.type === 'roundabout').map((e) => ({ pts: R.rbOutline(e, ppm, 1.2) })));
+      .concat(els.filter((e) => e.type === 'roundabout').map((e) => ({ pts: R.rbOutline(e, ppm, 1.2) })))
+      .concat(els.filter((e) => e.type === 'roundabout').flatMap((e) => (e.corners || []).map((k) => ({ pts: k.mask }))));
     const cutJunctions = () => {
       if (!junctions.length) return;
       ctx.beginPath(); ctx.rect(-1e6, -1e6, 2e6, 2e6);
@@ -611,7 +634,7 @@ window.Render = (function () {
         case 'scooterbox': drawScooterBox(ctx, el, ppm, P); break;
         case 'arrow': drawArrow(ctx, el, ppm, P); break;
         case 'symbol': drawIcon(ctx, el, ppm, P); break;
-        case 'roundabout': drawRoundaboutLines(ctx, el, ppm, P); break;
+        case 'roundabout': drawRoundaboutLines(ctx, el, ppm, P); drawCornerLines(ctx, el, ppm, P); break;
         case 'yield': drawYield(ctx, el, ppm, P); break;
         case 'text': drawText(ctx, P, el.p, el.dir, el.text, el.charLen * ppm, el.charWid * ppm, colorOf(P, el.color), el.order, charGap(el) * ppm); break;
         // §171 槽化線 border 15 / stripe 20 / gap 30 cm; §173 網狀線 border 20 / lines 10 cm, spacing user (1–5 m)
@@ -623,6 +646,9 @@ window.Render = (function () {
     ctx.restore();
 
     // Layer 3: sidewalks & medians always on top (crosswalks run "under" them)
+    // medians end flush with a roundabout's yield line (0.6 m outside the ring), not behind it
+    const medianCuts = els.filter((e) => e.type === 'junction' && e.pts.length >= 3).map((e) => e.pts)
+      .concat(els.filter((e) => e.type === 'roundabout').map((e) => R.rbOutline(e, ppm, 0.6)));
     const crossCuts = els.filter((e) => e.type === 'crosswalk' && e.a && e.b && e.dir != null)
       .map((e) => R.frame(e, ppm, e.width + 0.6, false).corners);
     for (const el of els) {
@@ -635,7 +661,7 @@ window.Render = (function () {
           const poly = G.offset(pts, -b.width / 2 * ppm).concat(G.offset(pts, b.width / 2 * ppm).reverse());
           // Medians are opened wherever a crosswalk crosses them (0.3 m clear each side), and stop at
           // intersection / roundabout areas. Computed live, so they follow crosswalk width and position.
-          const cuts = junctions.map((j) => j.pts).concat(crossCuts);
+          const cuts = medianCuts.concat(crossCuts);
           if (!cuts.length) { drawSidewalk(ctx, { pts: poly, style: 'island' }, ppm, P); continue; }
           const cutAll = () => {
             ctx.beginPath(); ctx.rect(-1e6, -1e6, 2e6, 2e6);
