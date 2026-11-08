@@ -860,9 +860,10 @@
         const E = qq >= 0 ? G.add(ep, G.mul(lg.v, -bb + (Math.abs(-bb + Math.sqrt(qq)) < Math.abs(-bb - Math.sqrt(qq)) ? Math.sqrt(qq) : -Math.sqrt(qq)))) : null;
         // strip that hides the road's own straight edge line between T1 and the ring
         const at = (sAlong, off) => G.add(G.add(lg.X, G.mul(lg.v, sAlong)), G.mul(lg.nv, side * off));
-        const lo = ext - 0.75 * m, hi = ext + 0.6 * m, s1 = sq + 0.05 * m, s0 = -4 * m;
+        const curve = rb.curveLanes !== false;
+        const lo = curve ? 0 : ext - 0.75 * m, hi = ext + 0.6 * m, s1 = sq + 0.05 * m, s0 = -4 * m;
         rb.corners.push({ leg: li, side, Q, rf: rb.cornerR != null ? rb.cornerR : 12, T1, T2, E, C: G.copy(C), Rb: Rb / m,
-          mask: [at(s0, lo), at(s1, lo), at(s1, hi), at(s0, hi)] });
+          sAlong: sq / m, ext: ext / m, mask: [at(s0, lo), at(s1, lo), at(s1, hi), at(s0, hi)] });
         angs.push(G.angle(G.sub(T2, C)));
       }
       if (angs.length === 2) { // exact ring edge-line gap for this leg: between its two corner tangent points
@@ -870,6 +871,109 @@
         rb.legs[li].ang = angs[0] + d / 2; rb.legs[li].h = Math.abs(d) / 2;
       }
     });
+  }
+
+  // ---- lanes bending into the ring ----
+  // From the corner's tangent point, a line at lateral offset o (m, on that side) follows a circle around the
+  // corner centre Q with radius rf + ext - o (concentric with the kerb), so lane widths stay constant.
+  // Returns the path (px) from the tangent point until it reaches stopR (m) from the roundabout centre.
+  function bendPath(rb, lg, k, o, stopR) {
+    const m = ppm(), C = rb.p, side = k.side;
+    const P1 = G.add(G.add(lg.X, G.mul(lg.v, k.sAlong * m)), G.mul(lg.nv, side * o * m));
+    const rq = (k.rf + k.ext - o) * m, a0 = Math.atan2(P1.y - k.Q.y, P1.x - k.Q.x);
+    const pt = (a) => ({ x: k.Q.x + rq * Math.cos(a), y: k.Q.y + rq * Math.sin(a) });
+    const step = 0.4 * Math.PI / 180, dirn = G.dist(pt(a0 + step), C) < G.dist(pt(a0 - step), C) ? 1 : -1;
+    const out = [P1], target = stopR * m;
+    if (G.dist(P1, C) <= target) return out;
+    let a = a0;
+    for (let i = 0; i < 900; i++) {
+      const nb = a + dirn * step, q = pt(nb);
+      if (G.dist(q, C) <= target) { // refine the end on the stop circle
+        let lo = a, hi = nb;
+        for (let j = 0; j < 20; j++) { const md = (lo + hi) / 2; if (G.dist(pt(md), C) > target) lo = md; else hi = md; }
+        out.push(pt(hi)); return out;
+      }
+      out.push(q); a = nb;
+    }
+    return out;
+  }
+  const splitBase = (lg) => (lg.median ? lg.el.medianWidth / 2 : 0.6); // splitter island half-width at its start
+  function rbCurves(rb, legs) {
+    const m = ppm();
+    rb.curves = []; rb.splits = [];
+    if (rb.curveLanes === false) return;
+    legs.forEach((lg, li) => {
+      const bySide = {};
+      for (const k of rb.corners) if (k.leg === li) bySide[k.side] = k;
+      const L = R.sectionLayout(lg.el), styles = P().lineStyles;
+      // split double / mixed lines into single components (section frame), then map to the leg frame
+      const comps = [];
+      for (const ln of L.lines) {
+        const st = styles[ln.style]; if (!st) continue;
+        const single = (pattern) => ({ color: st.color, width: st.width, pattern, dash: st.dash });
+        const o = ((st.sep || 0) + st.width) / 2;
+        if (st.pattern === 'double') comps.push([ln.off - o, single('solid')], [ln.off + o, single('solid')]);
+        else if (st.pattern === 'double-dashed') comps.push([ln.off - o, single('dashed')], [ln.off + o, single('dashed')]);
+        else if (st.pattern === 'solid-dashed') comps.push([ln.off - o, single('solid')], [ln.off + o, single('dashed')]);
+        else comps.push([ln.off, single(st.pattern)]);
+      }
+      for (const [so, style] of comps) {
+        const vo = lg.sgn > 0 ? so : -so;
+        for (const side of Math.abs(vo) < 0.02 ? [1, -1] : [Math.sign(vo)]) {
+          const k = bySide[side]; if (!k) continue;
+          const o = Math.abs(vo);
+          if (Math.abs(o - (k.ext - 0.225)) < 0.05) continue;          // outer edge line: drawn by the kerb curve
+          const incomingHalf = lg.incoming && (lg.oneWay || side < 0);
+          const stopR = lg.br + (incomingHalf ? RB_YD + 0.54 : 0.3);
+          const pts = bendPath(rb, lg, k, o, stopR);
+          if (pts.length > 1) rb.curves.push({ pts, style });
+        }
+      }
+      // splitter island: the gap that opens between the two halves of a two-way road
+      if (rb.splitters !== false && !lg.oneWay && bySide[1] && bySide[-1]) {
+        const b0 = splitBase(lg), endR = lg.br + RB_YD;
+        const cR = bendPath(rb, lg, bySide[1], b0, endR), cL = bendPath(rb, lg, bySide[-1], b0, endR);
+        const nose = shortArcPts(rb.p, endR * m, cR[cR.length - 1], cL[cL.length - 1]);
+        const poly = [];
+        if (!lg.median) { // tapered tail back along the centre line
+          const sT = Math.max(bySide[1].sAlong, bySide[-1].sAlong) + 12;
+          poly.push(G.add(lg.X, G.mul(lg.v, sT * m)));
+        }
+        poly.push(...cR, ...nose.slice(1, -1), ...cL.slice().reverse());
+        rb.splits.push(poly);
+      }
+    });
+  }
+  function shortArcPts(c, r, p0, p1) {
+    const a0 = Math.atan2(p0.y - c.y, p0.x - c.x), a1 = Math.atan2(p1.y - c.y, p1.x - c.x);
+    const d = Math.atan2(Math.sin(a1 - a0), Math.cos(a1 - a0)), n = Math.max(4, Math.ceil(Math.abs(d) / (Math.PI / 90)));
+    const o = []; for (let i = 0; i <= n; i++) { const a = a0 + (d * i) / n; o.push({ x: c.x + r * Math.cos(a), y: c.y + r * Math.sin(a) }); }
+    return o;
+  }
+  // a point on the bent lane line at offset o (incoming side), where it reaches radius rM from the centre
+  function bentPoint(rb, lg, side, o, rM) {
+    const k = rb.corners.find((c) => c.leg === lg.li && c.side === side);
+    if (!k || rb.curveLanes === false) return null;
+    const p = bendPath(rb, lg, k, o, rM);
+    return p[p.length - 1];
+  }
+
+  function yieldTrianglesBent(rb, lg, y, offs) {
+    const m = ppm(), out = [];
+    for (const vo of offs) {
+      const side = vo >= 0 ? 1 : -1, k = rb.corners.find((c) => c.leg === lg.li && c.side === side);
+      if (!k) return null;
+      const path = bendPath(rb, lg, k, Math.abs(vo), y.arcR);
+      let need = (0.54 + 2.25 + 1.5) * m, pos = null, dirv = null;
+      for (let i = path.length - 1; i > 0; i--) { // walk upstream from the yield line along the bent lane
+        const a = path[i - 1], b = path[i], d = G.dist(a, b);
+        if (d >= need) { pos = G.add(b, G.mul(G.norm(G.sub(a, b)), need)); dirv = G.norm(G.sub(b, a)); break; }
+        need -= d;
+      }
+      if (!pos) { pos = G.add(path[0], G.mul(lg.v, need)); dirv = G.mul(lg.v, -1); }
+      out.push({ x: pos.x, y: pos.y, dir: G.angle(dirv) });
+    }
+    return out;
   }
   // One triangle per entry lane, placed on that lane's own path (the road section, curved or straight):
   // tip toward approaching cars, base square to the lane's direction of travel. Stored in px.
@@ -915,7 +1019,9 @@
     if (rb.curvedYield === undefined) rb.curvedYield = true;
     const m = ppm(), legs = rbLegs(rb);
     rb.legs = legs.map((lg) => ({ ang: G.angle(G.sub(lg.X, rb.p)), w: Math.max(lg.rightExt, lg.leftExt) }));
+    legs.forEach((lg, i) => { lg.li = i; });
     rbCorners(rb, legs);
+    rbCurves(rb, legs);
     if (rb.yields === undefined) adoptLegacy(rb, legs); // roundabouts made before pieces were linked
     const kids = S.els.filter((e) => e.owner === rb.id);
     // remember how far each crosswalk was moved along its leg (measured against where its leg was last time)
@@ -932,7 +1038,14 @@
         y.a = at(RB_YD, lg.inner); y.b = at(RB_YD, -lg.leftExt + 0.3); y.dir = G.angle(G.mul(lg.v, -1));
         // follow the roundabout's edge (arc around the edge circle at this entry); toggle on the roundabout or per yield
         y.arcC = G.copy(lg.bc); y.arcR = lg.br + RB_YD;
-        y.tris = yieldTriangles(lg, y);
+        // on bent lanes: the line runs from the splitter/centre to the kerb along the bent lane edges
+        const aOff = lg.median ? lg.el.medianWidth / 2 + 0.3 : rb.splitters !== false ? splitBase(lg) + 0.3 : 0.15;
+        const ends = lg.oneWay ? [lg.rightExt - 0.3, -(lg.leftExt - 0.3)] : [-aOff, -(lg.leftExt - 0.3)]; // signed, leg frame
+        const pa = bentPoint(rb, lg, Math.sign(ends[0]) || -1, Math.abs(ends[0]), y.arcR), pb = bentPoint(rb, lg, Math.sign(ends[1]) || -1, Math.abs(ends[1]), y.arcR);
+        if (pa && pb) { y.a = pa; y.b = pb; }
+        const n = Math.max(1, y.lanes | 0), offs = [];
+        for (let i = 0; i < n; i++) offs.push(ends[0] + ((i + 0.5) / n) * (ends[1] - ends[0]));
+        y.tris = (pa && pb && yieldTrianglesBent(rb, lg, y, offs)) || yieldTriangles(lg, y);
         const cv = rb.curvedYield !== false;
         if (y.curvedFrom !== cv) { y.curved = cv; y.curvedFrom = cv; }
         keep.add(y.id);
@@ -985,7 +1098,7 @@
   const syncAll = () => { for (const e of S.els.slice()) if (e.type === 'roundabout') syncRoundabout(e); };
   function buildRoundabout(C, prm) {
     return { id: newId(), type: 'roundabout', p: G.copy(C), R: prm.R, lanes: prm.turbo ? 2 : prm.lanes, laneWidth: prm.laneWidth, apron: prm.turbo ? 0 : prm.apron,
-      turbo: !!prm.turbo, divider: prm.divider || 'raised', turboAxis: prm.turboAxis || 0, turboTaper: 20, cornerR: prm.cornerR != null ? prm.cornerR : 12, curvedYield: prm.curvedYield !== false,
+      turbo: !!prm.turbo, divider: prm.divider || 'raised', turboAxis: prm.turboAxis || 0, turboTaper: 20, cornerR: prm.cornerR != null ? prm.cornerR : 12, curveLanes: prm.curveLanes !== false, splitters: prm.splitters !== false, curvedYield: prm.curvedYield !== false,
       island: prm.island || 'island', legs: [], yields: prm.yields, crosswalks: prm.crosswalks, cwKind: prm.cwKind, cwWidth: prm.cwWidth, cwSetback: prm.cwSetback, removed: [] };
   }
 

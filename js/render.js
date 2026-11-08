@@ -562,6 +562,12 @@ window.Render = (function () {
   const MARK = new Set(['roundabout', 'yield', 'symbol', 'line', 'section', 'crosswalk', 'stopline', 'scooterbox', 'arrow', 'text', 'chevron', 'yellowbox']);
 
   R.drawScene = function (ctx, o) {
+    const clipOutside = (pts) => {
+      if (!pts || pts.length < 3) return;
+      ctx.beginPath(); ctx.rect(-1e6, -1e6, 2e6, 2e6);
+      ctx.moveTo(pts[0].x, pts[0].y); for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y); ctx.closePath();
+      ctx.clip('evenodd');
+    };
     const { ppm, P } = o;
     const els = o.preview ? o.els.concat([o.preview]) : o.els;
     if (o.background) { ctx.fillStyle = o.background; ctx.fillRect(0, 0, o.w, o.h); }
@@ -612,10 +618,8 @@ window.Render = (function () {
       .concat(els.filter((e) => e.type === 'roundabout').map((e) => ({ pts: R.rbOutline(e, ppm, 1.2) })))
       .concat(els.filter((e) => e.type === 'roundabout').flatMap((e) => (e.corners || []).map((k) => ({ pts: k.mask }))));
     const cutJunctions = () => {
-      if (!junctions.length) return;
-      ctx.beginPath(); ctx.rect(-1e6, -1e6, 2e6, 2e6);
-      for (const j of junctions) { ctx.moveTo(j.pts[0].x, j.pts[0].y); for (let i = 1; i < j.pts.length; i++) ctx.lineTo(j.pts[i].x, j.pts[i].y); ctx.closePath(); }
-      ctx.clip('evenodd');
+      // one clip per area, so overlapping areas can't cancel each other out
+      for (const j of junctions) clipOutside(j.pts);
     };
     for (const el of els) {
       if (!MARK.has(el.type)) continue;
@@ -634,7 +638,7 @@ window.Render = (function () {
         case 'scooterbox': drawScooterBox(ctx, el, ppm, P); break;
         case 'arrow': drawArrow(ctx, el, ppm, P); break;
         case 'symbol': drawIcon(ctx, el, ppm, P); break;
-        case 'roundabout': drawRoundaboutLines(ctx, el, ppm, P); drawCornerLines(ctx, el, ppm, P); break;
+        case 'roundabout': drawRoundaboutLines(ctx, el, ppm, P); drawCornerLines(ctx, el, ppm, P); for (const c of el.curves || []) R.drawStyled(ctx, c.pts, c.style, ppm); break;
         case 'yield': drawYield(ctx, el, ppm, P); break;
         case 'text': drawText(ctx, P, el.p, el.dir, el.text, el.charLen * ppm, el.charWid * ppm, colorOf(P, el.color), el.order, charGap(el) * ppm); break;
         // §171 槽化線 border 15 / stripe 20 / gap 30 cm; §173 網狀線 border 20 / lines 10 cm, spacing user (1–5 m)
@@ -653,7 +657,15 @@ window.Render = (function () {
       .map((e) => R.frame(e, ppm, e.width + 0.6, false).corners);
     for (const el of els) {
       if (el.type === 'sidewalk') drawSidewalk(ctx, el, ppm, P);
-      if (el.type === 'roundabout') drawRoundaboutIsland(ctx, el, ppm, P);
+      if (el.type === 'roundabout') {
+        drawRoundaboutIsland(ctx, el, ppm, P);
+        for (const sp of el.splits || []) { // splitter islands, opened where crosswalks pass (pedestrian refuge)
+          ctx.save();
+          for (const c of crossCuts) clipOutside(c);
+          drawSidewalk(ctx, { pts: sp, style: 'island' }, ppm, P);
+          ctx.restore();
+        }
+      }
       if (el.type === 'section') {
         const pts = R.basePts(el, ppm);
         if (pts.length < 2) continue;
@@ -663,11 +675,7 @@ window.Render = (function () {
           // intersection / roundabout areas. Computed live, so they follow crosswalk width and position.
           const cuts = medianCuts.concat(crossCuts);
           if (!cuts.length) { drawSidewalk(ctx, { pts: poly, style: 'island' }, ppm, P); continue; }
-          const cutAll = () => {
-            ctx.beginPath(); ctx.rect(-1e6, -1e6, 2e6, 2e6);
-            for (const c of cuts) { ctx.moveTo(c[0].x, c[0].y); for (let i = 1; i < c.length; i++) ctx.lineTo(c[i].x, c[i].y); ctx.closePath(); }
-            ctx.clip('evenodd');
-          };
+          const cutAll = () => { for (const c of cuts) clipOutside(c); };
           ctx.save(); cutAll(); drawSidewalk(ctx, { pts: poly, style: 'island' }, ppm, P); ctx.restore();
           ctx.save(); path(ctx, poly, true); ctx.clip(); cutAll();
           ctx.strokeStyle = '#b9b5ab'; ctx.lineWidth = 0.5 * ppm; ctx.lineJoin = 'round'; ctx.setLineDash([]);
