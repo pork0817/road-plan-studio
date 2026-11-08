@@ -510,6 +510,8 @@ window.Render = (function () {
     ctx.restore();
 
     // Layer 3: sidewalks & medians always on top (crosswalks run "under" them)
+    const crossCuts = els.filter((e) => e.type === 'crosswalk' && e.a && e.b && e.dir != null)
+      .map((e) => R.frame(e, ppm, e.width + 0.6, false).corners);
     for (const el of els) {
       if (el.type === 'sidewalk') drawSidewalk(ctx, el, ppm, P);
       if (el.type === 'roundabout') drawRoundaboutIsland(ctx, el, ppm, P);
@@ -518,12 +520,19 @@ window.Render = (function () {
         if (pts.length < 2) continue;
         for (const b of R.sectionLayout(el).bands) if (b.kind === 'median') {
           const poly = G.offset(pts, -b.width / 2 * ppm).concat(G.offset(pts, b.width / 2 * ppm).reverse());
-          if (!junctions.length) { drawSidewalk(ctx, { pts: poly, style: 'island' }, ppm, P); continue; }
-          // median stops at intersections: cut by the junction area, with a curb along the cut end
-          ctx.save(); cutJunctions(); drawSidewalk(ctx, { pts: poly, style: 'island' }, ppm, P); ctx.restore();
-          ctx.save(); path(ctx, poly, true); ctx.clip(); cutJunctions();
+          // Medians are opened wherever a crosswalk crosses them (0.3 m clear each side), and stop at
+          // intersection / roundabout areas. Computed live, so they follow crosswalk width and position.
+          const cuts = junctions.map((j) => j.pts).concat(crossCuts);
+          if (!cuts.length) { drawSidewalk(ctx, { pts: poly, style: 'island' }, ppm, P); continue; }
+          const cutAll = () => {
+            ctx.beginPath(); ctx.rect(-1e6, -1e6, 2e6, 2e6);
+            for (const c of cuts) { ctx.moveTo(c[0].x, c[0].y); for (let i = 1; i < c.length; i++) ctx.lineTo(c[i].x, c[i].y); ctx.closePath(); }
+            ctx.clip('evenodd');
+          };
+          ctx.save(); cutAll(); drawSidewalk(ctx, { pts: poly, style: 'island' }, ppm, P); ctx.restore();
+          ctx.save(); path(ctx, poly, true); ctx.clip(); cutAll();
           ctx.strokeStyle = '#b9b5ab'; ctx.lineWidth = 0.5 * ppm; ctx.lineJoin = 'round'; ctx.setLineDash([]);
-          for (const j of junctions) { path(ctx, j.pts, true); ctx.stroke(); }
+          for (const c of cuts) { path(ctx, c, true); ctx.stroke(); }
           ctx.restore();
         }
       }

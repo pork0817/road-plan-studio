@@ -21,9 +21,12 @@ Sidewalks always draw on top of markings, so a crosswalk that runs into a sidewa
 4. Everything it makes is a normal object you can edit, move or delete. Drag the purple dashed junction outline's corners to change where lane lines stop (it is not exported).
 
 ## Roundabouts
-Draw road sections for the roads that meet, pick **圓環 (自動) Roundabout**, and click the centre (a preview follows the cursor). It draws the circulating roadway, a central island with a mountable apron, lane and edge lines, and for every road that reaches the circle: a §172 讓路線 (double dashed line with an inverted triangle per entry lane) and a crosswalk about one car length back. Lane lines and medians inside the circle are cut; medians are opened where crosswalks pass through them. Drag the centre to move it and the orange handle to change the radius. The circulating dimensions are typical design values, since the regulation has no roundabout figure.
+Draw road sections for the roads that meet, pick **圓環 (自動) Roundabout**, and click the centre (a preview follows the cursor). It draws the circulating roadway, a central island with a mountable apron, lane and edge lines, and for every road that reaches the circle: a §172 讓路線 (double dashed line with an inverted triangle per entry lane) and a crosswalk about one car length back. Lane lines and medians inside the circle are cut; medians are opened where crosswalks pass through them. Drag the centre to move it and the orange handle to change the radius; the yield lines and crosswalks follow (and follow edits to the roads), while keeping your own changes to them, such as a crosswalk's width or how far you moved it along its road. The circulating dimensions are typical design values, since the regulation has no roundabout figure.
 
 The 讓路線 is also available on its own in ④ 路口 for T-junctions and minor-road entries.
+
+## Linked pieces
+Crosswalks, stop lines and yield lines made by the intersection or roundabout tools belong to it: deleting the intersection/roundabout deletes them too (⌘Z brings everything back). Select one and click **解除連動 Detach** to make it independent. A deleted roundabout piece is not re-created. Medians are opened automatically wherever any crosswalk crosses them, so the opening follows the crosswalk's width and position.
 
 ## Editing shapes
 Select a road area, sidewalk, road section or line: every segment shows a ⊕ handle at its middle. Drag it to add a new point there (it follows the curve on smooth sections). Alt+click a point to delete it.

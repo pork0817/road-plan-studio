@@ -36,6 +36,7 @@
   // ---------------- history ----------------
   const snapshot = () => JSON.stringify({ els: S.els, ppm: S.ppm });
   function commit() {
+    syncAll();
     const now = snapshot();
     if (now !== S.cur) { S.hist.push(S.cur); if (S.hist.length > 300) S.hist.shift(); S.cur = now; S.fut = []; autosave(); }
     renderProps(); redraw();
@@ -460,8 +461,8 @@
           S.els.push(el); S.sel = el.id; S.draft = null; commit();
         }
       } else if (m === 'roundabout') {
-        const made = buildRoundabout(w, S.params);
-        S.els.push(...made); S.sel = made[0].id; commit(); setTool('select'); S.sel = made[0].id; renderProps();
+        const rb = buildRoundabout(w, S.params);
+        S.els.push(rb); syncRoundabout(rb); S.sel = rb.id; commit(); setTool('select'); S.sel = rb.id; renderProps();
       } else if (m === 'junction') {
         const made = buildJunction(w, S.params);
         if (made) { S.els.push(...made); S.sel = made[0].id; commit(); setTool('select'); S.sel = made[0].id; renderProps(); }
@@ -479,7 +480,7 @@
     const d = S.drag;
     if (d) {
       if (d.kind === 'pan') { S.view.x = d.v0.x + (s.x - d.s0.x); S.view.y = d.v0.y + (s.y - d.s0.y); }
-      else if (d.kind === 'move') { const el = findEl(S.sel); moveEl(el, d.orig, G.sub(w, d.w0)); d.moved = true; }
+      else if (d.kind === 'move') { const el = findEl(S.sel); moveEl(el, d.orig, G.sub(w, d.w0)); d.moved = true; if (el.type === 'roundabout') syncRoundabout(el); }
       else if (d.kind === 'handle') {
         const el = findEl(S.sel), h = d.h;
         const o = d.orig;
@@ -505,6 +506,7 @@
           el.a = rot(o.a); el.b = rot(o.b); el.dir = nd;
         }
         d.moved = true;
+        if (el.type === 'roundabout') syncRoundabout(el);
       }
       redraw();
     } else {
@@ -612,9 +614,16 @@
     if (e.code === 'Space') { S.space = false; stage.style.cursor = S.tool === 'pan' ? 'grab' : S.tool === 'select' ? 'default' : 'crosshair'; }
   });
 
-  function deleteEl(id) { S.els = S.els.filter((e) => e.id !== id); if (S.sel === id) S.sel = null; commit(); }
+  function deleteEl(id) {
+    const el = findEl(id);
+    if (el && el.owner) { const o = findEl(el.owner); if (o && o.type === 'roundabout' && el.legKey) (o.removed = o.removed || []).push(el.type + ':' + el.legKey); }
+    // deleting an intersection or roundabout also deletes the markings it generated
+    S.els = S.els.filter((e) => e.id !== id && e.owner !== id);
+    if (S.sel === id || !findEl(S.sel)) S.sel = null;
+    commit();
+  }
   function duplicate(el) {
-    const c = clone(el); c.id = newId();
+    const c = clone(el); c.id = newId(); delete c.owner; delete c.legKey; delete c.anchor;
     moveEl(c, clone(c), { x: 2 * ppm(), y: 2 * ppm() });
     S.els.push(c); S.sel = c.id; commit();
   }
@@ -764,47 +773,70 @@
 
 
   // ---------------- roundabout generator ----------------
-  function buildRoundabout(C, prm) {
-    const m = ppm(), Rpx = prm.R * m;
-    const rb = { id: newId(), type: 'roundabout', p: G.copy(C), R: prm.R, lanes: prm.lanes, laneWidth: prm.laneWidth, apron: prm.apron, island: prm.island || 'island', legs: [] };
-    const out = [rb];
+  // The roundabout owns its yield lines and crosswalks: they are recomputed from the roundabout and the
+  // road sections every time something changes, keeping each piece's own settings (width, type, lanes,
+  // and how far a crosswalk was moved along its leg).
+  const RB_YD = 0.6; // yield line distance outside the circle (m)
+  function rbLegs(rb) {
+    const m = ppm(), Rpx = rb.R * m, C = rb.p, legs = [];
     for (const el of S.els) {
       if (el.type !== 'section') continue;
       const pts = R.basePts(el, m), L = R.sectionLayout(el);
+      let k = 0;
       for (let i = 0; i < pts.length - 1; i++) {
         const a = pts[i], d = G.sub(pts[i + 1], a), f = G.sub(a, C);
         const A = G.dot(d, d), B = 2 * G.dot(f, d), Cc = G.dot(f, f) - Rpx * Rpx, disc = B * B - 4 * A * Cc;
         if (A === 0 || disc < 0) continue;
-        for (const sgnRoot of [-1, 1]) {
-          const sp = (-B + sgnRoot * Math.sqrt(disc)) / (2 * A);
+        for (const root of [-1, 1]) {
+          const sp = (-B + root * Math.sqrt(disc)) / (2 * A);
           if (sp < 0 || sp > 1) continue;
           const X = G.add(a, G.mul(d, sp)), t = G.norm(d);
           const sgn = G.dot(t, G.sub(X, C)) > 0 ? 1 : -1;
           const v = G.mul(t, sgn), nv = G.rightN(v);
           const rightExt = sgn > 0 ? L.right : L.left, leftExt = sgn > 0 ? L.left : L.right;
-          rb.legs.push({ ang: G.angle(G.sub(X, C)), w: Math.max(rightExt, leftExt) });
-          const at = (dist, off) => G.add(G.add(X, G.mul(v, dist * m)), G.mul(nv, off * m));
-          const oneWay = el.lanesB === 0, incoming = oneWay ? sgn < 0 : true;
-          const median = !oneWay && el.centerType === 'median';
-          const yd = 0.6;
-          if (prm.yields && incoming) {
-            const inner = oneWay ? rightExt - 0.3 : -(median ? el.medianWidth / 2 + 0.3 : 0.15);
-            const lanes = oneWay ? el.lanesF : (sgn > 0 ? el.lanesB : el.lanesF);
-            out.push({ id: newId(), type: 'yield', a: at(yd, inner), b: at(yd, -leftExt + 0.3), dir: G.angle(G.mul(v, -1)), lanes: Math.max(1, lanes), triangles: true });
-          }
-          if (prm.crosswalks) {
-            const kind = prm.cwKind, w = G.clamp(prm.cwWidth, P().crosswalk[kind].width.min, P().crosswalk[kind].width.max);
-            const dc = yd + 0.54 + prm.cwSetback + w / 2;
-            out.push({ id: newId(), type: 'crosswalk', kind, width: w, gap: 0.4, green: false, a: at(dc, -leftExt + 0.05), b: at(dc, rightExt - 0.05), dir: G.angle(v) });
-            if (median) { // open the median where the crosswalk passes through it
-              const h = el.medianWidth / 2 + 0.05, d0 = dc - w / 2 - 0.3, d1 = dc + w / 2 + 0.3;
-              out.push({ id: newId(), type: 'junction', pts: [at(d0, -h), at(d1, -h), at(d1, h), at(d0, h)] });
-            }
-          }
+          const oneWay = el.lanesB === 0, median = !oneWay && el.centerType === 'median';
+          legs.push({ key: el.id + ':' + (k++), el, X, v, nv, sgn, rightExt, leftExt, oneWay, median,
+            incoming: oneWay ? sgn < 0 : true,
+            inner: oneWay ? rightExt - 0.3 : -(median ? el.medianWidth / 2 + 0.3 : 0.15),
+            lanes: Math.max(1, oneWay ? el.lanesF : (sgn > 0 ? el.lanesB : el.lanesF)) });
         }
       }
     }
-    return out;
+    return legs;
+  }
+  function syncRoundabout(rb) {
+    const m = ppm(), legs = rbLegs(rb);
+    rb.legs = legs.map((lg) => ({ ang: G.angle(G.sub(lg.X, rb.p)), w: Math.max(lg.rightExt, lg.leftExt) }));
+    const kids = S.els.filter((e) => e.owner === rb.id);
+    // remember how far each crosswalk was moved along its leg (measured against where its leg was last time)
+    for (const k of kids) if (k.type === 'crosswalk' && k.anchor) {
+      const c = G.mid(k.a, k.b);
+      k.setback = Math.max(0, Math.round((G.dot(G.sub(c, k.anchor.X), k.anchor.v) / m - (RB_YD + 0.54) - (k.anchor.w || k.width) / 2) * 100) / 100);
+    }
+    const removed = rb.removed || [], keep = new Set();
+    for (const lg of legs) {
+      const at = (dist, off) => G.add(G.add(lg.X, G.mul(lg.v, dist * m)), G.mul(lg.nv, off * m));
+      if (rb.yields && lg.incoming && !removed.includes('yield:' + lg.key)) {
+        let y = kids.find((k) => k.type === 'yield' && k.legKey === lg.key);
+        if (!y) { y = { id: newId(), type: 'yield', owner: rb.id, legKey: lg.key, triangles: true, lanes: lg.lanes }; S.els.push(y); }
+        y.a = at(RB_YD, lg.inner); y.b = at(RB_YD, -lg.leftExt + 0.3); y.dir = G.angle(G.mul(lg.v, -1));
+        keep.add(y.id);
+      }
+      if (rb.crosswalks && !removed.includes('crosswalk:' + lg.key)) {
+        let c = kids.find((k) => k.type === 'crosswalk' && k.legKey === lg.key);
+        if (!c) { c = { id: newId(), type: 'crosswalk', owner: rb.id, legKey: lg.key, kind: rb.cwKind || 'ties', width: rb.cwWidth || 4, gap: 0.4, green: false, setback: rb.cwSetback != null ? rb.cwSetback : 5 }; S.els.push(c); }
+        const dc = RB_YD + 0.54 + c.setback + c.width / 2;
+        c.a = at(dc, -lg.leftExt + 0.05); c.b = at(dc, lg.rightExt - 0.05); c.dir = G.angle(lg.v);
+        c.anchor = { X: G.copy(lg.X), v: G.copy(lg.v), w: c.width };
+        keep.add(c.id);
+      }
+    }
+    S.els = S.els.filter((e) => e.owner !== rb.id || keep.has(e.id));
+  }
+  const syncAll = () => { for (const e of S.els.slice()) if (e.type === 'roundabout') syncRoundabout(e); };
+  function buildRoundabout(C, prm) {
+    return { id: newId(), type: 'roundabout', p: G.copy(C), R: prm.R, lanes: prm.lanes, laneWidth: prm.laneWidth, apron: prm.apron,
+      island: prm.island || 'island', legs: [], yields: prm.yields, crosswalks: prm.crosswalks, cwKind: prm.cwKind, cwWidth: prm.cwWidth, cwSetback: prm.cwSetback, removed: [] };
   }
 
   // ---------------- intersection generator ----------------
@@ -882,7 +914,7 @@
       if (prm.crosswalks) {
         const w = G.clamp(prm.cwWidth, P().crosswalk[prm.cwKind].width.min, P().crosswalk[prm.cwKind].width.max);
         const d = cwIn + (w * m) / 2;
-        out.push({ id: newId(), type: 'crosswalk', kind: prm.cwKind, width: w, gap: 0.4, green: false,
+        out.push({ id: newId(), owner: jid, type: 'crosswalk', kind: prm.cwKind, width: w, gap: 0.4, green: false,
           a: at(d, -lg.leftExt + 0.05), b: at(d, lg.rightExt - 0.05), dir: G.angle(lg.v) });
       }
       // incoming lanes: traffic heading toward C keeps right, i.e. the left side of v
@@ -891,7 +923,7 @@
       const ds = cwOut + (prm.crosswalks ? prm.stopGap * m : 0) + (stopW * m) / 2;
       if (prm.stops && incoming) {
         const inner = oneWay ? lg.rightExt - 0.3 : -((el.centerType === 'median' ? el.medianWidth / 2 + 0.2 : 0.15));
-        out.push({ id: newId(), type: 'stopline', width: stopW, a: at(ds, inner), b: at(ds, -lg.leftExt + 0.3), dir: G.angle(G.mul(lg.v, -1)) });
+        out.push({ id: newId(), owner: jid, type: 'stopline', width: stopW, a: at(ds, inner), b: at(ds, -lg.leftExt + 0.3), dir: G.angle(G.mul(lg.v, -1)) });
       }
       const dIn = prm.stops && incoming ? ds + (stopW * m) / 2 : cwOut;
       const dOut = oneWay && incoming && prm.stops ? dIn : cwOut;
@@ -1052,6 +1084,14 @@
           if (!el) continue;
           const b = document.createElement('button'); b.textContent = f.label; b.onclick = () => doAction(f.action); btns.appendChild(b);
         } else box.appendChild(fieldRow(f, target, onChange));
+      }
+      if (el && el.owner) {
+        const info = document.createElement('div'); info.className = 'info';
+        info.textContent = '🔗 此物件由路口/圓環自動產生並連動；刪除路口/圓環時會一併刪除。Linked to its intersection/roundabout.';
+        box.insertBefore(info, box.children[1] || null);
+        const dt = document.createElement('button'); dt.textContent = '解除連動 Detach';
+        dt.onclick = () => { const o = findEl(el.owner); if (o && o.type === 'roundabout' && el.legKey) (o.removed = o.removed || []).push(el.type + ':' + el.legKey); delete el.owner; delete el.legKey; delete el.anchor; commit(); };
+        btns.appendChild(dt);
       }
       if (el && canAlign(el) && !S.align) {
         const ab = document.createElement('button'); ab.textContent = '📐 對齊至… Align to (A)'; ab.onclick = startAlign; btns.prepend(ab);
