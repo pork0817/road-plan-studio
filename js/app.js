@@ -861,7 +861,9 @@
         // strip that hides the road's own straight edge line between T1 and the ring
         const at = (sAlong, off) => G.add(G.add(lg.X, G.mul(lg.v, sAlong)), G.mul(lg.nv, side * off));
         const curve = rb.curveLanes !== false;
-        const lo = curve ? 0 : ext - 0.75 * m, hi = ext + 0.6 * m, s1 = sq, s0 = -4 * m;
+        const cwk = rb.laneStop !== false && S.els.find((e) => e.owner === rb.id && e.type === 'crosswalk' && e.legKey === lg.key);
+        const sCap = cwk ? (RB_YD + 0.54 + (cwk.setback || 0)) * m : Infinity;   // crosswalk inner edge
+        const lo = curve ? 0 : ext - 0.75 * m, hi = ext + 0.6 * m, s1 = Math.min(sq, sCap), s0 = -4 * m;
         rb.corners.push({ leg: li, side, Q, rf: rb.cornerR != null ? rb.cornerR : 12, T1, T2, E, C: G.copy(C), Rb: Rb / m,
           sAlong: sq / m, ext: ext / m, mask: [at(s0, lo), at(s1, lo), at(s1, hi), at(s0, hi)] });
         angs.push(G.angle(G.sub(T2, C)));
@@ -989,6 +991,16 @@
   //    yield line, exits at the ring), so drivers keep their lane right up to the roundabout;
   //  • on the approach side, the last stretch (solidLen, default 30 m) becomes 禁止變換車道線 (solid), so the
   //    lane lines start cleanly after the crosswalk instead of with leftover dash stubs.
+  // keep the part of a path (running toward the ring) that lies within sMax (m) of the ring along the leg
+  function clipAlong(path, lg, sMax) {
+    const m = ppm(), sOf = (q) => G.dot(G.sub(q, lg.X), lg.v) / m, out = [];
+    for (let i = 0; i < path.length; i++) {
+      const sv = sOf(path[i]);
+      if (i > 0) { const sp = sOf(path[i - 1]); if ((sp - sMax) * (sv - sMax) < 0) out.push(G.add(path[i - 1], G.mul(G.sub(path[i], path[i - 1]), (sMax - sp) / (sv - sp)))); }
+      if (sv <= sMax) out.push(path[i]);
+    }
+    return out;
+  }
   function multiLaneLegLines(rb, lg, bySide, laneLines) {
     const m = ppm(), styles = P().lineStyles;
     const cw = S.els.find((e) => e.owner === rb.id && e.type === 'crosswalk' && e.legKey === lg.key);
@@ -1006,7 +1018,8 @@
       let inner = [atL(sIn, vo)];
       if (k && rb.curveLanes !== false) {
         const bent = bendPath(rb, lg, k, o, stopR);
-        if (k.sAlong < sIn) inner = inner.concat(bent); else inner = bent;
+        if (k.sAlong < sIn) inner = inner.concat(bent);
+        else inner = clipAlong(bent, lg, sIn); // the bend starts beyond the crosswalk: keep only the part inside it
       } else {
         // straight to the stop circle
         const f = G.sub(atL(0, vo), rb.p), b = G.dot(f, lg.v), q = b * b - (G.dot(f, f) - (stopR * m) ** 2);
