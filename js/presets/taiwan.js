@@ -76,9 +76,9 @@ window.RoadPresets = window.RoadPresets || {};
       { id: 'junction', label: '路口 (自動)', en: 'Intersection: click crossing', mode: 'junction', icon: { glyph: '✚' },
         defaults: { type: 'junctionTool', cwKind: 'ties', cwWidth: 4, setback: 3, stopGap: 2, crosswalks: true, stops: true } },
       { id: 'roundabout', label: '圓環 (自動)', en: 'Roundabout: click centre', mode: 'roundabout', icon: { glyph: '◎' },
-        defaults: { type: 'roundaboutTool', R: 18, lanes: 1, laneWidth: 5.5, apron: 2, island: 'island', yields: true, curvedYield: true, crosswalks: true, cwKind: 'ties', cwWidth: 4, cwSetback: 6.5, cornerR: 12, curveLanes: true, splitters: true, laneStop: true } },
+        defaults: { type: 'roundaboutTool', R: 18, lanes: 1, laneWidth: 5.5, apron: 2, island: 'island', yields: true, curvedYield: true, crosswalks: true, cwKind: 'ties', cwWidth: 4, cwSetback: 6.5, cornerR: 12, curveLanes: true, splitters: true, laneStop: true, solidApproach: true, solidLen: 30 } },
       { id: 'turbo', label: '渦輪圓環', en: 'Turbo roundabout', mode: 'roundabout', icon: { glyph: '🌀' },
-        defaults: { type: 'roundaboutTool', turbo: true, R: 24, lanes: 2, laneWidth: 5, apron: 0, divider: 'raised', island: 'island', yields: true, curvedYield: true, crosswalks: true, cwKind: 'ties', cwWidth: 4, cwSetback: 6.5, cornerR: 12, curveLanes: true, splitters: true, laneStop: true } },
+        defaults: { type: 'roundaboutTool', turbo: true, R: 24, lanes: 2, laneWidth: 5, apron: 0, divider: 'raised', island: 'island', yields: true, curvedYield: true, crosswalks: true, cwKind: 'ties', cwWidth: 4, cwSetback: 6.5, cornerR: 12, curveLanes: true, splitters: true, laneStop: true, solidApproach: true, solidLen: 30 } },
     ] },
     { title: '③ 標線 Lines', items: Object.entries(lineStyles).map(([k, s]) => ({ id: 'line_' + k, label: s.name, en: s.en, mode: 'polyline', icon: { line: k }, defaults: { type: 'line', style: k, smooth: true } })) },
     { title: '④ 路口 Intersection', items: [
@@ -180,7 +180,8 @@ window.RoadPresets = window.RoadPresets || {};
             num('laneWidth', '環道車道寬 Lane width', 4, 7, 0.1, '≈ 環道常用 5–6 m'), num('apron', '可跨越緣帶 Truck apron', 0, 4, 0.1, '≈'));
         }
         f.push(num('cornerR', '進出口轉角半徑 Corner radius', 3, 30, 0.5, '≈ 道路邊線以此半徑彎入圓環'));
-        f.push({ kind: 'chk', key: 'curveLanes', label: '車道彎入圓環 Curve lanes into ring' }, { kind: 'chk', key: 'splitters', label: '分隔島 Splitter islands' }, { kind: 'chk', key: 'laneStop', label: '車道線止於行人穿越道 Lane lines stop at crosswalk' });
+        f.push({ kind: 'chk', key: 'curveLanes', label: '車道彎入圓環 Curve lanes into ring' }, { kind: 'chk', key: 'splitters', label: '分隔島 Splitter islands' }, { kind: 'chk', key: 'laneStop', label: '車道線止於行人穿越道 Lane lines stop at crosswalk' },
+          { kind: 'chk', key: 'solidApproach', label: '近圓環改實線 Solid lane lines on approach' }, num('solidLen', '實線長度 Solid length', 0, 60, 1, '≈ 禁止變換車道線，常用 30 m'));
         if (!tool) f.push({ kind: 'sel', key: 'island', label: '中央島 Island', options: sidewalkStyles });
         f.push({ kind: 'chk', key: 'yields', label: '入口讓路線 Yield lines (§172)' },
           { kind: 'chk', key: 'curvedYield', label: '讓路線沿圓環弧線 Curved yield lines' },

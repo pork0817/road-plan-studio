@@ -923,11 +923,12 @@
       const bySide = {};
       for (const k of rb.corners) if (k.leg === li) bySide[k.side] = k;
       const hasCw = stopAtCw && S.els.some((e) => e.owner === rb.id && e.type === 'crosswalk' && e.legKey === lg.key);
-      const L = R.sectionLayout(lg.el), styles = P().lineStyles;
+      const L = R.sectionLayout(lg.el), styles = P().lineStyles, laneLines = [];
       // split double / mixed lines into single components (section frame), then map to the leg frame
       const comps = [];
       for (const ln of L.lines) {
         const st = styles[ln.style]; if (!st) continue;
+        if (ln.style === 'lane' || ln.style === 'slowSep' || ln.style === 'bikeSep') laneLines.push(ln);
         const single = (pattern) => ({ color: st.color, width: st.width, pattern, dash: st.dash });
         const o = ((st.sep || 0) + st.width) / 2;
         if (st.pattern === 'double') comps.push([ln.off - o, single('solid')], [ln.off + o, single('solid')]);
@@ -935,6 +936,7 @@
         else if (st.pattern === 'solid-dashed') comps.push([ln.off - o, single('solid')], [ln.off + o, single('dashed')]);
         else comps.push([ln.off, single(st.pattern)]);
       }
+      if (hasCw) multiLaneLegLines(rb, lg, bySide, laneLines);
       for (const [so, style] of hasCw ? [] : comps) { // lanes stop at the crosswalk: no bent continuations
         const vo = lg.sgn > 0 ? so : -so;
         for (const side of Math.abs(vo) < 0.02 ? [1, -1] : [Math.sign(vo)]) {
@@ -980,6 +982,57 @@
     const o = []; for (let i = 0; i <= n; i++) { const a = a0 + (d * i) / n; o.push({ x: c.x + r * Math.cos(a), y: c.y + r * Math.sin(a) }); }
     return o;
   }
+
+  // Multi-lane legs whose lane markings stop at the crosswalk:
+  //  • between the crosswalk and the ring, lane lines are solid and bend with the lanes (entries end at the
+  //    yield line, exits at the ring), so drivers keep their lane right up to the roundabout;
+  //  • on the approach side, the last stretch (solidLen, default 30 m) becomes 禁止變換車道線 (solid), so the
+  //    lane lines start cleanly after the crosswalk instead of with leftover dash stubs.
+  function multiLaneLegLines(rb, lg, bySide, laneLines) {
+    const m = ppm(), styles = P().lineStyles;
+    const cw = S.els.find((e) => e.owner === rb.id && e.type === 'crosswalk' && e.legKey === lg.key);
+    if (!cw) return;
+    const sIn = RB_YD + 0.54 + (cw.setback || 0), sOut = sIn + cw.width;
+    const solidLen = rb.solidApproach === false ? 0 : (rb.solidLen != null ? rb.solidLen : 30);
+    const atL = (sA, off) => G.add(G.add(lg.X, G.mul(lg.v, sA * m)), G.mul(lg.nv, off * m));
+    for (const ln of laneLines) {
+      const base = styles[ln.style];
+      const solid = Object.assign({}, base.pattern === 'dashed' ? styles.laneSolid : base);
+      const vo = lg.sgn > 0 ? ln.off : -ln.off, side = Math.sign(vo) || 1, o = Math.abs(vo), k = bySide[side];
+      const incomingHalf = lg.incoming && (lg.oneWay || side < 0);
+      // inner zone: crosswalk → yield line (entry) or ring (exit)
+      const stopR = lg.br + (incomingHalf ? RB_YD + 0.54 : 0.3);
+      let inner = [atL(sIn, vo)];
+      if (k && rb.curveLanes !== false) {
+        const bent = bendPath(rb, lg, k, o, stopR);
+        if (k.sAlong < sIn) inner = inner.concat(bent); else inner = bent;
+      } else {
+        // straight to the stop circle
+        const f = G.sub(atL(0, vo), rb.p), b = G.dot(f, lg.v), q = b * b - (G.dot(f, f) - (stopR * m) ** 2);
+        if (q >= 0) inner.push(G.add(atL(0, vo), G.mul(lg.v, -b + Math.sqrt(q))));
+      }
+      if (inner.length > 1) rb.curves.push({ pts: inner, style: solid });
+      // approach zone: solid for solidLen beyond the crosswalk
+      if (solidLen > 0 && base.pattern === 'dashed') {
+        rb.legMasks.push([atL(sOut, vo - 0.3), atL(sOut + solidLen, vo - 0.3), atL(sOut + solidLen, vo + 0.3), atL(sOut, vo + 0.3)]);
+        const line = G.offset(R.basePts(lg.el, m), ln.off * m), seg = [];
+        const sOf = (q) => G.dot(G.sub(q, lg.X), lg.v) / m;
+        for (let i = 0; i < line.length; i++) {
+          const sv = sOf(line[i]);
+          if (i > 0) { // add crossings of the window ends
+            const sp = sOf(line[i - 1]);
+            for (const edge of [sOut, sOut + solidLen]) if ((sp - edge) * (sv - edge) < 0) {
+              const t = (edge - sp) / (sv - sp); seg.push({ s: edge, p: G.add(line[i - 1], G.mul(G.sub(line[i], line[i - 1]), t)) });
+            }
+          }
+          if (sv >= sOut && sv <= sOut + solidLen) seg.push({ s: sv, p: line[i] });
+        }
+        seg.sort((a, b) => a.s - b.s);
+        if (seg.length > 1) rb.curves.push({ pts: seg.map((q) => q.p), style: solid });
+      }
+    }
+  }
+
   // a point on the bent lane line at offset o (incoming side), where it reaches radius rM from the centre
   function bentPoint(rb, lg, side, o, rM) {
     const k = rb.corners.find((c) => c.leg === lg.li && c.side === side);
@@ -1128,7 +1181,7 @@
   const syncAll = () => { for (const e of S.els.slice()) if (e.type === 'roundabout') syncRoundabout(e); };
   function buildRoundabout(C, prm) {
     return { id: newId(), type: 'roundabout', p: G.copy(C), R: prm.R, lanes: prm.turbo ? 2 : prm.lanes, laneWidth: prm.laneWidth, apron: prm.turbo ? 0 : prm.apron,
-      turbo: !!prm.turbo, divider: prm.divider || 'raised', turboAxis: prm.turboAxis || 0, turboTaper: 20, cornerR: prm.cornerR != null ? prm.cornerR : 12, laneStop: prm.laneStop !== false, curveLanes: prm.curveLanes !== false, splitters: prm.splitters !== false, curvedYield: prm.curvedYield !== false,
+      turbo: !!prm.turbo, divider: prm.divider || 'raised', turboAxis: prm.turboAxis || 0, turboTaper: 20, cornerR: prm.cornerR != null ? prm.cornerR : 12, laneStop: prm.laneStop !== false, solidApproach: prm.solidApproach !== false, solidLen: prm.solidLen != null ? prm.solidLen : 30, curveLanes: prm.curveLanes !== false, splitters: prm.splitters !== false, curvedYield: prm.curvedYield !== false,
       island: prm.island || 'island', legs: [], yields: prm.yields, crosswalks: prm.crosswalks, cwKind: prm.cwKind, cwWidth: prm.cwWidth, cwSetback: prm.cwSetback, removed: [] };
   }
 
