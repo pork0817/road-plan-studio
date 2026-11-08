@@ -863,7 +863,7 @@
         const curve = rb.curveLanes !== false;
         const cwk = rb.laneStop !== false && S.els.find((e) => e.owner === rb.id && e.type === 'crosswalk' && e.legKey === lg.key);
         const sCap = cwk ? (RB_YD + 0.54 + (cwk.setback || 0)) * m : Infinity;   // crosswalk inner edge
-        const lo = ext - 0.75 * m, hi = ext + 0.6 * m, s1 = sq, s0 = -4 * m;
+        const lo = ext - 0.75 * m, hi = ext + 0.6 * m, s1 = sq, s0 = -(rb.R + 4) * m; // deep enough for off-centre legs
         // edge line: hidden all the way to where the kerb curve starts (the curve replaces it);
         // other lines on that half: only up to the crosswalk when lane markings stop there
         const sL = Math.min(sq, sCap);
@@ -890,7 +890,10 @@
     const P1 = G.add(G.add(lg.X, G.mul(lg.v, k.sAlong * m)), G.mul(lg.nv, side * o * m));
     const rq = (k.rf + k.ext - o) * m, a0 = Math.atan2(P1.y - k.Q.y, P1.x - k.Q.x);
     const pt = (a) => ({ x: k.Q.x + rq * Math.cos(a), y: k.Q.y + rq * Math.sin(a) });
-    const step = 0.4 * Math.PI / 180, dirn = G.dist(pt(a0 + step), C) < G.dist(pt(a0 - step), C) ? 1 : -1;
+    // rotate the way that moves along the road toward the ring (decreasing distance along the leg),
+    // never across the road — the centre may lie to one side of an off-centre road
+    const sOfPt = (q) => G.dot(G.sub(q, lg.X), lg.v);
+    const step = 0.4 * Math.PI / 180, dirn = sOfPt(pt(a0 + step)) < sOfPt(pt(a0 - step)) ? 1 : -1;
     const out = [P1], target = stopR * m;
     if (G.dist(P1, C) <= target) return out;
     let a = a0;
@@ -925,7 +928,7 @@
       if (!cw) continue;
       const sOut = RB_YD + 0.54 + (cw.setback || 0) + cw.width, atL = (sA, off) => G.add(G.add(lg.X, G.mul(lg.v, sA * m)), G.mul(lg.nv, off * m));
       const lo = -(lg.leftExt - 0.45), hi = lg.rightExt - 0.45; // edge lines (0.225 m from the kerb) stay
-      rb.legMasks.push([atL(-4, lo), atL(sOut, lo), atL(sOut, hi), atL(-4, hi)]);
+      rb.legMasks.push([atL(-(rb.R + 4), lo), atL(sOut, lo), atL(sOut, hi), atL(-(rb.R + 4), hi)]);
     }
     if (rb.curveLanes === false) return;
     legs.forEach((lg, li) => {
