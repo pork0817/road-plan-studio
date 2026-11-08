@@ -400,37 +400,47 @@ window.Render = (function () {
 
 
   // ---------- turbo roundabout ----------
-  // Two lanes separated by a spiral divider. Built from semicircles around two centres shifted ±Δ/2 along the
-  // turbo axis, so everything steps outward by Δ at the axis: the inner lane begins after each step and its
-  // traffic is carried to the outer lane — no lane changes on the ring (right-hand traffic, counter-clockwise).
-  R.turboGeom = (el, ppm) => {
+  // Two lanes separated by a spiral divider. Every boundary (island, divider, outer edge) is a pair of
+  // semicircles around centres offset ±Δ/2 along the turbo axis, so it steps by Δ at the axis. The steps are
+  // blended over ±τ and centred on the main road: there the outer lane peels off as the exit and a new inner
+  // lane opens for the entry. Right-hand traffic circulates counter-clockwise; no lane changes on the ring.
+  R.turboGeom = (el) => {
     const w = el.laneWidth, sep = el.divider === 'double' ? 0.3 : 0.45, D = w + sep;
     const Rout = el.R - D / 2, Rdo = Rout - w, Rdi = Rdo - sep, R1 = Math.max(3, Rdi - w);
-    const al = el.turboAxis || 0, ax = G.fromAngle(al);
-    return { w, sep, D, Rout, Rdo, Rdi, R1, al, c1: G.add(el.p, G.mul(ax, (D / 2) * ppm)), c2: G.sub(el.p, G.mul(ax, (D / 2) * ppm)) };
+    const tau = ((el.turboTaper || 20) * Math.PI) / 180;
+    return { w, sep, D, Rout, Rdo, Rdi, R1, al: el.turboAxis || 0, tau, nose: Math.min(tau, (12 * Math.PI) / 180) };
   };
-  const arcPts = (c, r, a0, a1, n = 48) => { const o = []; for (let i = 0; i <= n; i++) { const a = a0 + ((a1 - a0) * i) / n; o.push({ x: c.x + r * Math.cos(a), y: c.y + r * Math.sin(a) }); } return o; };
-  // spiral ring of radius r (m): semicircle [al, al+π] around c1 and [al+π, al+2π] around c2 (px)
-  const spiral = (g, r, ppm) => {
-    const c1 = { x: g.c1.x, y: g.c1.y }, c2 = { x: g.c2.x, y: g.c2.y };
-    return [arcPts(c1, r * ppm, g.al, g.al + Math.PI), arcPts(c2, r * ppm, g.al + Math.PI, g.al + 2 * Math.PI)];
+  // distance (m) from the centre to a spiral boundary of nominal radius r, at screen angle th
+  R.turboR = (g, r, th, tauOverride) => {
+    const f = (x) => { const sgn = x >= 0 ? 1 : -1, h = g.D / 2; return sgn * h * Math.cos(x) + Math.sqrt(Math.max(0, r * r - (h * Math.sin(x)) ** 2)); };
+    const d = Math.atan2(Math.sin(th - g.al), Math.cos(th - g.al)), t = tauOverride || g.tau;
+    if (Math.abs(d) < t) { const k = (d + t) / (2 * t); return f(-t) * (1 - k) + f(t) * k; }
+    if (Math.PI - Math.abs(d) < t) { const dd = d > 0 ? d - Math.PI : d + Math.PI, k = (dd + t) / (2 * t); return f(Math.PI - t) * (1 - k) + f(-Math.PI + t) * k; }
+    return f(d);
   };
-  // radius (px) along the ray at angle th from the centre to the outer boundary (union of the two discs)
-  R.turboEdgeAt = (el, g, th, rM, ppm) => {
-    const e = G.fromAngle(th); let best = 0;
-    for (const c of [g.c1, g.c2]) {
-      const s = G.sub(c, el.p), es = G.dot(e, s), q = (rM * ppm) ** 2 - G.dot(s, s) + es * es;
-      if (q >= 0) best = Math.max(best, es + Math.sqrt(q));
+  const ringPts = (el, g, r, ppm, d0 = -Math.PI, d1 = Math.PI, rFn) => {
+    const o = [], n = Math.max(8, Math.ceil(((d1 - d0) * 180) / Math.PI));
+    for (let i = 0; i <= n; i++) {
+      const d = d0 + ((d1 - d0) * i) / n, th = g.al + d, rr = (rFn ? rFn(d, r) : R.turboR(g, r, th)) * ppm;
+      o.push({ x: el.p.x + rr * Math.cos(th), y: el.p.y + rr * Math.sin(th) });
     }
-    return best;
-  };
-  R.rbOutline = (el, ppm, extraM = 0) => {
-    if (!el.turbo) return R.circlePts(el.p, (el.R + extraM) * ppm);
-    const g = R.turboGeom(el, ppm), o = [];
-    for (let i = 0; i < 120; i++) { const th = (i / 120) * 2 * Math.PI, r = R.turboEdgeAt(el, g, th, g.Rout + extraM, ppm); o.push({ x: el.p.x + r * Math.cos(th), y: el.p.y + r * Math.sin(th) }); }
     return o;
   };
-  // outer edge line with gaps where legs join (angles around the centre)
+  R.turboEdgeAt = (el, g, th, rM, ppm) => R.turboR(g, rM, th) * ppm;
+  R.rbOutline = (el, ppm, extraM = 0) => {
+    if (!el.turbo) return R.circlePts(el.p, (el.R + extraM) * ppm);
+    const g = R.turboGeom(el), o = ringPts(el, g, g.Rout + extraM, ppm);
+    o.pop(); return o;
+  };
+  // divider pieces run between the steps (relative angle ranges), with tapered tips
+  const dividerRanges = (g) => [[g.tau, Math.PI - g.tau], [-Math.PI + g.tau, -g.tau]];
+  function dividerPoly(el, g, ppm, d0, d1) {
+    const tip = (8 * Math.PI) / 180, mid = (g.Rdi + g.Rdo) / 2, half = (g.Rdo - g.Rdi) / 2;
+    const k = (d) => Math.min(1, (d - d0) / tip, (d1 - d) / tip);
+    const outer = ringPts(el, g, 0, ppm, d0, d1, (d) => R.turboR(g, mid, g.al + d) + half * k(d));
+    const inner = ringPts(el, g, 0, ppm, d0, d1, (d) => R.turboR(g, mid, g.al + d) - half * k(d));
+    return outer.concat(inner.reverse());
+  }
   function edgeWithGaps(ctx, el, ppm, radiusAt, legs) {
     const inGap = (th) => (legs || []).some((g) => { const r = radiusAt(g.ang) / ppm; const h = Math.asin(Math.min(0.99, (g.w + 0.6) / Math.max(r, 1))); return Math.abs(Math.atan2(Math.sin(th - g.ang), Math.cos(th - g.ang))) < h; });
     const N = 360; let open = false;
@@ -444,26 +454,22 @@ window.Render = (function () {
     ctx.stroke();
   }
   function drawTurboLines(ctx, el, ppm, P) {
-    const g = R.turboGeom(el, ppm);
+    const g = R.turboGeom(el);
     ctx.save(); ctx.strokeStyle = P.colors.white; ctx.lineCap = 'butt'; ctx.setLineDash([]);
     ctx.lineWidth = 0.15 * ppm;
-    for (const arc of spiral(g, g.R1 + 0.25, ppm)) { path(ctx, arc); ctx.stroke(); }       // edge line along the island
-    if (el.divider === 'double') {                                                         // 雙白實線 divider
+    path(ctx, ringPts(el, g, g.R1 + 0.25, ppm, -Math.PI, Math.PI, (d, r) => R.turboR(g, r, g.al + d, g.nose)), true); ctx.stroke(); // edge line along the island
+    if (el.divider === 'double') {                                                         // §167 雙白實線 divider
       ctx.lineWidth = 0.1 * ppm;
-      for (const r of [g.Rdi + 0.05, g.Rdo - 0.05]) for (const arc of spiral(g, r, ppm)) { path(ctx, arc); ctx.stroke(); }
+      for (const [d0, d1] of dividerRanges(g)) for (const r of [g.Rdi + 0.05, g.Rdo - 0.05]) { path(ctx, ringPts(el, g, r, ppm, d0, d1)); ctx.stroke(); }
     }
     ctx.lineWidth = 0.15 * ppm;
-    edgeWithGaps(ctx, el, ppm, (th) => R.turboEdgeAt(el, g, th, g.Rout - 0.3, ppm), el.legs);
+    edgeWithGaps(ctx, el, ppm, (th) => R.turboR(g, g.Rout - 0.3, th) * ppm, el.legs);
     ctx.restore();
   }
   function drawTurboIsland(ctx, el, ppm, P) {
-    const g = R.turboGeom(el, ppm);
-    const isl = spiral(g, g.R1, ppm);
-    drawSidewalk(ctx, { pts: isl[0].concat(isl[1]), style: el.island || 'island' }, ppm, P);
-    if (el.divider !== 'double') { // raised lane divider (mountable kerb strip)
-      const inn = spiral(g, g.Rdi, ppm), out = spiral(g, g.Rdo, ppm);
-      for (let k = 0; k < 2; k++) drawSidewalk(ctx, { pts: inn[k].concat(out[k].slice().reverse()), style: 'concrete' }, ppm, P);
-    }
+    const g = R.turboGeom(el);
+    drawSidewalk(ctx, { pts: ringPts(el, g, g.R1, ppm, -Math.PI, Math.PI, (d, r) => R.turboR(g, r, g.al + d, g.nose)), style: el.island || 'island' }, ppm, P);
+    if (el.divider !== 'double') for (const [d0, d1] of dividerRanges(g)) drawSidewalk(ctx, { pts: dividerPoly(el, g, ppm, d0, d1), style: 'concrete' }, ppm, P); // raised lane divider
   }
 
   // ---------- §172 讓路線 yield line ----------
@@ -480,21 +486,35 @@ window.Render = (function () {
     [[apex + u1, -(hw(u1) - ins)], [apex + u1, hw(u1) - ins], [apex + u0, 0]].forEach(([sv, wv], i) => { const q = Q(sv, wv); i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y); });
     ctx.closePath(); ctx.fill('evenodd');
   }
-  // Yield line that follows the roundabout's edge: arcs around arcC, triangles set radially per lane.
+  // Yield line that follows the roundabout's edge. Each end is where the lane edge (a line along the
+  // approach direction through a / b) meets the arc, so the line spans every lane. Triangles stay aligned
+  // with their lane (apex toward approaching traffic) and their base follows the arc's tangent there.
   function drawYieldCurved(ctx, el, ppm, P) {
-    const C = el.arcC, r0 = el.arcR * ppm;
-    const a0 = Math.atan2(el.a.y - C.y, el.a.x - C.x), a1 = Math.atan2(el.b.y - C.y, el.b.x - C.x);
-    const d = Math.atan2(Math.sin(a1 - a0), Math.cos(a1 - a0));
+    const C = el.arcC, r0 = el.arcR * ppm, t = G.fromAngle(el.dir), u = G.rightN(t);
+    const hit = (p, rr) => {
+      const f = G.sub(p, C), b = G.dot(f, t), c = G.dot(f, f) - rr * rr, disc = b * b - c;
+      if (disc < 0) return p;
+      const s1 = -b - Math.sqrt(disc), s2 = -b + Math.sqrt(disc);
+      return G.add(p, G.mul(t, Math.abs(s1) < Math.abs(s2) ? s1 : s2));
+    };
     ctx.save(); ctx.strokeStyle = ctx.fillStyle = P.colors.white; ctx.lineCap = 'butt';
     ctx.lineWidth = 0.18 * ppm; ctx.setLineDash([0.36 * ppm, 0.24 * ppm]);
-    for (const off of [0.09, 0.45]) { ctx.beginPath(); ctx.arc(C.x, C.y, r0 + off * ppm, a0, a0 + d, d < 0); ctx.stroke(); }
+    for (const off of [0.09, 0.45]) {
+      const rr = r0 + off * ppm, ea = hit(el.a, rr), eb = hit(el.b, rr);
+      const a0 = Math.atan2(ea.y - C.y, ea.x - C.x), a1 = Math.atan2(eb.y - C.y, eb.x - C.x);
+      const d = Math.atan2(Math.sin(a1 - a0), Math.cos(a1 - a0));
+      ctx.beginPath(); ctx.arc(C.x, C.y, rr, a0, a0 + d, d < 0); ctx.stroke();
+    }
     ctx.setLineDash([]);
     if (el.triangles) {
-      const n = Math.max(1, el.lanes | 0);
+      const n = Math.max(1, el.lanes | 0), L = G.dist(el.a, el.b), ab = G.norm(G.sub(el.b, el.a));
       for (let k = 0; k < n; k++) {
-        const th = a0 + (d * (k + 0.5)) / n, e = G.fromAngle(th), t = G.mul(e, -1), u = G.rightN(t);
-        const cpt = G.add(C, G.mul(e, r0));
-        yieldTriangle(ctx, (sv, wv) => G.add(G.add(cpt, G.mul(t, sv * ppm)), G.mul(u, wv * ppm)));
+        const mk = G.add(el.a, G.mul(ab, (L * (k + 0.5)) / n));
+        const Pk = hit(mk, r0);
+        let tan = G.rightN(G.norm(G.sub(Pk, C)));
+        if (G.dot(tan, u) < 0) tan = G.mul(tan, -1);
+        const us = G.mul(tan, 1 / Math.max(0.35, G.dot(tan, u))); // sheared lateral axis: base follows the curve
+        yieldTriangle(ctx, (sv, wv) => G.add(G.add(Pk, G.mul(t, sv * ppm)), G.mul(us, wv * ppm)));
       }
     }
     ctx.restore();

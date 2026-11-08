@@ -174,7 +174,7 @@ window.RoadPresets = window.RoadPresets || {};
         if (el.turbo) {
           f.push(num('laneWidth', '環道車道寬 Lane width', 4, 6.5, 0.1, '≈ 常用 5 m'),
             { kind: 'sel', key: 'divider', label: '車道分隔 Divider', options: [['raised', '凸起分隔帶 Raised kerb'], ['double', '雙白實線 Double white (§167)']] });
-          if (!tool) f.push({ kind: 'deg', key: 'turboAxis', label: '螺旋方向 Spiral angle' });
+          if (!tool) f.push({ kind: 'deg', key: 'turboAxis', label: '螺旋方向 Spiral angle' }, { kind: 'num', key: 'turboTaper', label: '過渡角 Transition (°)', min: 8, max: 45, step: 1 });
         } else {
           f.push({ kind: 'num', key: 'lanes', label: '環道車道數 Lanes', min: 1, max: 3, step: 1 },
             num('laneWidth', '環道車道寬 Lane width', 4, 7, 0.1, '≈ 環道常用 5–6 m'), num('apron', '可跨越緣帶 Truck apron', 0, 4, 0.1, '≈'));

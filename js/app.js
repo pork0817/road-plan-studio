@@ -273,7 +273,7 @@
         alignTwo(el, false); return el;
       }
       if (m === 'roundabout' && !S.drag) {
-        return { id: '_preview', type: 'roundabout', p: G.copy(w), R: S.params.R, lanes: S.params.turbo ? 2 : S.params.lanes, laneWidth: S.params.laneWidth, apron: S.params.turbo ? 0 : S.params.apron, island: S.params.island, turbo: !!S.params.turbo, divider: S.params.divider, turboAxis: 0, legs: [] };
+        return { id: '_preview', type: 'roundabout', p: G.copy(w), R: S.params.R, lanes: S.params.turbo ? 2 : S.params.lanes, laneWidth: S.params.laneWidth, apron: S.params.turbo ? 0 : S.params.apron, island: S.params.island, turbo: !!S.params.turbo, divider: S.params.divider, turboAxis: 0, turboTaper: 20, legs: [] };
       }
       if (m === 'point' && !S.drag) {
         const el = Object.assign({ id: '_preview' }, clone(S.params), { p: G.copy(w) });
@@ -465,7 +465,12 @@
         if (rb.turbo) {
           // put the spiral step just upstream of the busiest entry, so its traffic can pick the new inner lane
           const legs = rbLegs(rb).filter((l) => l.incoming).sort((p, q) => q.lanes - p.lanes);
-          if (legs.length) rb.turboAxis = G.angle(G.sub(legs[0].X, rb.p)) + (25 * Math.PI) / 180;
+          if (legs.length) {
+            // centre the spiral step on the main road; the blend spans the road's mouth
+            rb.turboAxis = G.angle(G.sub(legs[0].X, rb.p));
+            const half = Math.asin(Math.min(0.95, (Math.max(legs[0].leftExt, legs[0].rightExt) + 1) / rb.R)) * 180 / Math.PI;
+            rb.turboTaper = Math.round(G.clamp(half + 4, 12, 40));
+          }
         }
         S.els.push(rb); syncRoundabout(rb); S.sel = rb.id; commit(); setTool('select'); S.sel = rb.id; renderProps();
       } else if (m === 'junction') {
@@ -786,9 +791,8 @@
   function rbLegs(rb) {
     const m = ppm(), C = rb.p, legs = [];
     // the outer edge: one circle, or for a turbo roundabout the union of its two offset circles
-    let circles;
-    if (rb.turbo) { const g = R.turboGeom(rb, m); circles = [{ c: g.c1, r: g.Rout * m, rM: g.Rout }, { c: g.c2, r: g.Rout * m, rM: g.Rout }]; }
-    else circles = [{ c: C, r: rb.R * m, rM: rb.R }];
+    const circles = rb.turbo ? [] : [{ c: C, r: rb.R * m, rM: rb.R }];
+    const outline = rb.turbo ? R.rbOutline(rb, m) : null;
     for (const el of S.els) {
       if (el.type !== 'section') continue;
       const pts = R.basePts(el, m), L = R.sectionLayout(el);
@@ -796,6 +800,17 @@
       for (let i = 0; i < pts.length - 1; i++) {
         const a = pts[i], d = G.sub(pts[i + 1], a), A = G.dot(d, d);
         if (A === 0) continue;
+        if (outline) { // turbo: intersect with the spiral outline polygon; curve the yield around the centre
+          for (let j = 0; j < outline.length; j++) {
+            const q0 = outline[j], q1 = outline[(j + 1) % outline.length], e = G.sub(q1, q0), den = G.cross(d, e);
+            if (Math.abs(den) < 1e-9) continue;
+            const sp = G.cross(G.sub(q0, a), e) / den, sq = G.cross(G.sub(q0, a), d) / den;
+            if (sp < 0 || sp > 1 || sq < 0 || sq >= 1) continue;
+            if (hits.some((h) => Math.abs(h.pos - (i + sp)) < 1e-6)) continue;
+            const X = G.add(a, G.mul(d, sp));
+            hits.push({ pos: i + sp, X, t: G.norm(d), cc: { c: C, rM: G.dist(X, C) / m } });
+          }
+        }
         for (const cc of circles) {
           const f = G.sub(a, cc.c), B = 2 * G.dot(f, d), Cc = G.dot(f, f) - cc.r * cc.r, disc = B * B - 4 * A * Cc;
           if (disc < 0) continue;
@@ -895,7 +910,7 @@
   const syncAll = () => { for (const e of S.els.slice()) if (e.type === 'roundabout') syncRoundabout(e); };
   function buildRoundabout(C, prm) {
     return { id: newId(), type: 'roundabout', p: G.copy(C), R: prm.R, lanes: prm.turbo ? 2 : prm.lanes, laneWidth: prm.laneWidth, apron: prm.turbo ? 0 : prm.apron,
-      turbo: !!prm.turbo, divider: prm.divider || 'raised', turboAxis: prm.turboAxis || 0, curvedYield: prm.curvedYield !== false,
+      turbo: !!prm.turbo, divider: prm.divider || 'raised', turboAxis: prm.turboAxis || 0, turboTaper: 20, curvedYield: prm.curvedYield !== false,
       island: prm.island || 'island', legs: [], yields: prm.yields, crosswalks: prm.crosswalks, cwKind: prm.cwKind, cwWidth: prm.cwWidth, cwSetback: prm.cwSetback, removed: [] };
   }
 
