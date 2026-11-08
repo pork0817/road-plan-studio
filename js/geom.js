@@ -35,21 +35,57 @@ window.G = (function () {
       }
       out.push({ x: pts[i].x + m.x * d, y: pts[i].y + m.y * d });
     }
-    return out;
+    return G.trimLoops(out);
   };
 
-  // Catmull-Rom resampling for smooth curves through the clicked points.
+  // On the inside of a bend tighter than the offset distance an offset line folds back over itself (spikes /
+  // swallowtails). Cut each fold out at the point where the line crosses itself (checked within a local window).
+  const segX = (a, b, c, d) => {
+    const r = G.sub(b, a), s2 = G.sub(d, c), den = G.cross(r, s2);
+    if (Math.abs(den) < 1e-12) return null;
+    const t = G.cross(G.sub(c, a), s2) / den, u = G.cross(G.sub(c, a), r) / den;
+    return t > 0 && t < 1 && u > 0 && u < 1 ? { x: a.x + r.x * t, y: a.y + r.y * t } : null;
+  };
+  G.trimLoops = function (pts, win = 120) {
+    const n = pts.length;
+    if (n < 4) return pts;
+    const res = [pts[0]];
+    let i = 0, cur = pts[0];
+    while (i < n - 1) {
+      const b = pts[i + 1];
+      const minx = Math.min(cur.x, b.x), maxx = Math.max(cur.x, b.x), miny = Math.min(cur.y, b.y), maxy = Math.max(cur.y, b.y);
+      let hit = null, hj = -1;
+      for (let j = Math.min(n - 2, i + win); j >= i + 2; j--) { // farthest crossing first: removes the whole fold
+        const c = pts[j], d = pts[j + 1];
+        if (Math.max(c.x, d.x) < minx || Math.min(c.x, d.x) > maxx || Math.max(c.y, d.y) < miny || Math.min(c.y, d.y) > maxy) continue;
+        const X = segX(cur, b, c, d);
+        if (X) { hit = X; hj = j; break; }
+      }
+      if (hit) { res.push(hit); cur = hit; i = hj; continue; }
+      res.push(b); cur = b; i++;
+    }
+    return res;
+  };
+
+  // Centripetal Catmull–Rom through the clicked points: unlike the uniform version it never loops or
+  // overshoots when neighbouring points are spaced very unevenly (e.g. a point added near another).
+  G.crPoint = function (pts, i, u) {
+    const n = pts.length, P1 = pts[i], P2 = pts[i + 1];
+    const P0 = i > 0 ? pts[i - 1] : { x: 2 * P1.x - P2.x, y: 2 * P1.y - P2.y };
+    const P3 = i + 2 < n ? pts[i + 2] : { x: 2 * P2.x - P1.x, y: 2 * P2.y - P1.y };
+    const dt = (a, b) => Math.max(Math.sqrt(G.dist(a, b)), 1e-4);
+    const t0 = 0, t1 = t0 + dt(P0, P1), t2 = t1 + dt(P1, P2), t3 = t2 + dt(P2, P3), t = t1 + (t2 - t1) * u;
+    const L = (A, B, ta, tb) => ({ x: ((tb - t) * A.x + (t - ta) * B.x) / (tb - ta), y: ((tb - t) * A.y + (t - ta) * B.y) / (tb - ta) });
+    const A1 = L(P0, P1, t0, t1), A2 = L(P1, P2, t1, t2), A3 = L(P2, P3, t2, t3);
+    const B1 = L(A1, A2, t0, t2), B2 = L(A2, A3, t1, t3);
+    return L(B1, B2, t1, t2);
+  };
   G.smooth = function (pts, step) {
     if (pts.length < 3) return pts.map(G.copy);
     const out = [G.copy(pts[0])];
     for (let i = 0; i < pts.length - 1; i++) {
-      const p0 = pts[Math.max(i - 1, 0)], p1 = pts[i], p2 = pts[i + 1], p3 = pts[Math.min(i + 2, pts.length - 1)];
-      const segs = Math.min(120, Math.max(2, Math.ceil(G.dist(p1, p2) / step)));
-      for (let k = 1; k <= segs; k++) {
-        const t = k / segs, t2 = t * t, t3 = t2 * t;
-        const f = (a, b, c, d) => 0.5 * (2 * b + (-a + c) * t + (2 * a - 5 * b + 4 * c - d) * t2 + (-a + 3 * b - 3 * c + d) * t3);
-        out.push({ x: f(p0.x, p1.x, p2.x, p3.x), y: f(p0.y, p1.y, p2.y, p3.y) });
-      }
+      const segs = Math.min(160, Math.max(2, Math.ceil(G.dist(pts[i], pts[i + 1]) / step)));
+      for (let k = 1; k <= segs; k++) out.push(k === segs ? G.copy(pts[i + 1]) : G.crPoint(pts, i, k / segs));
     }
     return out;
   };

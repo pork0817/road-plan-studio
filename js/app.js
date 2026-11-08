@@ -157,11 +157,7 @@
     }
     return [];
   }
-  function catmullMid(pts, i) {
-    const p0 = pts[Math.max(i - 1, 0)], p1 = pts[i], p2 = pts[i + 1], p3 = pts[Math.min(i + 2, pts.length - 1)], t = 0.5;
-    const f = (a, b, c, d) => 0.5 * (2 * b + (-a + c) * t + (2 * a - 5 * b + 4 * c - d) * t * t + (-a + 3 * b - 3 * c + d) * t * t * t);
-    return { x: f(p0.x, p1.x, p2.x, p3.x), y: f(p0.y, p1.y, p2.y, p3.y) };
-  }
+  function catmullMid(pts, i) { return G.crPoint(pts, i, 0.5); } // same curve as the drawing (centripetal)
   function hitHandle(sx, sy) {
     const el = findEl(S.sel);
     for (const h of handlesOf(el)) { const s = toScreen(h.p); if (Math.hypot(s.x - sx, s.y - sy) < 8) return h; }
