@@ -22,6 +22,7 @@
     <label class="ctl">衛星圖 <input type="range" id="rngImage" min="0" max="1" step="0.05" value="1"></label>
     <label class="ctl">路面 <input type="range" id="rngRoad" min="0" max="1" step="0.05" value="1"></label>
     <label class="chk"><input type="checkbox" id="chkClip" checked> 標線限路面內</label>
+    <label class="chk magnet" title="磁吸：拖曳/旋轉時接近水平、垂直或車道方向會自動吸附；也吸附端點 (按住 Alt 暫時關閉)"><input type="checkbox" id="chkMagnet" checked> 🧲 磁吸 Magnet</label>
     <span class="grow"></span>
     <button id="btnNew" title="Clear everything">新專案 New</button>
   </header>
@@ -40,6 +41,7 @@
   </main>
   <footer id="status"><span id="stHint"></span><span id="stInfo"></span></footer>
   <script src="js/geom.js"></script>
+  <script src="js/presets/taiwan-shapes.js"></script>
   <script src="js/presets/taiwan.js"></script>
   <script src="js/render.js"></script>
   <script src="js/app.js"></script>

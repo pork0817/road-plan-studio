@@ -10,7 +10,7 @@
     tool: 'select', item: null, params: null,
     view: { x: 40, y: 40, s: 0.5 },
     draft: null, mouseS: { x: 0, y: 0 }, mouseW: { x: 0, y: 0 }, snap: null,
-    imgOpacity: 1, roadOpacity: 1, clip: true,
+    imgOpacity: 1, roadOpacity: 1, clip: true, magnet: true, align: null,
     hist: [], fut: [], cur: '[]', drag: null, space: false, measure: null,
   };
   const P = () => window.RoadPresets[S.country];
@@ -104,7 +104,7 @@
   function buildElement(item, geom) {
     const el = Object.assign({ id: newId() }, clone(S.params || item.defaults), geom);
     if (el.type === 'crosswalk' || el.type === 'stopline' || el.type === 'scooterbox') { el.dir = null; alignTwo(el, false); }
-    if (el.type === 'arrow' || el.type === 'text' || el.type === 'chevron' || el.type === 'yellowbox') alignPoint(el);
+    if (el.type === 'arrow' || el.type === 'text' || el.type === 'symbol' || el.type === 'chevron' || el.type === 'yellowbox') alignPoint(el);
     return el;
   }
   const findEl = (id) => S.els.find((e) => e.id === id);
@@ -127,9 +127,13 @@
   function handlesOf(el) {
     if (!el) return [];
     if (el.pts) return el.pts.map((p, i) => ({ key: 'pts', i, p }));
-    if (el.a) return [{ key: 'a', p: el.a }, { key: 'b', p: el.b }];
+    if (el.a) {
+      const m = G.mid(el.a, el.b), t = G.fromAngle(el.dir || 0);
+      const ext = (el.type === 'crosswalk' ? el.width / 2 : el.type === 'scooterbox' ? el.depth : el.width / 2) + 1.5;
+      return [{ key: 'a', p: el.a }, { key: 'b', p: el.b }, { key: 'rot2', p: G.add(m, G.mul(t, ext * ppm())) }];
+    }
     if (el.p) {
-      const len = (el.type === 'arrow' ? el.length : R.textLength(el)) * ppm();
+      const len = (el.type === 'arrow' ? el.length : el.type === 'symbol' ? R.iconSize(el)[1] : R.textLength(el)) * ppm();
       return [{ key: 'p', p: el.p }, { key: 'rot', p: G.add(el.p, G.mul(G.fromAngle(el.dir), len / 2 + 1.2 * ppm())) }];
     }
     return [];
@@ -147,13 +151,28 @@
   }
 
   // ---------------- snapping ----------------
+  // Angle magnet: snap an angle to horizontal/vertical, or parallel/perpendicular to the nearest lane, when close.
+  const MAG_TOL = 3 * Math.PI / 180;
+  function magnetAngle(a, near, excludeId) {
+    S.magHit = null;
+    if (!S.magnet) return a;
+    const cands = [0, Math.PI / 2, Math.PI, -Math.PI / 2].map((v) => ({ v, why: v % Math.PI ? '垂直 vertical' : '水平 horizontal' }));
+    const ln = near && laneAt(near, excludeId);
+    if (ln) { const la = G.angle(ln.t); for (let k = 0; k < 4; k++) cands.push({ v: la + k * Math.PI / 2, why: k % 2 ? '垂直車道 ⊥ lane' : '平行車道 ∥ lane' }); }
+    let best = null, bd = MAG_TOL;
+    for (const c of cands) { const d = Math.abs(Math.atan2(Math.sin(a - c.v), Math.cos(a - c.v))); if (d < bd) { bd = d; best = c; } }
+    if (!best) return a;
+    S.magHit = best.why;
+    return best.v;
+  }
   function snapW(w, prev, ev, excludeId) {
-    S.snap = null;
+    S.snap = null; S.magHit = null;
     if (ev && ev.altKey) return w;
     if (prev && ev && ev.shiftKey) {
       const d = G.sub(w, prev), a = Math.round(G.angle(d) / (Math.PI / 12)) * (Math.PI / 12), l = G.len(d);
       return G.add(prev, G.mul(G.fromAngle(a), l));
     }
+    if (!S.magnet) return w;
     const tol = 9 / S.view.s;
     let best = null, bd = tol;
     for (const el of S.els) {
@@ -163,6 +182,10 @@
     }
     if (S.draft && S.draft.pts && S.draft.pts.length > 2) { const p0 = S.draft.pts[0]; if (G.dist(p0, w) < bd) best = p0; }
     if (best) { S.snap = best; return G.copy(best); }
+    if (prev && G.dist(w, prev) > 4 / S.view.s) {
+      const d = G.sub(w, prev), a0 = G.angle(d), a = magnetAngle(a0, prev, excludeId);
+      if (a !== a0) return G.add(prev, G.mul(G.fromAngle(a), G.len(d)));
+    }
     return w;
   }
 
@@ -187,7 +210,9 @@
 
   function updateHint() {
     let h = '';
-    if (S.tool === 'select') h = '點選物件編輯，拖曳控制點修改；雙擊邊線新增節點，Alt+點節點刪除。<kbd>Del</kbd> 刪除 <kbd>⌘D</kbd> 複製 <kbd>[ ]</kbd> 旋轉';
+    if (S.align && !S.align.tgtId) h = '📐 點選要對齊的目標物件 (停止線、行人穿越道、車道、箭頭…)，<kbd>Esc</kbd> 取消';
+    else if (S.align) h = '📐 已對齊 — 可在右側調整間距 / 端點，按「完成」結束';
+    else if (S.tool === 'select') h = '點選物件編輯，拖曳控制點修改；雙擊邊線新增節點，Alt+點節點刪除。<kbd>Del</kbd> 刪除 <kbd>⌘D</kbd> 複製 <kbd>[ ]</kbd> 旋轉';
     else if (S.tool === 'pan') h = '拖曳平移；⌘/Ctrl+滾輪或觸控板捏合縮放';
     else if (S.tool === 'calibrate') h = '在圖上點兩點 (例如 Google 地圖比例尺兩端)，再輸入實際距離 (公尺)';
     else if (S.tool === 'measure') h = '點兩點量測距離';
@@ -276,9 +301,10 @@
       if (sel.type === 'section' || sel.type === 'line') { ctx.setLineDash([4, 4]); strokeShape({ line: sel.pts }, '#ffffffaa', 1); ctx.setLineDash([]); }
       for (const h of handlesOf(sel)) {
         const s = toScreen(h.p);
-        ctx.fillStyle = h.key === 'rot' ? '#f0b429' : '#fff'; ctx.strokeStyle = '#1e6fa8'; ctx.lineWidth = 2;
+        const isRot = h.key === 'rot' || h.key === 'rot2';
+        ctx.fillStyle = isRot ? '#f0b429' : '#fff'; ctx.strokeStyle = '#1e6fa8'; ctx.lineWidth = 2;
         ctx.beginPath();
-        if (h.key === 'rot') ctx.arc(s.x, s.y, 5, 0, Math.PI * 2); else ctx.rect(s.x - 4.5, s.y - 4.5, 9, 9);
+        if (isRot) ctx.arc(s.x, s.y, 5, 0, Math.PI * 2); else ctx.rect(s.x - 4.5, s.y - 4.5, 9, 9);
         ctx.fill(); ctx.stroke();
       }
     }
@@ -306,6 +332,12 @@
       const label = S.tool === 'calibrate' ? dpx.toFixed(0) + ' px' : (dpx / ppm()).toFixed(2) + ' m' + (S.ppm ? '' : ' (未校正)');
       pill(label, (a.x + b.x) / 2, (a.y + b.y) / 2 - 14);
     }
+    if (S.align) {
+      const tg = findEl(S.align.tgtId);
+      if (tg) { const sh = R.shape(tg, ppm(), P()); if (sh) strokeShape(sh, '#f0b429', 2); }
+      else if (S.hover && S.hover !== S.align.srcId) { const hv = findEl(S.hover); const sh = hv && R.shape(hv, ppm(), P()); if (sh) strokeShape(sh, '#f0b429aa', 2); }
+    }
+    if (S.magHit && (S.drag || S.draft)) pill('🧲 ' + S.magHit, S.mouseS.x + 60, S.mouseS.y - 18);
     if (S.snap) { const s = toScreen(S.snap); ctx.strokeStyle = '#f0b429'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(s.x, s.y, 7, 0, Math.PI * 2); ctx.stroke(); }
     drawScaleBar(H);
   }
@@ -339,6 +371,9 @@
     if (e.button === 1 || S.space || S.tool === 'pan') { S.drag = { kind: 'pan', s0: s, v0: { ...S.view } }; stage.style.cursor = 'grabbing'; e.preventDefault(); return; }
     if (e.button === 2) return;
 
+    if (S.tool === 'select' && S.align && !S.align.tgtId) {
+      pickAlignTarget(hitTest(w)); return;
+    }
     if (S.tool === 'select') {
       const h = hitHandle(s.x, s.y);
       const sel = findEl(S.sel);
@@ -349,7 +384,8 @@
       }
       if (h) { S.drag = { kind: 'handle', h, orig: clone(sel), moved: false }; return; }
       const el = hitTest(w);
-      if (el) { S.sel = el.id; S.drag = { kind: 'move', w0: w, orig: clone(el), moved: false }; renderProps(); redraw(); return; }
+      if (el) { if (S.align && el.id !== S.align.srcId) endAlign(false); S.sel = el.id; S.drag = { kind: 'move', w0: w, orig: clone(el), moved: false }; renderProps(); redraw(); return; }
+      if (S.align) endAlign(false);
       S.sel = null; renderProps();
       S.drag = { kind: 'pan', s0: s, v0: { ...S.view } };
       redraw(); return;
@@ -403,13 +439,26 @@
       else if (d.kind === 'move') { const el = findEl(S.sel); moveEl(el, d.orig, G.sub(w, d.w0)); d.moved = true; }
       else if (d.kind === 'handle') {
         const el = findEl(S.sel), h = d.h;
-        const p = h.key === 'rot' ? w : snapW(w, null, e, el.id);
-        if (h.key === 'pts') el.pts[h.i] = p;
-        else if (h.key === 'a' || h.key === 'b' || h.key === 'p') el[h.key] = p;
-        else if (h.key === 'rot') {
-          let a = G.angle(G.sub(w, el.p));
-          if (e.shiftKey) a = Math.round(a / (Math.PI / 12)) * (Math.PI / 12);
-          el.dir = a;
+        const o = d.orig;
+        const rotSnap = (a, near) => (e.shiftKey ? Math.round(a / (Math.PI / 12)) * (Math.PI / 12) : e.altKey ? a : magnetAngle(a, near, el.id));
+        if (h.key === 'pts') {
+          const nb = o.pts[h.i - 1] || o.pts[h.i + 1];
+          el.pts[h.i] = snapW(w, nb, e, el.id);
+        } else if (h.key === 'p') el.p = snapW(w, null, e, el.id);
+        else if (h.key === 'a' || h.key === 'b') {
+          // keep the crossing square to traffic: the dragged end slides along the line through the other end
+          const other = h.key === 'a' ? o.b : o.a;
+          let p = snapW(w, null, e, el.id);
+          if (!e.altKey) { const n = G.rightN(G.fromAngle(o.dir)); p = G.add(other, G.mul(n, G.dot(G.sub(p, other), n))); }
+          el[h.key] = p;
+        } else if (h.key === 'rot') {
+          el.dir = rotSnap(G.angle(G.sub(w, el.p)), el.p);
+        } else if (h.key === 'rot2') {
+          // rotate the whole crosswalk / stop line / box about its centre
+          const m = G.mid(o.a, o.b);
+          const nd = rotSnap(G.angle(G.sub(w, m)), m), da = nd - o.dir;
+          const rot = (q) => { const v = G.sub(q, m), c = Math.cos(da), sn = Math.sin(da); return { x: m.x + v.x * c - v.y * sn, y: m.y + v.x * sn + v.y * c }; };
+          el.a = rot(o.a); el.b = rot(o.b); el.dir = nd;
         }
         d.moved = true;
       }
@@ -485,6 +534,7 @@
     if (mod && e.key.toLowerCase() === 'd') { e.preventDefault(); if (sel) duplicate(sel); return; }
     if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); saveProject(); return; }
     if (mod) return;
+    if (e.key === 'Escape' && S.align) { endAlign(!S.align.tgtId ? false : false); return; }
     if (e.key === 'Escape') {
       if (S.draft || S.measure) { S.draft = null; S.measure = null; }
       else if (S.tool !== 'select') setTool('select');
@@ -507,6 +557,7 @@
       sel.dir += (e.key === ']' ? 1 : -1) * (e.shiftKey ? Math.PI / 2 : Math.PI / 12); commit();
     }
     if (sel && e.key === 'f') doAction('flip');
+    if (sel && e.key === 'a') startAlign();
     if (sel && e.key.startsWith('Arrow')) {
       const k = (e.shiftKey ? 10 : 1) / S.view.s;
       const d = { ArrowLeft: { x: -k, y: 0 }, ArrowRight: { x: k, y: 0 }, ArrowUp: { x: 0, y: -k }, ArrowDown: { x: 0, y: k } }[e.key];
@@ -543,6 +594,94 @@
     if (a === 'rotL') el.dir -= Math.PI / 12;
     if (a === 'rotR') el.dir += Math.PI / 12;
     commit();
+  }
+
+
+  // ---------------- align two objects ----------------
+  const BAND = new Set(['crosswalk', 'stopline', 'scooterbox']);
+  const POINT = new Set(['arrow', 'text', 'symbol']);
+  const canAlign = (el) => el && (BAND.has(el.type) || POINT.has(el.type));
+  const centerOf = (el) => (el.a ? G.mid(el.a, el.b) : el.p ? el.p : G.centroid(el.pts));
+  function dirOf(el, near) {
+    if (el.a || el.p) return el.dir || 0;
+    const pts = R.basePts(el, ppm());
+    const r = G.nearestOnPolyline(near || G.centroid(pts), pts, !['line', 'section'].includes(el.type));
+    if (!r) return 0;
+    let t = r.tangent;
+    if (el.type === 'section' && el.lanesB > 0 && near && G.dot(G.sub(near, r.proj), G.rightN(t)) < 0) t = G.mul(t, -1);
+    return G.angle(t);
+  }
+  // how far (px) a band element reaches from its a→b line on the side of unit normal n
+  function bandExtent(el, n) {
+    if (el.type === 'scooterbox') return G.dot(G.fromAngle(el.dir), n) > 0 ? el.depth * ppm() : 0;
+    return (el.width / 2) * ppm();
+  }
+  function defaultGap(src, tgt) {
+    const pair = new Set([src.type, tgt.type]);
+    if (pair.has('crosswalk') && pair.has('stopline')) return P().stopLine.toCrosswalk.min; // §170 淨距 2–3 m
+    return 0;
+  }
+  function startAlign() {
+    const el = findEl(S.sel);
+    if (!canAlign(el)) return;
+    if (S.tool !== 'select') setTool('select');
+    S.sel = el.id;
+    S.align = { srcId: el.id, orig: clone(el), tgtId: null, opts: { gap: 0, ends: false, axis: true } };
+    renderProps(); updateHint(); redraw();
+  }
+  function endAlign(cancel) {
+    if (!S.align) return;
+    if (cancel) { const el = findEl(S.align.srcId); if (el) Object.assign(el, clone(S.align.orig)); commit(); }
+    S.align = null; renderProps(); updateHint(); redraw();
+  }
+  function applyAlign() {
+    const A = S.align, src = findEl(A.srcId), tgt = findEl(A.tgtId);
+    if (!src || !tgt) return;
+    Object.assign(src, clone(A.orig));
+    const o = A.opts;
+    if (BAND.has(src.type)) {
+      const c = centerOf(src), L = G.dist(src.a, src.b);
+      let tDir = dirOf(tgt, c);
+      if (G.dot(G.fromAngle(tDir), G.fromAngle(src.dir)) < 0) tDir += Math.PI; // keep the source's own traffic sense
+      src.dir = tDir;
+      if (BAND.has(tgt.type)) {
+        let uT = G.norm(G.sub(tgt.b, tgt.a));
+        if (G.dot(uT, G.sub(src.b, src.a)) < 0) uT = G.mul(uT, -1);
+        src.a = G.sub(c, G.mul(uT, L / 2)); src.b = G.add(c, G.mul(uT, L / 2));
+        const n = G.rightN(G.norm(G.sub(tgt.b, tgt.a)));
+        const dC = G.dot(G.sub(c, tgt.a), n), side = Math.sign(dC) || 1, ns = G.mul(n, side);
+        const want = side * (bandExtent(tgt, ns) + o.gap * ppm() + bandExtent(src, G.mul(ns, -1)));
+        if (o.ends) {
+          const tA = G.dot(G.sub(src.a, tgt.a), uT) < G.dot(G.sub(src.b, tgt.a), uT) ? [tgt.a, tgt.b] : [tgt.b, tgt.a];
+          const flip = G.dot(G.sub(tgt.b, tgt.a), uT) < 0;
+          src.a = G.add(flip ? tgt.b : tgt.a, G.mul(n, want)); src.b = G.add(flip ? tgt.a : tgt.b, G.mul(n, want));
+        } else {
+          const sh = G.mul(n, want - dC);
+          src.a = G.add(src.a, sh); src.b = G.add(src.b, sh);
+        }
+      } else {
+        // square the crossing to the target's direction, keeping its first end and length
+        const n = G.rightN(G.fromAngle(tDir));
+        const sgn = Math.sign(G.dot(G.sub(src.b, src.a), n)) || 1;
+        src.a = G.sub(c, G.mul(n, (sgn * L) / 2)); src.b = G.add(c, G.mul(n, (sgn * L) / 2));
+      }
+    } else if (POINT.has(src.type)) {
+      const tDir = dirOf(tgt, src.p);
+      src.dir = G.dot(G.fromAngle(tDir), G.fromAngle(src.dir)) < 0 && !o.matchSense ? tDir + Math.PI : tDir;
+      if (o.axis && (tgt.a || tgt.p)) {
+        // put the source on the target's centre line (along traffic)
+        const c = centerOf(tgt), t = G.fromAngle(tDir);
+        src.p = G.add(c, G.mul(t, G.dot(G.sub(src.p, c), t)));
+      }
+    }
+  }
+  function pickAlignTarget(el) {
+    const A = S.align;
+    if (!el || el.id === A.srcId) return;
+    A.tgtId = el.id;
+    const src = findEl(A.srcId);
+    A.opts.gap = defaultGap(src, el);
+    applyAlign(); commit(); updateHint();
   }
 
   // ---------------- side panels ----------------
@@ -624,6 +763,35 @@
     return row;
   }
 
+  function alignPanel(el) {
+    const A = S.align, tgt = findEl(A.tgtId);
+    const box = document.createElement('div'); box.className = 'alignbox';
+    const t = document.createElement('div'); t.className = 'aligntitle';
+    t.textContent = tgt ? '📐 對齊至：' + (P().typeNames[tgt.type] || tgt.type).split(' ')[0] : '📐 點選畫面上要對齊的目標物件…';
+    box.appendChild(t);
+    if (tgt) {
+      const set = (k, v) => { A.opts[k] = v; applyAlign(); commit(); };
+      if (BAND.has(el.type) && BAND.has(tgt.type)) {
+        box.appendChild(fieldRow({ kind: 'num', key: 'gap', label: '間距 Gap', min: 0, max: 30, step: 0.1,
+          law: new Set([el.type, tgt.type]).has('crosswalk') && new Set([el.type, tgt.type]).has('stopline') ? '§170 停止線與行人穿越道淨距 2–3 m (受限時≥1 m)' : null }, A.opts, set));
+        box.appendChild(fieldRow({ kind: 'chk', key: 'ends', label: '端點對齊 Match ends' }, A.opts, set));
+        const i = document.createElement('div'); i.className = 'info'; i.textContent = '已設為平行並貼齊邊緣 (間距由邊緣量起)。Parallel, measured edge to edge.'; box.appendChild(i);
+      } else if (POINT.has(el.type)) {
+        if (tgt.a || tgt.p) box.appendChild(fieldRow({ kind: 'chk', key: 'axis', label: '對齊中心線 Same centre line' }, A.opts, set));
+        const i = document.createElement('div'); i.className = 'info'; i.textContent = '方向已與目標一致。Direction matched to target.'; box.appendChild(i);
+      } else {
+        const i = document.createElement('div'); i.className = 'info'; i.textContent = '已轉為與目標行車方向垂直。Squared to target direction.'; box.appendChild(i);
+      }
+    }
+    const row = document.createElement('div'); row.className = 'btnrow';
+    const ok = document.createElement('button'); ok.className = 'primary'; ok.textContent = '完成 Done'; ok.onclick = () => endAlign(false);
+    const cancel = document.createElement('button'); cancel.textContent = '取消 Cancel'; cancel.onclick = () => endAlign(true);
+    const other = document.createElement('button'); other.textContent = '換目標 Pick another'; other.onclick = () => { A.tgtId = null; Object.assign(el, clone(A.orig)); commit(); updateHint(); };
+    row.append(ok, cancel); if (tgt) row.append(other);
+    box.appendChild(row);
+    return box;
+  }
+
   function renderProps() {
     const el = findEl(S.sel);
     const box = $('#props');
@@ -633,6 +801,7 @@
       const h = document.createElement('h3');
       h.textContent = (el ? '' : '新增：') + (P().typeNames[target.type] || target.type);
       box.appendChild(h);
+      if (el && S.align && S.align.srcId === el.id) box.appendChild(alignPanel(el));
       if (!el && S.item) { const i = document.createElement('div'); i.className = 'info'; i.textContent = S.item.label + ' — ' + S.item.en + '（以下設定套用於接下來放置的物件）'; box.appendChild(i); }
       const onChange = (key, v, live) => {
         target[key] = v;
@@ -647,6 +816,9 @@
           if (!el) continue;
           const b = document.createElement('button'); b.textContent = f.label; b.onclick = () => doAction(f.action); btns.appendChild(b);
         } else box.appendChild(fieldRow(f, target, onChange));
+      }
+      if (el && canAlign(el) && !S.align) {
+        const ab = document.createElement('button'); ab.textContent = '📐 對齊至… Align to (A)'; ab.onclick = startAlign; btns.prepend(ab);
       }
       if (el) {
         const d = document.createElement('button'); d.textContent = '複製 Duplicate'; d.onclick = () => duplicate(el); btns.appendChild(d);
@@ -781,6 +953,9 @@
   $('#rngImage').oninput = (e) => { S.imgOpacity = +e.target.value; redraw(); };
   $('#rngRoad').oninput = (e) => { S.roadOpacity = +e.target.value; redraw(); };
   $('#chkClip').onchange = (e) => { S.clip = e.target.checked; redraw(); };
+  try { const mg = localStorage.getItem('roadplan:magnet'); if (mg != null) S.magnet = mg === '1'; } catch (e) { /* ignore */ }
+  $('#chkMagnet').checked = S.magnet;
+  $('#chkMagnet').onchange = (e) => { S.magnet = e.target.checked; try { localStorage.setItem('roadplan:magnet', S.magnet ? '1' : '0'); } catch (er) { /* ignore */ } };
   const selC = $('#selCountry');
   Object.values(window.RoadPresets).forEach((p) => { const o = document.createElement('option'); o.value = p.id; o.textContent = p.name; selC.appendChild(o); });
   selC.onchange = () => { S.country = selC.value; buildLibrary(); setTool('select'); };

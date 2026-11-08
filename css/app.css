@@ -69,3 +69,7 @@ button.danger { border-color: #6b2b2b; color: #ff9b9b; }
 
 #status { display: flex; justify-content: space-between; gap: 16px; padding: 5px 12px; background: var(--panel); border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
 kbd { background: #2c3036; border: 1px solid #424851; border-radius: 3px; padding: 0 4px; font-size: 11px; color: var(--text); }
+.alignbox { background: #2a2414; border: 1px solid #6b5520; border-radius: 8px; padding: 8px 10px; margin: 6px 0 10px; }
+.aligntitle { font-weight: 600; color: #f3d48a; margin-bottom: 4px; }
+button.primary { background: var(--accent2); border-color: var(--accent2); }
+#topbar .chk.magnet { color: var(--text); }

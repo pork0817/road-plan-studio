@@ -142,23 +142,60 @@ window.Render = (function () {
     ctx.restore();
   }
 
+  // ---------- traced regulation shapes ----------
+  const pathCache = new Map();
+  function shapePath(d) {
+    let p = pathCache.get(d);
+    if (!p) { p = new Path2D(d); pathCache.set(d, p); }
+    return p;
+  }
+  const shapes = () => window.RoadShapesTW || { glyphs: {}, icons: {} };
+
+  // Draw one character/icon cell. Local frame: origin = cell centre, -y = forward (far end).
+  function drawCell(ctx, P, ch, cw, cl, glyphD) {
+    if (glyphD) {
+      ctx.save(); ctx.translate(-cw / 2, -cl / 2); ctx.scale(cw, cl); ctx.fill(shapePath(glyphD), 'evenodd'); ctx.restore();
+    } else {
+      // not in the traced set: bold font stretched to the regulation cell
+      ctx.save(); ctx.scale(1, cl / cw);
+      ctx.font = `900 ${cw * 0.98}px ${P.fontFamily}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(ch, 0, cw * 0.04); ctx.restore();
+    }
+  }
+
   function drawText(ctx, P, p, dir, str, charLen, charWid, color, order, gapPx) {
     const chars = Array.from(str || '');
     if (!chars.length) return;
-    const n = chars.length, gap = gapPx != null ? gapPx : charLen * 0.3, total = n * charLen + (n - 1) * gap;
+    const n = chars.length, gap = gapPx != null ? gapPx : charLen * 0.4, total = n * charLen + (n - 1) * gap;
+    const gl = shapes().glyphs;
     ctx.save();
     ctx.translate(p.x, p.y); ctx.rotate(dir + Math.PI / 2);
-    ctx.fillStyle = color; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.font = `900 ${charWid}px ${P.fontFamily}`;
+    ctx.fillStyle = color;
     for (let i = 0; i < n; i++) {
       const ch = chars[order === 'far' ? n - 1 - i : i];
       const y = total / 2 - (i * (charLen + gap) + charLen / 2); // i=0 is nearest the approaching driver
-      ctx.save(); ctx.translate(0, y); ctx.scale(1, charLen / charWid); ctx.fillText(ch, 0, charWid * 0.04); ctx.restore();
+      ctx.save(); ctx.translate(0, y); drawCell(ctx, P, ch, charWid, charLen, gl[ch]); ctx.restore();
     }
     ctx.restore();
   }
-  const charGap = (el) => (el.charGap != null ? el.charGap : el.charLen * 0.3);
+  const charGap = (el) => (el.charGap != null ? el.charGap : el.charLen * 0.4);
   R.textLength = (el) => { const n = Array.from(el.text || '').length; return n * el.charLen + Math.max(0, n - 1) * charGap(el); };
+
+  // §174-1 / §183-1 icons
+  R.iconSize = (el) => {
+    const k = el.small ? 0.7 : 1;
+    const s = { scooter: [0.9, 2.5], bike: [1.0, 1.8], scooterSmall: [0.65, 1.8] }[el.kind] || [1, 2];
+    return [s[0] * k, s[1] * k];
+  };
+  function drawIcon(ctx, el, ppm, P) {
+    const d = shapes().icons[el.kind];
+    if (!d) return;
+    const [w, h] = R.iconSize(el);
+    ctx.save(); ctx.translate(el.p.x, el.p.y); ctx.rotate(el.dir + Math.PI / 2);
+    ctx.fillStyle = P.colors.white;
+    drawCell(ctx, P, '', w * ppm, h * ppm, d);
+    ctx.restore();
+  }
 
   function drawScooterBox(ctx, el, ppm, P) {
     const f = R.frame(el, ppm, el.depth, true);
@@ -167,43 +204,80 @@ window.Render = (function () {
     const strip = (o0, o1) => { path(ctx, [G.add(el.a, G.mul(f.t, o0)), G.add(el.b, G.mul(f.t, o0)), G.add(el.b, G.mul(f.t, o1)), G.add(el.a, G.mul(f.t, o1))], true); ctx.fill(); };
     strip(0, b); strip(f.Wt - b, f.Wt);
     const bu = (parseFloat(el.side) || 0.15) * ppm; // side lines 10 or 15 cm
-    const side = (p, s) => { path(ctx, [G.add(p, G.mul(f.t, 0)), G.add(G.add(p, G.mul(f.u, s * bu)), G.mul(f.t, 0)), G.add(G.add(p, G.mul(f.u, s * bu)), G.mul(f.t, f.Wt)), G.add(p, G.mul(f.t, f.Wt))], true); ctx.fill(); };
+    const side = (p, s) => { path(ctx, [p, G.add(p, G.mul(f.u, s * bu)), G.add(G.add(p, G.mul(f.u, s * bu)), G.mul(f.t, f.Wt)), G.add(p, G.mul(f.t, f.Wt))], true); ctx.fill(); };
     side(el.a, 1); side(el.b, -1);
-    const n = Array.from(el.text || '').length || 1;
-    const cl = Math.min(1.6, (el.depth * 0.75) / (n + (n - 1) * 0.3)) * ppm;
-    drawText(ctx, P, G.add(G.mid(el.a, el.b), G.mul(f.t, f.Wt / 2)), el.dir, el.text, cl, cl * 0.5, P.colors.white, 'far', cl * 0.3);
+    const c = G.add(G.mid(el.a, el.b), G.mul(f.t, f.Wt / 2));
+    if (el.icon) {
+      // §174-2 figure: 機車 icon inside the box (縮小型 when the box is shallow)
+      const [w, h] = R.iconSize({ kind: 'scooter', small: el.depth < 3.2 });
+      ctx.save(); ctx.translate(c.x, c.y); ctx.rotate(el.dir + Math.PI / 2);
+      const k = Math.min(1, (el.depth - 0.6) / h);
+      drawCell(ctx, P, '', w * k * ppm, h * k * ppm, shapes().icons.scooter); ctx.restore();
+    } else if (el.text) {
+      const n = Array.from(el.text).length;
+      const cl = Math.min(1.6, (el.depth * 0.75) / (n + (n - 1) * 0.3)) * ppm;
+      drawText(ctx, P, c, el.dir, el.text, cl, cl * 0.45, P.colors.white, 'far', cl * 0.3);
+    }
   }
 
+  // ---------- §188 指向線 (arrows), built from the figure dimensions ----------
+  // Units: metres. x = lateral (right +), y = forward from the tail (0 … 5.0).
+  const arc = (cx, cy, r, a0, a1) => {
+    const out = [], n = Math.max(4, Math.ceil(Math.abs(a1 - a0) / (Math.PI / 60)));
+    for (let i = 0; i <= n; i++) { const a = a0 + ((a1 - a0) * i) / n; out.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]); }
+    return out;
+  };
+  const DEG = Math.PI / 180;
+  // 圖二 弧形箭頭 arm (left), attached at shaft top y=2.7, shaft x∈[-0.1,0.1]; outer R=2.0, inner R=1.2
+  const ARM = (() => {
+    const tOut = Math.atan2(1.55, 1.25);            // outer arc ends where it meets the head (-0.643, 4.257)
+    const tIn = Math.acos((1.3 - 0.65) / 1.2);       // inner arc meets the spike line x=-0.65
+    return [[-0.1, 2.7], [0.1, 2.7]]
+      .concat(arc(-1.9, 2.7, 2.0, 0, tOut))
+      .concat([[-0.45, 5.0], [-1.1, 4.25], [-0.65, 2.8]])
+      .concat(arc(-1.3, 2.7, 1.2, tIn, 0));
+  })();
+  const mirror = (poly) => poly.map(([x, y]) => [-x, y]).reverse();
+  const shift = (poly, dx, dy) => poly.map(([x, y]) => [x + dx, y + dy]);
+  const rect = (x0, y0, x1, y1) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+  // 圖一 直線箭頭: head 2.6 m × 0.9 m, shaft 0.2 m, barbs 0.1 m below the shaft joint
+  const STRAIGHT = [[-0.1, 0], [0.1, 0], [0.1, 2.5], [0.45, 2.4], [0, 5.0], [-0.45, 2.4], [-0.1, 2.5]];
+  // 圖三 分岔箭頭 straight part: 0.3 m stub (0.4 m), shaft 0.2 m offset 0.05 m, head 2.3 m × 0.9 m
+  const SPLIT_STRAIGHT = [[-0.05, 0.3], [0.15, 0.3], [0.15, 2.8], [0.5, 2.7], [0.05, 5.0], [-0.4, 2.7], [-0.05, 2.8]];
+  const SPLIT_ARM = shift(ARM, -0.05, -2.3);
+  const STUB = rect(-0.15, 0, 0.15, 0.4);
+  const SL = [STUB, SPLIT_STRAIGHT, SPLIT_ARM];
+  const ARROWS = {
+    S: [STRAIGHT],
+    L: [rect(-0.1, 0, 0.1, 2.75), ARM],
+    R: [rect(-0.1, 0, 0.1, 2.75), mirror(ARM)],
+    SL,
+    SR: SL.map(mirror),
+    LR: [rect(-0.1, 0, 0.1, 2.75), ARM, mirror(ARM)],                 // 圖四
+    SLR: [STUB, SPLIT_STRAIGHT, mirror(SPLIT_STRAIGHT), SPLIT_ARM, mirror(SPLIT_ARM)], // 圖五
+    // 迴轉: no figure in §188 — drawn with the same 0.2 m stroke and 圖二 head proportions (≈)
+    U: (() => {
+      const shaft = rect(-0.1, 0, 0.1, 3.4);
+      const outer = arc(-0.7, 3.4, 0.8, 0, Math.PI), inner = arc(-0.7, 3.4, 0.6, Math.PI, 0);
+      const bend = outer.concat(inner);
+      const leg = rect(-1.5, 2.2, -1.3, 3.4);
+      const head = [[-1.4, 0.9], [-1.85, 2.2], [-0.95, 2.2]];
+      return [shaft, bend, leg, head];
+    })(),
+  };
+  R.arrowKinds = Object.keys(ARROWS);
+
   function drawArrow(ctx, el, ppm, P) {
-    const L = el.length * ppm, u = L / 5;
-    const hw = 0.12 * u, hl = 1.4 * u, hh = 0.45 * u, thl = 1.0 * u, thh = 0.4 * u;
+    const polys = ARROWS[el.kind] || ARROWS.S;
+    const k = (el.length / 5) * ppm;
     ctx.save();
-    ctx.translate(el.p.x, el.p.y); ctx.rotate(el.dir); ctx.translate(-L / 2, 0);
-    ctx.fillStyle = ctx.strokeStyle = P.colors.white;
-    ctx.lineWidth = 2 * hw; ctx.lineCap = 'butt'; ctx.lineJoin = 'round'; ctx.setLineDash([]);
-    const tri = (a, b, c) => { ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.lineTo(c[0], c[1]); ctx.closePath(); ctx.fill(); };
-    const straight = () => {
-      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(L - hl + 1, 0); ctx.stroke();
-      tri([L - hl, -hh], [L, 0], [L - hl, hh]);
-    };
-    const turn = (s, fromX) => { // s=-1 left, +1 right (local y is to the right)
-      const x0 = L - 2.2 * u, xe = L - 1.2 * u, ye = s * 0.55 * u;
-      ctx.beginPath(); ctx.moveTo(fromX, 0); ctx.lineTo(x0, 0); ctx.quadraticCurveTo(xe, 0, xe, ye); ctx.stroke();
-      tri([xe - thh, ye], [xe, ye + s * thl], [xe + thh, ye]);
-    };
-    const k = el.kind;
-    if (k === 'S') straight();
-    if (k === 'SL') { straight(); turn(-1, L * 0.3); }
-    if (k === 'SR') { straight(); turn(1, L * 0.3); }
-    if (k === 'L') turn(-1, 0);
-    if (k === 'R') turn(1, 0);
-    if (k === 'LR') { turn(-1, 0); turn(1, L * 0.3); }
-    if (k === 'U') {
-      const s = -1, x0 = L - 2.4 * u, r = 0.6 * u, y = s * 2 * r;
-      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(x0, 0);
-      ctx.bezierCurveTo(x0 + 1.35 * r * 1.3, 0, x0 + 1.35 * r * 1.3, y, x0, y);
-      ctx.lineTo(x0 - 0.8 * u, y); ctx.stroke();
-      tri([x0 - 0.8 * u + 1, y - thh], [x0 - 0.8 * u - thl, y], [x0 - 0.8 * u + 1, y + thh]);
+    ctx.translate(el.p.x, el.p.y); ctx.rotate(el.dir);
+    // local: +x forward, +y right. Arrow data: y forward, x right; centre the 5 m length on p.
+    ctx.fillStyle = P.colors.white;
+    for (const poly of polys) {
+      ctx.beginPath();
+      poly.forEach(([x, y], i) => { const X = (y - 2.5) * k, Y = x * k; i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); });
+      ctx.closePath(); ctx.fill();
     }
     ctx.restore();
   }
@@ -293,7 +367,7 @@ window.Render = (function () {
   }
 
   // ---------- scene ----------
-  const MARK = new Set(['line', 'section', 'crosswalk', 'stopline', 'scooterbox', 'arrow', 'text', 'chevron', 'yellowbox']);
+  const MARK = new Set(['symbol', 'line', 'section', 'crosswalk', 'stopline', 'scooterbox', 'arrow', 'text', 'chevron', 'yellowbox']);
 
   R.drawScene = function (ctx, o) {
     const { ppm, P } = o;
@@ -355,6 +429,7 @@ window.Render = (function () {
         case 'stopline': drawStopLine(ctx, el, ppm, P); break;
         case 'scooterbox': drawScooterBox(ctx, el, ppm, P); break;
         case 'arrow': drawArrow(ctx, el, ppm, P); break;
+        case 'symbol': drawIcon(ctx, el, ppm, P); break;
         case 'text': drawText(ctx, P, el.p, el.dir, el.text, el.charLen * ppm, el.charWid * ppm, colorOf(P, el.color), el.order, charGap(el) * ppm); break;
         // §171 槽化線 border 15 / stripe 20 / gap 30 cm; §173 網狀線 border 20 / lines 10 cm, spacing user (1–5 m)
         case 'chevron': drawHatched(ctx, Object.assign({}, el, { border: 0.15, stripe: 0.20, gap: 0.30 }), ppm, P, false); break;
@@ -387,9 +462,10 @@ window.Render = (function () {
       case 'crosswalk': return { poly: R.frame(el, ppm, el.width, false).corners };
       case 'scooterbox': return { poly: R.frame(el, ppm, el.depth, true).corners };
       case 'stopline': { const n = G.mul(G.rightN(G.norm(G.sub(el.b, el.a))), (el.width * ppm) / 2); return { poly: [G.add(el.a, n), G.add(el.b, n), G.sub(el.b, n), G.sub(el.a, n)] }; }
-      case 'arrow': case 'text': {
-        const len = (el.type === 'arrow' ? el.length : R.textLength(el)) * ppm;
-        const wid = (el.type === 'arrow' ? 2.4 : el.charWid * 1.2) * ppm;
+      case 'arrow': case 'text': case 'symbol': {
+        const sz = el.type === 'symbol' ? R.iconSize(el) : null;
+        const len = (el.type === 'arrow' ? el.length : el.type === 'text' ? R.textLength(el) : sz[1]) * ppm;
+        const wid = (el.type === 'arrow' ? 2.6 : el.type === 'text' ? el.charWid * 1.2 : sz[0] * 1.2) * ppm;
         const t = G.fromAngle(el.dir), n = G.rightN(t);
         const c = el.p, a = G.mul(t, len / 2), b = G.mul(n, wid / 2);
         return { poly: [G.add(G.sub(c, a), G.mul(b, -1)), G.add(G.add(c, a), G.mul(b, -1)), G.add(G.add(c, a), b), G.add(G.sub(c, a), b)] };

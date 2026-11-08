@@ -42,19 +42,20 @@ window.RoadPresets = window.RoadPresets || {};
     ['centerDouble', '雙黃實線 Double yellow'], ['centerSolid', '單黃實線 Single yellow'], ['centerDash', '行車分向線 Yellow dashed'],
     ['centerMixed', '黃實虛線 Solid+dashed'], ['reversible', '調撥車道線 Reversible'], ['median', '中央分隔島 Median'],
   ];
-  const arrowKinds = [['S', '直行 Straight'], ['L', '左轉 Left'], ['R', '右轉 Right'], ['SL', '直行+左轉'], ['SR', '直行+右轉'], ['LR', '左右轉'], ['U', '迴轉 U-turn']];
+  const arrowKinds = [['S', '直行 Straight (圖一)'], ['L', '左轉 Left (圖二)'], ['R', '右轉 Right (圖二鏡射)'], ['SL', '直行+左轉 (圖三)'], ['SR', '直行+右轉 (圖三鏡射)'], ['LR', '左右轉 (圖四)'], ['SLR', '直行+左右轉 (圖五)'], ['U', '迴轉 U-turn (≈ 無附圖)']];
   const colorOpts = [['white', '白 White'], ['yellow', '黃 Yellow'], ['red', '紅 Red']];
 
   const typeNames = {
     road: '車道範圍 Road area', sidewalk: '人行道/分隔島 Sidewalk', surface: '彩色鋪面 Surface', section: '路段 Road section',
     line: '標線 Line', crosswalk: '行人穿越道 Crosswalk', stopline: '停止線 Stop line', scooterbox: '機車停等區 Scooter box',
-    arrow: '指向線 Arrow', text: '路面文字 Text', chevron: '槽化線 Channelizing', yellowbox: '網狀線 Box junction',
+    arrow: '指向線 Arrow', symbol: '圖示 Icon', text: '路面文字 Text', chevron: '槽化線 Channelizing', yellowbox: '網狀線 Box junction',
   };
 
   const sec = (label, en, o) => ({ id: 'sec_' + label, label, en, mode: 'polyline', icon: { glyph: '═' },
     defaults: Object.assign({ type: 'section', lanesF: 1, lanesB: 1, laneWidth: 3.25, centerType: 'centerDouble', medianWidth: 2, slowLane: 0, bikeLane: 0, edge: true, pave: false, smooth: true }, o) });
   const arrow = (k, g) => ({ id: 'arrow_' + k, label: arrowKinds.find((a) => a[0] === k)[1].split(' ')[0], en: '指向線', mode: 'point', icon: { glyph: g }, defaults: { type: 'arrow', kind: k, length: 5, dir: -Math.PI / 2 } });
-  const text = (t, o) => ({ id: 'text_' + t, label: t, en: '路面文字', mode: 'point', icon: { glyph: t.slice(0, 2) }, defaults: Object.assign({ type: 'text', text: t, charLen: 2.4, charWid: 1.2, charGap: 0.6, color: 'white', order: 'far', dir: -Math.PI / 2 }, o) });
+  const text = (t, o) => ({ id: 'text_' + t, label: t, en: (o && o.en) || '路面文字', mode: 'point', icon: { glyph: t.slice(0, 2) }, defaults: Object.assign({ type: 'text', text: t, charLen: 2.5, charWid: 1.0, charGap: 1.0, color: 'white', order: 'far', dir: -Math.PI / 2 }, o, { en: undefined }) });
+  const icon = (k, label, en, o) => ({ id: 'icon_' + k + (o && o.small ? '_s' : ''), label, en, mode: 'point', icon: { glyph: k === 'bike' ? '🚲' : '🛵' }, defaults: Object.assign({ type: 'symbol', kind: k, small: false, dir: -Math.PI / 2 }, o) });
 
   const library = [
     { title: '① 區域 Areas', items: [
@@ -78,12 +79,18 @@ window.RoadPresets = window.RoadPresets || {};
       { id: 'cw_ties', label: '枕木紋行人穿越道', en: 'Crosswalk (ties)', mode: 'two', icon: { glyph: '▥' }, defaults: { type: 'crosswalk', kind: 'ties', width: 4, gap: 0.40, green: false } },
       { id: 'cw_zebra', label: '斑馬紋行人穿越道', en: 'Crosswalk (zebra)', mode: 'two', icon: { glyph: '▧' }, defaults: { type: 'crosswalk', kind: 'zebra', width: 4, green: false } },
       { id: 'stopline', label: '停止線', en: 'Stop line', mode: 'two', icon: { glyph: '▬' }, defaults: { type: 'stopline', width: 0.40 } },
-      { id: 'scooterbox', label: '機慢車停等區', en: 'Scooter waiting box', mode: 'two', icon: { glyph: '▭' }, defaults: { type: 'scooterbox', depth: 3, side: '0.15', text: '機車' } },
+      { id: 'scooterbox', label: '機慢車停等區', en: 'Scooter waiting box', mode: 'two', icon: { glyph: '▭' }, defaults: { type: 'scooterbox', depth: 3, side: '0.15', icon: true, text: '' } },
       { id: 'chevron', label: '槽化線', en: 'Channelizing', mode: 'poly', icon: { glyph: '⫽' }, defaults: { type: 'chevron', color: 'white', border: 0.15, stripe: 0.20, gap: 0.30, dir: 0 } },
       { id: 'yellowbox', label: '網狀線', en: 'Box junction', mode: 'poly', icon: { glyph: '▦' }, defaults: { type: 'yellowbox', border: 0.20, stripe: 0.10, gap: 1.50, dir: 0 } },
     ] },
-    { title: '⑤ 指向線 Arrows', items: [arrow('S', '↑'), arrow('L', '↰'), arrow('R', '↱'), arrow('SL', '⬉'), arrow('SR', '⬈'), arrow('LR', '⇄'), arrow('U', '↶')] },
-    { title: '⑥ 路面文字 Text', items: [text('慢'), text('停'), text('機車'), text('機車優先'), text('公車專用'), text('禁止停車', { charLen: 0.3, charWid: 0.3, charGap: 0.3, color: 'yellow' }), text('禁止臨時停車', { charLen: 0.3, charWid: 0.3, charGap: 0.3, color: 'red' }), text('讓')] },
+    { title: '⑤ 指向線 Arrows (§188)', items: [arrow('S', '↑'), arrow('L', '↰'), arrow('R', '↱'), arrow('SL', '⬉'), arrow('SR', '⬈'), arrow('LR', '⇄'), arrow('SLR', '⇈'), arrow('U', '↶')] },
+    { title: '⑥ 路面文字 Text', items: [text('慢', { en: '§163' }), text('停', { en: '§177' }), text('禁行機車', { color: 'yellow', en: '§178 黃色' }),
+      text('公車專用', { en: '§175' }), text('機車專用', { en: '§175' }), text('大客車專用', { en: '§175' }), text('大貨車專用', { en: '§175' }),
+      text('自行車專用', { en: '§175' }), text('高乘載專用', { en: '§175' }), text('直行專用', { en: '§176' }), text('左彎專用', { en: '§176' }), text('右彎專用', { en: '§176' }),
+      text('機車優先', { en: '§174-1' }),
+      text('禁止停車', { charLen: 0.3, charWid: 0.3, charGap: 0.3, color: 'yellow', en: '§168 30cm' }), text('禁止臨時停車', { charLen: 0.3, charWid: 0.3, charGap: 0.3, color: 'red', en: '§169 30cm' })] },
+    { title: '⑦ 圖示 Icons', items: [icon('scooter', '機車圖示', '§174-1 0.9×2.5m'), icon('scooterSmall', '機車圖示(慢車道)', '§183-1 0.65×1.8m'),
+      icon('bike', '自行車圖示', '§183-1 1.0×1.8m'), icon('scooterSmall', '機車圖示 縮小型', '§183-1 ×0.7', { small: true }), icon('bike', '自行車 縮小型', '§183-1 ×0.7', { small: true })] },
   ];
 
   const num = (key, label, min, max, step, law) => ({ kind: 'num', key, label, min, max, step, unit: 'm', law });
@@ -129,18 +136,23 @@ window.RoadPresets = window.RoadPresets || {};
       case 'scooterbox': return [num('depth', '縱深 Depth', 2.5, 6, 0.1, '法規 2.5–6 m'),
         { kind: 'lock', label: '前後線寬 Front/back', value: '0.20 m' },
         { kind: 'sel', key: 'side', label: '側線寬 Side lines', options: [['0.1', '0.10 m'], ['0.15', '0.15 m']] },
-        { kind: 'txt', key: 'text', label: '文字 Text (視需要)' },
+        { kind: 'chk', key: 'icon', label: '機車圖示 Scooter icon' }, { kind: 'txt', key: 'text', label: '或文字 Text (視需要)' },
         { kind: 'law', text: '§174-2 白色長方形 前後線寬20cm 側線10或15cm 縱深2.5–6m；限速≤60km/h 設於停止線後；禁行機車或紅燈右轉車道不設' },
         { kind: 'btn', action: 'flip', label: '反轉方向 Flip' }, { kind: 'btn', action: 'realign', label: '對齊車道 Align to lanes' }];
-      case 'arrow': return [{ kind: 'sel', key: 'kind', label: '種類 Kind', options: arrowKinds }, num('length', '長度 Length', 3, 9, 0.5, '≈ 法規未規定長度 (§188)'),
+      case 'arrow': return [{ kind: 'sel', key: 'kind', label: '種類 Kind', options: arrowKinds }, { kind: 'lock', label: '長度 Length', value: '5.0 m (§188 附圖)' },
         { kind: 'deg', key: 'dir', label: '方向 Angle' },
-        { kind: 'law', text: '§188 指向線；共用車道≥3.5m 時兩箭頭間距0.5–1.5m；§176 每30m 重複一組' },
+        { kind: 'law', text: '§188 附圖尺寸：全長5.0m；直線箭頭頭寬0.9m 長2.6m 桿寬0.2m；弧形箭頭 R=2.0/1.2m 寬1.2m；分岔箭頭寬1.65/2.2m。共用車道≥3.5m 時兩箭頭間距0.5–1.5m；§176 每30m 重複一組' },
         { kind: 'btn', action: 'realign', label: '對齊車道 Align to lanes' }, { kind: 'btn', action: 'flip', label: '反轉 Flip' }];
-      case 'text': return [{ kind: 'txt', key: 'text', label: '文字 Text' }, num('charLen', '字長 Char length', 0.3, 5, 0.1, '≈ 法規未規定 (禁止停車字樣為30cm)'), num('charWid', '字寬 Char width', 0.3, 2, 0.05, '≈ 法規得採 長:寬 2:1'),
-        num('charGap', '字距 Char gap', 0, 3, 0.05, '≈'),
+      case 'text': return [{ kind: 'txt', key: 'text', label: '文字 Text' }, num('charLen', '字長 Char length', 0.3, 5, 0.05, '附圖 2.5 m (禁止停車字樣0.3 m)'), num('charWid', '字寬 Char width', 0.3, 2, 0.05, '附圖 1.0 m'),
+        num('charGap', '字距 Char gap', 0, 3, 0.05, '附圖 1.0 m'),
+        { kind: 'info', text: '慢 停 禁行機車 公車/機車/大客車/大貨車/自行車/高乘載專用 直行/左彎/右彎專用 使用法規附圖字形；其他字以粗體字型代替。' },
         { kind: 'sel', key: 'color', label: '顏色 Colour', options: colorOpts }, { kind: 'sel', key: 'order', label: '字序 Order', options: [['far', '由遠而近 Far→near (§150)'], ['near', '由近而遠 Near→far']] },
         { kind: 'deg', key: 'dir', label: '方向 Angle' },
         { kind: 'law', text: '§150 直式文字一律由遠而近；正楷或變體字；禁止(臨時)停車字樣30cm見方、字距30cm (§168/169)' },
+        { kind: 'btn', action: 'realign', label: '對齊車道 Align to lanes' }, { kind: 'btn', action: 'flip', label: '反轉 Flip' }];
+      case 'symbol': return [{ kind: 'sel', key: 'kind', label: '圖示 Icon', options: [['scooter', '機車 0.9×2.5m (§174-1)'], ['scooterSmall', '機車 0.65×1.8m (§183-1)'], ['bike', '自行車 1.0×1.8m (§183-1)']] },
+        { kind: 'chk', key: 'small', label: '縮小型 Reduced (×0.7, §183-1)' }, { kind: 'deg', key: 'dir', label: '方向 Angle' },
+        { kind: 'law', text: '§183-1 慢車道於路口進口處繪設機車及自行車圖示，超過500m 每500m 增設；慢車道寬<2m 用縮小型' },
         { kind: 'btn', action: 'realign', label: '對齊車道 Align to lanes' }, { kind: 'btn', action: 'flip', label: '反轉 Flip' }];
       case 'chevron': return [{ kind: 'sel', key: 'color', label: '顏色 Colour (同銜接標線)', options: colorOpts },
         { kind: 'lock', label: '外框 Border', value: '0.15 m' }, { kind: 'lock', label: '斜紋 Stripes', value: '0.20 m / 0.30 m @45°' },
