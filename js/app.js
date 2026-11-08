@@ -1304,7 +1304,32 @@
     S.els = S.els.filter((e) => e.owner !== rb.id);
     commit();
   }
-  const syncAll = () => { for (const e of S.els.slice()) if (e.type === 'roundabout') syncRoundabout(e); };
+  // An intersection keeps the click and settings it was made with; whenever one of the roads it is built from
+  // changes (shape, lanes, lane use, arrow / box / guide options …) its markings are rebuilt straight away.
+  const SEC_KEYS = ['pts', 'smooth', 'lanesF', 'lanesB', 'laneWidth', 'centerType', 'medianWidth', 'slowLane', 'bikeLane', 'edge', 'autoArrows', 'autoBox', 'boxDepth', 'solidLen', 'laneUse', 'leftGuide'];
+  function junctionSig(j) {
+    const m = ppm(), near = (40 + 60) * m;
+    const secs = S.els.filter((e) => e.type === 'section' && e.pts.some((p, i) => {
+      const q = e.pts[i + 1]; return G.dist(p, j.genClick) < near || (q && G.distToSeg(j.genClick, p, q).d < near);
+    }));
+    return JSON.stringify([m, j.genPrm, secs.map((e) => SEC_KEYS.map((k) => e[k]))]);
+  }
+  function syncJunction(j) {
+    if (!j.genClick) return;
+    const sig = junctionSig(j);
+    if (j.sig === sig) return;
+    const made = buildJunction(j.genClick, j.genPrm || {});
+    j.sig = sig;
+    if (!made) return;
+    const fresh = made[0], oldId = j.id;
+    for (const e of made) if (e.owner === fresh.id) e.owner = oldId;
+    j.pts = fresh.pts;
+    S.els = S.els.filter((e) => e.owner !== oldId).concat(made.slice(1));
+  }
+  const syncAll = () => {
+    for (const e of S.els.slice()) if (e.type === 'roundabout') syncRoundabout(e);
+    for (const e of S.els.slice()) if (e.type === 'junction' && e.genClick) syncJunction(e);
+  };
   function buildRoundabout(C, prm) {
     return { id: newId(), type: 'roundabout', p: G.copy(C), R: prm.R, lanes: prm.turbo ? 2 : prm.lanes, laneWidth: prm.laneWidth, apron: prm.turbo ? 0 : prm.apron,
       turbo: !!prm.turbo, divider: prm.divider || 'raised', turboAxis: prm.turboAxis || 0, turboTaper: 20, cornerR: prm.cornerR != null ? prm.cornerR : 12, laneStop: prm.laneStop !== false, solidApproach: prm.solidApproach === true, solidLen: prm.solidLen != null ? prm.solidLen : 30, stopLines: prm.stopLines !== false, stopGap: prm.stopGap != null ? prm.stopGap : 2, curveLanes: prm.curveLanes !== false, splitters: prm.splitters !== false, curvedYield: prm.curvedYield !== false,
@@ -1471,9 +1496,10 @@
       // §188 指向線 for each lane's use, behind the box / stop line and again 30 m back (§176)
       if (el.autoArrows !== false && n > 0) {
         for (let g = 0; g < 2; g++) {
-          const sA = boxRear + (3 + 2.5 + g * 30) * m;
-          if (sA + 3 * m > lg.len) break;
-          for (let k = 0; k < n; k++) out.push({ id: newId(), owner: jid, type: 'arrow', kind: uses[k], length: 5, p: atL(lg, sA, laneOff(k)), dir: G.angle(tr) });
+          // lanes under the scooter box start behind it; the others (e.g. turn-only lanes) right behind the stop line
+          const baseOf = (k) => (kS >= 0 && k >= kS && k <= kE ? boxRear : stopRear);
+          if (Math.min(...uses.map((u, k) => baseOf(k))) + (3 + 2.5 + g * 30) * m + 3 * m > lg.len) break;
+          for (let k = 0; k < n; k++) out.push({ id: newId(), owner: jid, type: 'arrow', kind: uses[k], length: 5, p: atL(lg, baseOf(k) + (3 + 2.5 + g * 30) * m, laneOff(k)), dir: G.angle(tr) });
         }
       }
       // 左轉導引線: from the left-turn lane at the stop line, through the junction, into the road on the left
