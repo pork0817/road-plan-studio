@@ -71,30 +71,34 @@ window.Render = (function () {
   };
 
   // ---------- road section layout (offsets in metres, + = right of drawing direction) ----------
-  R.sectionLayout = function (el) {
+  // Lane layout across a road section. Every line / band carries a key (side + role) so the layouts at the two
+  // ends of a section whose lane count changes can be matched up. anchorW (one-way roads) keeps the left edge
+  // where the narrower layout had it, so added lanes appear on the right.
+  R.sectionLayout = function (el, anchorW) {
     const lines = [], bands = [];
     const lw = el.laneWidth, nF = el.lanesF | 0, nB = el.lanesB | 0;
     const stack = (start, side, n) => {
       let o = start;
-      for (let i = 0; i < n; i++) { o += lw; if (i < n - 1) lines.push({ off: side * o, style: 'lane' }); }
-      if (el.slowLane > 0) { lines.push({ off: side * o, style: 'slowSep' }); o += el.slowLane; }
-      if (el.bikeLane > 0) { lines.push({ off: side * o, style: 'bikeSep' }); bands.push({ off: side * (o + el.bikeLane / 2), width: el.bikeLane, kind: 'bike' }); o += el.bikeLane; }
-      if (el.edge) { lines.push({ off: side * (o + 0.075), style: 'edge' }); o += 0.3; }
+      const sd = side > 0 ? 'R' : 'L';
+      for (let i = 0; i < n; i++) { o += lw; if (i < n - 1) lines.push({ off: side * o, style: 'lane', key: sd + 'lane' + i }); }
+      if (el.slowLane > 0) { lines.push({ off: side * o, style: 'slowSep', key: sd + 'slow' }); o += el.slowLane; }
+      if (el.bikeLane > 0) { lines.push({ off: side * o, style: 'bikeSep', key: sd + 'bikeSep' }); bands.push({ off: side * (o + el.bikeLane / 2), width: el.bikeLane, kind: 'bike', key: sd + 'bike' }); o += el.bikeLane; }
+      if (el.edge) { lines.push({ off: side * (o + 0.075), style: 'edge', key: sd + 'edge' }); o += 0.3; }
       return o;
     };
     let left = 0, right = 0;
     if (nB === 0) {
       const W = nF * lw + (el.slowLane || 0) + (el.bikeLane || 0);
-      const s0 = -W / 2;
+      const s0 = -(anchorW != null ? anchorW : W) / 2;
       right = stack(s0, 1, nF);
-      if (el.edge) { lines.push({ off: s0 - 0.075, style: 'edge' }); left = -s0 + 0.3; } else left = -s0;
+      if (el.edge) { lines.push({ off: s0 - 0.075, style: 'edge', key: 'Ledge' }); left = -s0 + 0.3; } else left = -s0;
     } else {
       const median = el.centerType === 'median';
       const mh = median ? el.medianWidth / 2 : 0;
       if (median) {
-        bands.push({ off: 0, width: el.medianWidth, kind: 'median' });
-        lines.push({ off: mh + 0.2, style: 'edge' }, { off: -(mh + 0.2), style: 'edge' });
-      } else lines.push({ off: 0, style: el.centerType });
+        bands.push({ off: 0, width: el.medianWidth, kind: 'median', key: 'median' });
+        lines.push({ off: mh + 0.2, style: 'edge', key: 'm+' }, { off: -(mh + 0.2), style: 'edge', key: 'm-' });
+      } else lines.push({ off: 0, style: el.centerType, key: 'centre' });
       const start = median ? mh + 0.3 : 0;
       right = nF > 0 ? stack(start, 1, nF) : start;
       left = stack(start, -1, nB);
@@ -102,12 +106,103 @@ window.Render = (function () {
     return { lines, bands, left, right };
   };
 
-  R.sectionPoly = function (el, ppm) {
-    const pts = R.basePts(el, ppm);
+  // ---------- lane additions / drops along a section ----------
+  // lanesF2 / lanesB2: lane counts after the change; changeAt: where the taper starts (m from the first point);
+  // taper: its length (m). Added lanes open on the kerb side; a dropped lane narrows away over the taper.
+  R.hasLaneChange = (el) => el.type === 'section' && ((el.lanesF2 != null && el.lanesF2 !== '' && +el.lanesF2 !== +el.lanesF) || (el.lanesB2 != null && el.lanesB2 !== '' && +el.lanesB2 !== +el.lanesB));
+  R.sectionEnd = (el) => Object.assign({}, el, { lanesF: el.lanesF2 != null && el.lanesF2 !== '' ? +el.lanesF2 : el.lanesF, lanesB: el.lanesB2 != null && el.lanesB2 !== '' ? +el.lanesB2 : el.lanesB });
+  const densify = (pts, step) => {
+    const out = [pts[0]];
+    for (let i = 1; i < pts.length; i++) {
+      const n = Math.max(1, Math.ceil(G.dist(pts[i - 1], pts[i]) / step));
+      for (let k = 1; k <= n; k++) out.push(G.add(pts[i - 1], G.mul(G.sub(pts[i], pts[i - 1]), k / n)));
+    }
+    return out;
+  };
+  const offsetVar = (pts, d) => { // like G.offset, with a per-point distance
+    const n = pts.length, out = [];
+    for (let i = 0; i < n; i++) {
+      const nPrev = i > 0 ? G.rightN(G.norm(G.sub(pts[i], pts[i - 1]))) : null;
+      const nNext = i < n - 1 ? G.rightN(G.norm(G.sub(pts[i + 1], pts[i]))) : null;
+      let m;
+      if (!nPrev) m = nNext; else if (!nNext) m = nPrev;
+      else { const sm = G.add(nPrev, nNext), l = G.len(sm); m = l < 1e-6 ? nNext : G.mul(G.mul(sm, 1 / l), 1 / Math.max(G.dot(G.mul(sm, 1 / l), nNext), 0.25)); }
+      out.push({ x: pts[i].x + m.x * d[i], y: pts[i].y + m.y * d[i] });
+    }
+    return out;
+  };
+  // Full geometry of a section: offset polylines for every line and band, and the two pavement edges.
+  const geomCache = new WeakMap();
+  R.sectionGeom = function (el, ppm) { // cached per element: called many times per frame
+    const sig = JSON.stringify([ppm, el.pts, el.smooth, el.lanesF, el.lanesB, el.lanesF2, el.lanesB2, el.changeAt, el.taper, el.laneWidth, el.centerType, el.medianWidth, el.slowLane, el.bikeLane, el.edge]);
+    const c = geomCache.get(el);
+    if (c && c.sig === sig) return c.g;
+    const g = sectionGeomRaw(el, ppm);
+    geomCache.set(el, { sig, g });
+    return g;
+  };
+  function sectionGeomRaw(el, ppm) {
+    let pts = R.basePts(el, ppm);
     if (pts.length < 2) return null;
-    const L = R.sectionLayout(el);
-    const a = G.offset(pts, -L.left * ppm), b = G.offset(pts, L.right * ppm).reverse();
-    return a.concat(b);
+    const ch = R.hasLaneChange(el);
+    const L0 = R.sectionLayout(el);
+    if (!ch) {
+      return { pts, L: L0,
+        lines: L0.lines.map((l) => ({ l, pts: G.offset(pts, l.off * ppm) })),
+        bands: L0.bands.map((b) => ({ b, pts: G.offset(pts, b.off * ppm) })),
+        left: G.offset(pts, -L0.left * ppm), right: G.offset(pts, L0.right * ppm) };
+    }
+    pts = densify(pts, ppm);
+    const e1 = R.sectionEnd(el);
+    const W0 = el.lanesB === 0 ? el.lanesF * el.laneWidth + (el.slowLane || 0) + (el.bikeLane || 0) : null;
+    const L1 = R.sectionLayout(e1, e1.lanesB === 0 && el.lanesB === 0 ? W0 : undefined);
+    const cum = [0]; for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + G.dist(pts[i - 1], pts[i]) / ppm);
+    const cA = Math.max(0, +el.changeAt || 0), tp = Math.max(1, +el.taper || 30);
+    const w = cum.map((sm) => G.clamp((sm - cA) / tp, 0, 1));
+    const lerp = (a, b) => w.map((u) => (a + (b - a) * u) * ppm);
+    const slice = (poly, from, to) => { // the part of an offset polyline between two stations (m)
+      const out = [];
+      for (let i = 0; i < poly.length; i++) if (cum[i] >= from - 1e-6 && cum[i] <= to + 1e-6) out.push(poly[i]);
+      return out.length > 1 ? G.trimLoops(out) : null;
+    };
+    const total = cum[cum.length - 1];
+    const match = (A, B, make) => {
+      const res = [], bk = new Map(B.map((x) => [x.key, x]));
+      for (const a of A) {
+        const b = bk.get(a.key);
+        if (b) { bk.delete(a.key); res.push(make(a, G.trimLoops(offsetVar(pts, lerp(a.off, b.off))))); }
+        else { const q = slice(offsetVar(pts, lerp(a.off, a.off)), 0, cA); if (q) res.push(make(a, q)); } // gone after the change
+      }
+      for (const b of bk.values()) { const q = slice(offsetVar(pts, lerp(b.off, b.off)), cA + tp, total); if (q) res.push(make(b, q)); } // new after the change
+      return res;
+    };
+    return { pts, L: L0, L1, cum, w,
+      lines: match(L0.lines, L1.lines, (l, q) => ({ l, pts: q })),
+      bands: match(L0.bands, L1.bands, (b, q) => ({ b, pts: q })),
+      left: G.trimLoops(offsetVar(pts, lerp(-L0.left, -L1.left))), right: G.trimLoops(offsetVar(pts, lerp(L0.right, L1.right))) };
+  }
+  // pavement edge distances (m) at a station (m) along the section, following any lane-change taper
+  R.sectionExtAt = function (el, sM) {
+    const L0 = R.sectionLayout(el);
+    if (!R.hasLaneChange(el)) return { left: L0.left, right: L0.right };
+    const e1 = R.sectionEnd(el), W0 = el.lanesB === 0 ? el.lanesF * el.laneWidth + (el.slowLane || 0) + (el.bikeLane || 0) : null;
+    const L1 = R.sectionLayout(e1, e1.lanesB === 0 && el.lanesB === 0 ? W0 : undefined);
+    const u = G.clamp((sM - (+el.changeAt || 0)) / Math.max(1, +el.taper || 30), 0, 1);
+    return { left: L0.left + (L1.left - L0.left) * u, right: L0.right + (L1.right - L0.right) * u };
+  };
+  // the layout (lane counts and edge distances) in force at a station (m) along the section
+  R.sectionAt = function (el, sM) {
+    if (!R.hasLaneChange(el)) return { el, L: R.sectionLayout(el) };
+    const cA = +el.changeAt || 0, tp = Math.max(1, +el.taper || 30);
+    const end = sM >= cA + tp / 2, e = end ? R.sectionEnd(el) : el;
+    const W0 = el.lanesB === 0 ? el.lanesF * el.laneWidth + (el.slowLane || 0) + (el.bikeLane || 0) : null;
+    return { el: e, L: R.sectionLayout(e, end && el.lanesB === 0 ? W0 : undefined) };
+  };
+
+  R.sectionPoly = function (el, ppm) {
+    const g = R.sectionGeom(el, ppm);
+    if (!g) return null;
+    return g.left.concat(g.right.slice().reverse());
   };
 
   // ---------- crosswalk-like frames ----------
@@ -840,6 +935,7 @@ window.Render = (function () {
     for (const el of els) {
       if (el.type === 'road') addTo(toneList(tones[el.tone] || P.colors.asphalt), R.areaPts(el));
       if (el.type === 'section' && el.pave) addTo(toneList(P.colors.asphalt), R.sectionPoly(el, ppm));
+      if (el.type === 'junction') for (const c of el.corners || []) addTo(toneList(P.colors.asphalt), c); // rounded kerb returns
       if (el.type === 'roundabout') { addTo(rbPave, R.rbOutline(el, ppm)); for (const pv of R.cornerPaving(el, ppm)) addTo(rbPave, pv); }
     }
     const fillUnion = (color, list) => {
@@ -867,6 +963,7 @@ window.Render = (function () {
       for (const el of els) {
         if (el.type === 'road' && el.pts.length >= 3) polys.push(R.areaPts(el));
         if (el.type === 'section') { const p = R.sectionPoly(el, ppm); if (p) polys.push(p); } // a road section always counts as road surface
+        if (el.type === 'junction') for (const c of el.corners || []) if (c.length >= 3) polys.push(c);
         if (el.type === 'roundabout') { polys.push(R.rbOutline(el, ppm)); polys.push(...R.cornerPaving(el, ppm)); }
       }
       if (polys.length) {
@@ -878,21 +975,9 @@ window.Render = (function () {
         ctx.clip('nonzero');
       }
     }
-    // Layer 1: coloured surfaces
-    for (const el of els) {
-      if (el.type === 'surface') { ctx.save(); yieldToRoundabouts(el); drawSurface(ctx, el, ppm, P); ctx.restore(); }
-      if (el.type === 'buslane') { ctx.save(); yieldToRoundabouts(el); for (const c of crossCutsEarly) clipOutside(c); drawBikeSurface(ctx, el, ppm, P); ctx.restore(); }
-      if (el.type === 'section') {
-        const pts = R.basePts(el, ppm);
-        if (pts.length < 2) continue;
-        for (const b of R.sectionLayout(el).bands) if (b.kind === 'bike') {
-          ctx.strokeStyle = P.colors.bike; ctx.lineWidth = b.width * ppm; ctx.lineCap = 'butt'; ctx.setLineDash([]);
-          path(ctx, G.offset(pts, b.off * ppm)); ctx.stroke();
-        }
-      }
-    }
-    // Layer 2: markings. Lane lines are interrupted inside intersection areas.
+    // Intersection areas: lane lines (and a road's bike lanes) are interrupted inside them.
     const junctions = els.filter((e) => (e.type === 'junction' || e.type === 'lanemask') && e.pts.length >= 3)
+      .concat(els.filter((e) => e.type === 'junction').flatMap((e) => (e.cornerCuts || []).map((pts) => ({ pts }))))
       .concat(els.filter((e) => e.type === 'roundabout').map((e) => ({ pts: R.rbOutline(e, ppm, 1.2) })))
       .concat(els.filter((e) => e.type === 'roundabout').flatMap((e) => (e.corners || []).map((k) => ({ pts: k.mask })).concat((e.legMasks || []).concat(e.cornerMasks || []).map((pts) => ({ pts })))));
     const cutJunctions = () => {
@@ -900,6 +985,22 @@ window.Render = (function () {
       for (const j of junctions) clipOutside(j.pts);
     };
 
+    // Layer 1: coloured surfaces
+    for (const el of els) {
+      if (el.type === 'surface') { ctx.save(); yieldToRoundabouts(el); drawSurface(ctx, el, ppm, P); ctx.restore(); }
+      if (el.type === 'buslane') { ctx.save(); yieldToRoundabouts(el); for (const c of crossCutsEarly) clipOutside(c); drawBikeSurface(ctx, el, ppm, P); ctx.restore(); }
+      if (el.type === 'section') {
+        const pts = R.basePts(el, ppm);
+        if (pts.length < 2) continue;
+        for (const { b, pts: bp } of R.sectionGeom(el, ppm).bands) if (b.kind === 'bike') {
+          // the bike lane stops at the junction and at crosswalks, like the lane lines beside it
+          ctx.save(); cutJunctions(); for (const c of crossCutsEarly) clipOutside(c);
+          ctx.strokeStyle = P.colors.bike; ctx.lineWidth = b.width * ppm; ctx.lineCap = 'butt'; ctx.setLineDash([]);
+          path(ctx, bp); ctx.stroke();
+          ctx.restore();
+        }
+      }
+    }
     for (const el of els) {
       if (!MARK.has(el.type) || el.type === 'bikelane') continue; // bike lanes are drawn later, on any surface
       ctx.save();
@@ -914,7 +1015,20 @@ window.Render = (function () {
         case 'section': {
           const pts = R.basePts(el, ppm);
           if (pts.length < 2) break;
-          for (const l of R.sectionLayout(el).lines) R.drawStyled(ctx, G.offset(pts, l.off * ppm), P.lineStyles[l.style], ppm);
+          // Where two roads overlap outside an intersection (a ramp or slip road joining a bigger road), the road
+          // with fewer lanes gives way: its lines stop at the bigger road's edge, and the bigger road's edge line
+          // turns into a dashed lane line across the mouth so traffic can merge / diverge there.
+          const lanes = (e) => (e.lanesF | 0) + (e.lanesB | 0);
+          const others = els.filter((e) => e.type === 'section' && e !== el);
+          const major = others.filter((e) => lanes(e) > lanes(el)).map((e) => R.sectionPoly(e, ppm)).filter(Boolean);
+          const minor = others.filter((e) => lanes(e) < lanes(el)).map((e) => R.sectionPoly(e, ppm)).filter(Boolean);
+          for (const q of major) clipOutside(q);
+          for (const { l, pts: line } of R.sectionGeom(el, ppm).lines) {
+            const st = P.lineStyles[l.style];
+            if ((l.style !== 'edge' && l.style !== 'bikeSep') || !minor.length) { R.drawStyled(ctx, line, st, ppm); continue; }
+            ctx.save(); for (const q of minor) clipOutside(q); R.drawStyled(ctx, line, st, ppm); ctx.restore();
+            for (const q of minor) { ctx.save(); path(ctx, q, true); ctx.clip(); R.drawStyled(ctx, line, P.lineStyles.lane, ppm); ctx.restore(); }
+          }
           break;
         }
         case 'crosswalk': drawCrosswalk(ctx, el, ppm, P); break;
@@ -941,7 +1055,12 @@ window.Render = (function () {
     const crossCuts = els.filter((e) => e.type === 'crosswalk' && e.a && e.b && e.dir != null)
       .map((e) => R.crosswalkPad(e, ppm, 0.3));
     for (const el of els) {
-      if (el.type === 'sidewalk') { ctx.save(); yieldToRoundabouts(el); drawSidewalk(ctx, el, ppm, P); ctx.restore(); }
+      if (el.type === 'sidewalk') {
+        ctx.save(); yieldToRoundabouts(el);
+        // a junction's corner sidewalk opens wherever another road (ramp, slip road, driveway) crosses it
+        if (el.yieldTo) for (const sec of els) if (sec.type === 'section' && !el.yieldTo.includes(sec.id)) clipOutside(R.sectionPoly(sec, ppm));
+        drawSidewalk(ctx, el, ppm, P); ctx.restore();
+      }
       if (el.type === 'roundabout') {
         drawRoundaboutIsland(ctx, el, ppm, P);
         for (const sp of el.splits || []) { // splitter islands, opened where crosswalks pass (pedestrian refuge)
@@ -954,8 +1073,8 @@ window.Render = (function () {
       if (el.type === 'section') {
         const pts = R.basePts(el, ppm);
         if (pts.length < 2) continue;
-        for (const b of R.sectionLayout(el).bands) if (b.kind === 'median') {
-          const poly = G.offset(pts, -b.width / 2 * ppm).concat(G.offset(pts, b.width / 2 * ppm).reverse());
+        for (const { b, pts: mp } of R.sectionGeom(el, ppm).bands) if (b.kind === 'median') {
+          const poly = G.offset(mp, -b.width / 2 * ppm).concat(G.offset(mp, b.width / 2 * ppm).reverse());
           // Medians are opened wherever a crosswalk crosses them (0.3 m clear each side), and stop at
           // intersection / roundabout areas. Computed live, so they follow crosswalk width and position.
           const cuts = medianCuts.concat(crossCuts);

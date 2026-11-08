@@ -1303,24 +1303,27 @@
   }
   // An intersection keeps the click and settings it was made with; whenever one of the roads it is built from
   // changes (shape, lanes, lane use, arrow / box / guide options …) its markings are rebuilt straight away.
-  const SEC_KEYS = ['pts', 'smooth', 'lanesF', 'lanesB', 'laneWidth', 'centerType', 'medianWidth', 'slowLane', 'bikeLane', 'edge', 'autoArrows', 'autoBox', 'boxDepth', 'solidLen', 'laneUse', 'leftGuide', 'leftTurn', 'pocketLen', 'pocketTaper'];
+  const SEC_KEYS = ['pts', 'smooth', 'lanesF', 'lanesB', 'laneWidth', 'centerType', 'medianWidth', 'slowLane', 'bikeLane', 'edge', 'autoArrows', 'autoBox', 'boxDepth', 'solidLen', 'laneUse', 'leftGuide', 'leftTurn', 'pocketLen', 'pocketTaper', 'lanesF2', 'lanesB2', 'changeAt', 'taper'];
+  const J_KEYS = ['crosswalks', 'cwKind', 'cwWidth', 'setback', 'stops', 'stopGap', 'cornerR', 'sidewalks', 'swWidth', 'bikeCross'];
+  const junctionPrm = (j) => { const o = Object.assign({}, j.genPrm || {}); for (const k of J_KEYS) if (j[k] !== undefined) o[k] = j[k]; return o; };
   function junctionSig(j) {
     const m = ppm(), near = (40 + 60) * m;
     const secs = S.els.filter((e) => e.type === 'section' && e.pts.some((p, i) => {
       const q = e.pts[i + 1]; return G.dist(p, j.genClick) < near || (q && G.distToSeg(j.genClick, p, q).d < near);
     }));
-    return JSON.stringify([m, j.genPrm, secs.map((e) => SEC_KEYS.map((k) => e[k]))]);
+    const others = S.els.filter((e) => e !== j && e.type === 'junction' && e.genClick).map((e) => [Math.round(e.genClick.x), Math.round(e.genClick.y)]);
+    return JSON.stringify([m, junctionPrm(j), secs.map((e) => SEC_KEYS.map((k) => e[k])), others]);
   }
   function syncJunction(j) {
     if (!j.genClick) return;
     const sig = junctionSig(j);
     if (j.sig === sig) return;
-    const made = buildJunction(j.genClick, j.genPrm || {});
+    const made = buildJunction(j.genClick, junctionPrm(j));
     j.sig = sig;
     if (!made) return;
     const fresh = made[0], oldId = j.id;
     for (const e of made) if (e.owner === fresh.id) e.owner = oldId;
-    j.pts = fresh.pts;
+    j.pts = fresh.pts; j.corners = fresh.corners; j.cornerCuts = fresh.cornerCuts; j.legSecIds = fresh.legSecIds;
     S.els = S.els.filter((e) => e.owner !== oldId).concat(made.slice(1));
   }
   const syncAll = () => {
@@ -1378,10 +1381,13 @@
       if (el.type !== 'section') continue;
       const pts = R.basePts(el, m);
       if (pts.length < 2) continue;
-      const L = R.sectionLayout(el);
       const r = G.nearestOnPolyline(click, pts);
-      if (!r || r.d > (Math.max(L.left, L.right) + 6) * m) continue;
-      roads.push({ el, pts, L, r });
+      if (!r) continue;
+      // lanes in force here (a section may add or drop lanes along its length)
+      let sM = 0; for (let k = 0; k < r.i; k++) sM += G.dist(pts[k], pts[k + 1]); sM = (sM + G.dist(pts[r.i], r.proj)) / m;
+      const at = R.sectionAt(el, sM), L = at.L;
+      if (r.d > (Math.max(L.left, L.right) + 6) * m) continue;
+      roads.push({ el: at.el, src: el, pts, L, r, sM });
     }
     if (roads.length < 2) {
       alert('找不到兩條交會的路段。請先用「② 路段」沿每條道路的中心線畫過路口，再點兩路交會處。\nNeed two road sections crossing here — draw sections along each road first.');
@@ -1462,6 +1468,104 @@
       if (oneWay || Math.abs(dIn - dOut) < 1e-6) poly.push(at(dIn, -lg.leftExt - 1), at(dOut, lg.rightExt + 1));
       else poly.push(at(dIn, -lg.leftExt - 1), at(dIn, step), at(dOut, step), at(dOut, lg.rightExt + 1));
     }
+    // ---- corners: rounded kerb returns (paved), optional corner sidewalks, §186-1 自行車穿越道線 ----
+    const corners = [], walks = [], cornerCuts = [];
+    const cR = G.clamp(prm.cornerR != null ? prm.cornerR : 8, 0, 30), swW = G.clamp(prm.swWidth || 4, 1.5, 10);
+    const kerbOf = (lg, side, s) => { // + = right of outward; follows lane-change tapers along the road
+      if (s == null || !R.hasLaneChange(lg.rd.src)) return side > 0 ? lg.rightExt : -lg.leftExt;
+      const e = R.sectionExtAt(lg.rd.src, lg.rd.sM + (lg.sgn * s) / m);
+      return side > 0 ? (lg.sgn > 0 ? e.right : e.left) : -(lg.sgn > 0 ? e.left : e.right);
+    };
+    const sample = (lg, side, s0, s1) => { const pts = [], st = Math.max(0.5 * m, 1); for (let s = s0; s <= s1 + 1e-6; s += st) pts.push({ s, p: legPt(lg, s, kerbOf(lg, side, s)) }); return pts; };
+    const crossK = (A, B) => { // first crossing of two sampled kerbs, nearest the centre
+      let best = null;
+      for (let i = 0; i < A.length - 1; i++) for (let j = 0; j < B.length - 1; j++) {
+        const a = A[i].p, b = A[i + 1].p, c = B[j].p, d = B[j + 1].p, r = G.sub(b, a), q = G.sub(d, c), den = G.cross(r, q);
+        if (Math.abs(den) < 1e-9) continue;
+        const t = G.cross(G.sub(c, a), q) / den, u = G.cross(G.sub(c, a), r) / den;
+        if (t < 0 || t > 1 || u < 0 || u > 1) continue;
+        const X = G.add(a, G.mul(r, t));
+        if (!best || G.dist(X, C) < G.dist(best.X, C)) best = { X, sA: A[i].s + (A[i + 1].s - A[i].s) * t, sB: B[j].s + (B[j + 1].s - B[j].s) * u };
+      }
+      return best;
+    };
+    const outerOf = (inner) => { // the sidewalk's back edge: the offset that lies away from the junction
+      const o1 = G.offset(inner, swW * m), o2 = G.offset(inner, -swW * m), mid = (p) => p[Math.floor(p.length / 2)];
+      return G.dist(mid(o1), C) > G.dist(mid(o2), C) ? o1 : o2;
+    };
+    for (let i = 0; i < legs.length; i++) {
+      const A = legs[i], B = legs[(i + 1) % legs.length];
+      if (A === B) continue;
+      const turn = Math.atan2(G.cross(A.v, B.v), G.dot(A.v, B.v)); // clockwise angle from A to B (y down)
+      // a sidewalk runs out along the road until halfway to the next intersection on it
+      const others = S.els.filter((e) => e.type === 'junction' && e.genClick && G.dist(e.genClick, click) > 5 * m).map((e) => e.genClick);
+      const reach = (lg) => {
+        let r = Math.min(lg.len, 400 * m);
+        for (const q of others) {
+          const pr = G.nearestOnPolyline(q, lg.path.pts); if (!pr || pr.d > (lg.leftExt + lg.rightExt) * m) continue;
+          let sQ = 0; for (let k = 0; k < pr.i; k++) sQ += G.dist(lg.path.pts[k], lg.path.pts[k + 1]); sQ += G.dist(lg.path.pts[pr.i], pr.proj);
+          if (sQ > 10 * m) r = Math.min(r, sQ / 2);
+        }
+        return r;
+      };
+      if (A.rd === B.rd && Math.abs(Math.abs(turn) - Math.PI) < 0.35) { // straight kerb of a through road (no road on this side)
+        if (prm.sidewalks) {
+          const inner = sample(A, 1, 0, reach(A)).map((q) => q.p).reverse().concat(sample(B, -1, 0, reach(B)).map((q) => q.p).slice(1));
+          walks.push(inner.concat(outerOf(inner).reverse()));
+        }
+        continue;
+      }
+      if (turn <= 0.05) continue;
+      const X = crossK(sample(A, 1, 0, Math.min(A.len, 80 * m)), sample(B, -1, 0, Math.min(B.len, 80 * m)));
+      if (!X) continue;
+      const dA = onLeg(A, X.sA, 0).t, dB = onLeg(B, X.sB, 0).t;
+      const phi = Math.acos(G.clamp(G.dot(dA, dB), -1, 1)) / 2;             // half the corner angle
+      const tdist = Math.min(cR * m / Math.tan(Math.max(phi, 0.2)), 30 * m, A.len - X.sA - m, B.len - X.sB - m);
+      let arc = [];
+      if (cR > 0 && tdist > 0.5 * m) {
+        const a0 = legPt(A, X.sA + tdist, kerbOf(A, 1, X.sA + tdist)), b0 = legPt(B, X.sB + tdist, kerbOf(B, -1, X.sB + tdist));
+        // circular fillet tangent to both kerbs (quadratic fallback if the kerbs are not straight here)
+        const rr = tdist * Math.tan(phi), O = G.add(X.X, G.mul(G.norm(G.add(dA, dB)), rr / Math.sin(Math.max(phi, 0.2))));
+        let a1 = G.angle(G.sub(a0, O)), a2 = G.angle(G.sub(b0, O)), da = a2 - a1;
+        while (da > Math.PI) da -= 2 * Math.PI; while (da < -Math.PI) da += 2 * Math.PI;
+        const N = 16;
+        for (let k = 0; k <= N; k++) { const a = a1 + (da * k) / N; arc.push(G.add(O, G.mul(G.fromAngle(a), rr))); }
+        arc[0] = a0; arc[N] = b0;
+        // paving grown 0.3 m into the road (about the arc centre) so it overlaps the road edges without a hairline gap
+        const grow = (d) => { const k = (G.dist(X.X, O) + d * m) / Math.max(1e-6, G.dist(X.X, O)); return [X.X].concat(arc).map((p) => G.add(O, G.mul(G.sub(p, O), k))); };
+        corners.push(grow(0.3));
+        // lines stop clear of the rounded corner (grown 1 m about the arc centre so the kerb's edge line is fully cut)
+        const k = (G.dist(X.X, O) + 1 * m) / Math.max(1e-6, G.dist(X.X, O));
+        cornerCuts.push([X.X].concat(arc).map((p) => G.add(O, G.mul(G.sub(p, O), k))));
+      } else arc = [X.X];
+      if (prm.sidewalks) {
+        const sa = arc.length > 1 ? X.sA + tdist : X.sA, sb = arc.length > 1 ? X.sB + tdist : X.sB;
+        const inner = sample(A, 1, sa, reach(A)).map((q) => q.p).reverse().slice(0, -1).concat(arc).concat(sample(B, -1, sb, reach(B)).map((q) => q.p).slice(1));
+        walks.push(inner.concat(outerOf(inner).reverse()));
+      }
+    }
+    { // the junction outline plus every kerb corner, in order around the centre: lines stop everywhere inside
+      const ring = poly.concat(cornerCuts.map((c) => c[0])).map((p) => ({ p, a: G.angle(G.sub(p, C)) })).sort((u, v) => u.a - v.a).map((q) => q.p);
+      if (ring.length >= 3) cornerCuts.push(ring);
+    }
+    const legSecIds = [...new Set(legs.map((lg) => lg.rd.src.id))];
+    for (const w of walks) out.push({ id: newId(), owner: jid, type: 'sidewalk', style: 'pavers', yieldTo: legSecIds, pts: w.filter((_, k) => k % 2 === 0 || k === w.length - 1) });
+    // §186-1 自行車穿越道線: where any road here carries bike lanes, a bike crossing runs beside each crosswalk
+    // (junction side): two 10 cm white solid lines ≥ 1.2 m apart, with a bike symbol at each entry and exit
+    const bikeW = Math.max(0, ...roads.map((rd) => rd.el.bikeLane || 0));
+    if (prm.bikeCross !== false && bikeW > 0 && prm.crosswalks) {
+      const W = Math.max(1.2, bikeW) + 0.2;
+      for (const lg of legs) {
+        if (!roads.some((rd) => rd !== lg.rd && (rd.el.bikeLane || 0) > 0)) continue;
+        const s1 = lg.cwIn - 0.4 * m, s0 = s1 - W * m;
+        if (s0 < lg.E * 0.6) continue;
+        const l0 = -lg.leftExt + 0.3, l1 = lg.rightExt - 0.3;
+        for (const s of [s0, s1]) out.push({ id: newId(), owner: jid, type: 'line', style: 'laneSolid', smooth: false, jline: true, pts: [legPt(lg, s, l0), legPt(lg, s, l1)] });
+        const mid = (s0 + s1) / 2, across = G.norm(G.sub(legPt(lg, mid, l1), legPt(lg, mid, l0)));
+        for (const [off, d] of [[l0 + 1.3, across], [l1 - 1.3, G.mul(across, -1)]])
+          out.push({ id: newId(), owner: jid, type: 'symbol', kind: 'bike', small: W < 1.6, p: legPt(lg, mid, off), dir: G.angle(d) });
+      }
+    }
     // which turns each entry can make (other legs to its left / straight on / right)
     const turnsFrom = (lg) => {
       const tr = G.mul(lg.v, -1), res = { L: null, S: null, R: null };
@@ -1485,6 +1589,15 @@
       const laneOff = (k) => (lg.entry.oneWay ? W1 / 2 - (k + 0.5) * lw : -(start + (k + 0.5) * lw));
       const edgeOff = (k) => (lg.entry.oneWay ? W1 / 2 - k * lw : -(start + k * lw)); // lane boundary k (0 = driver's left edge)
       const stopRear = lg.entry.ds + (stopW * m) / 2;
+      // only where the lane layout is the one at the junction (not in or past a lane add / drop taper)
+      const sameLanes = (s0, s1) => {
+        const src = lg.rd.src;
+        if (!R.hasLaneChange(src)) return true;
+        const cA = +src.changeAt || 0, tp = Math.max(1, +src.taper || 30);
+        const a = lg.rd.sM + (lg.sgn * s0) / m, b = lg.rd.sM + (lg.sgn * s1) / m, lo = Math.min(a, b), hi = Math.max(a, b);
+        const sideOf = (x) => (x < cA ? 0 : x > cA + tp ? 1 : 0.5);
+        return sideOf(lo) === sideOf(hi) && sideOf(lo) === sideOf(lg.rd.sM) && sideOf(lo) !== 0.5;
+      };
       // what each lane is for, from the driver's left: the road's 車道用途 setting (e.g. "L,L,S,S,R"), else automatic
       const KINDS = new Set(['L', 'S', 'R', 'SL', 'SR', 'LR', 'SLR', 'U']);
       const given = String(el.laneUse || '').toUpperCase().split(/[\s,，、]+/).filter((x) => KINDS.has(x));
@@ -1517,7 +1630,8 @@
       }
       // lane lines on the approach: hidden inside the box, then solid 禁止變換車道線 for solidLen before the stop line
       if (n > 1) {
-        const L0 = Math.max(0, el.solidLen != null ? el.solidLen : 30), sEnd = stopRear + L0 * m;
+        const L0 = Math.max(0, el.solidLen != null ? el.solidLen : 30);
+        let sEnd = stopRear + L0 * m; while (sEnd > stopRear && !sameLanes(stopRear, sEnd)) sEnd -= m; // not into a lane-change taper
         const lo = edgeOff(1), hi = edgeOff(n - 1), a0 = Math.min(lo, hi) - 0.3, a1 = Math.max(lo, hi) + 0.3;
         const maskEnd = Math.max(sEnd, boxRear);
         if (maskEnd > stopRear) out.push({ id: newId(), owner: jid, type: 'lanemask', pts: legLine(lg, stopRear - 0.1 * m, maskEnd, a0).concat(legLine(lg, stopRear - 0.1 * m, maskEnd, a1).reverse()) });
@@ -1534,7 +1648,7 @@
         const inBox = (k) => kS >= 0 && k >= kS && k <= kE;
         const tip1 = (k) => (inBox(k) ? boxRear + 3 * m : stopRear + 1 * m);
         const tip2 = Math.max(boxRear + 33 * m, stopRear + (L0 + 3) * m);
-        const put = (k, tip) => { if (tip + 5 * m < lg.len) out.push({ id: newId(), owner: jid, type: 'arrow', kind: uses[k], length: 5, p: atL(lg, tip + 2.5 * m, laneOff(k)), dir: dirAt(tip + 2.5 * m) }); };
+        const put = (k, tip) => { if (tip + 5 * m < lg.len && sameLanes(tip, tip + 5 * m)) out.push({ id: newId(), owner: jid, type: 'arrow', kind: uses[k], length: 5, p: atL(lg, tip + 2.5 * m, laneOff(k)), dir: dirAt(tip + 2.5 * m) }); };
         for (let k = 0; k < n; k++) put(k, tip1(k));
         for (let k = 0; k < n; k++) put(k, tip2);
       }
@@ -1585,7 +1699,8 @@
         }
       }
     }
-    out.unshift({ id: jid, type: 'junction', pts: poly, genClick: G.copy(click), genPrm: clone(prm) });
+    const own = {}; for (const k of J_KEYS) if (prm[k] !== undefined) own[k] = prm[k];
+    out.unshift(Object.assign({ id: jid, type: 'junction', pts: poly, corners, cornerCuts, legSecIds, genClick: G.copy(click), genPrm: clone(prm) }, own));
     return out;
   }
 
@@ -1667,7 +1782,7 @@
     if (f.kind === 'num' || f.kind === 'deg') {
       inp = document.createElement('input'); inp.type = 'number';
       if (f.kind === 'deg') { inp.step = 1; inp.value = Math.round((((target[f.key] * 180) / Math.PI) % 360 + 360) % 360); }
-      else { inp.min = f.min; inp.max = f.max; inp.step = f.step; inp.value = +(+target[f.key]).toFixed(3); }
+      else { inp.min = f.min; inp.max = f.max; inp.step = f.step; inp.value = +(+(target[f.key] != null && target[f.key] !== '' ? target[f.key] : f.dflt)).toFixed(3); }
       inp.onchange = () => {
         let v = parseFloat(inp.value); if (isNaN(v)) return;
         if (f.kind === 'deg') v = (v * Math.PI) / 180; else v = G.clamp(v, f.min, f.max);
@@ -1758,6 +1873,11 @@
             syncQuad(el);
           } else if (v === 'rect' && el.quad) { syncQuad(el); delete el.quad; }
           commit(); return;
+        }
+        // the 'after change' lane counts follow the base counts until they are set to something else
+        if (target.type === 'section' && (key === 'lanesF' || key === 'lanesB')) {
+          const k2 = key + '2';
+          if (target[k2] == null || target[k2] === '' || +target[k2] === +target[key]) target[k2] = v;
         }
         target[key] = v;
         if (target.type === 'surface' && key === 'kind' && P().colors[v]) target.color = P().colors[v];

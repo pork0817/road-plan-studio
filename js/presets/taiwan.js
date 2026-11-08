@@ -75,7 +75,7 @@ window.RoadPresets = window.RoadPresets || {};
       sec('單行道', 'One-way 2 lanes', { lanesF: 2, lanesB: 0, laneWidth: 3.0, slowLane: 0 }),
       sec('自行車道路段', 'With bike lanes', { lanesF: 1, lanesB: 1, laneWidth: 3.25, centerType: 'centerDouble', bikeLane: 1.5 }),
       { id: 'junction', label: '路口', en: 'Intersection: click crossing', mode: 'junction', icon: { glyph: '✚' },
-        defaults: { type: 'junctionTool', cwKind: 'ties', cwWidth: 4, setback: 3, stopGap: 2, crosswalks: true, stops: true } },
+        defaults: { type: 'junctionTool', cwKind: 'ties', cwWidth: 4, setback: 3, stopGap: 2, crosswalks: true, stops: true, cornerR: 8, sidewalks: true, swWidth: 4, bikeCross: true } },
       { id: 'roundabout', label: '圓環', en: 'Roundabout: click centre', mode: 'roundabout', icon: { glyph: '◎' },
         defaults: { type: 'roundaboutTool', R: 18, lanes: 1, laneWidth: 5.5, apron: 2, island: 'island', yields: true, curvedYield: true, crosswalks: true, cwKind: 'ties', cwWidth: 4, cwSetback: 6.5, cornerR: 12, curveLanes: true, splitters: true, laneStop: true, solidApproach: false, solidLen: 30, stopLines: true, stopGap: 2 } },
       { id: 'turbo', label: '渦輪圓環', en: 'Turbo roundabout', mode: 'roundabout', icon: { glyph: '◉' },
@@ -110,6 +110,11 @@ window.RoadPresets = window.RoadPresets || {};
 
   const num = (key, label, min, max, step, law) => ({ kind: 'num', key, label, min, max, step, unit: 'm', law });
 
+  const junctionCorner = [
+    num('cornerR', '轉角半徑 Corner radius', 0, 30, 0.5, '≈ 市區路口常用 5–12 m，0 = 直角'),
+    { kind: 'chk', key: 'sidewalks', label: '轉角人行道 Corner sidewalks' },
+    num('swWidth', '人行道寬 Sidewalk width', 1.5, 10, 0.1, '≈ 淨寬 ≥ 1.5 m (市區 2.5 m 以上)'),
+    { kind: 'chk', key: 'bikeCross', label: '自行車穿越道 Bike crossings (§186-1)' }];
   function fields(el) {
     switch (el.type) {
       case 'road': return [{ kind: 'sel', key: 'tone', label: '鋪面 Tone', options: [['asphalt', '新鋪瀝青 New asphalt'], ['worn', '舊瀝青 Worn'], ['concrete', '混凝土 Concrete']] },
@@ -121,6 +126,10 @@ window.RoadPresets = window.RoadPresets || {};
         const f = [
           { kind: 'num', key: 'lanesF', label: '順向車道數 Lanes →', min: 0, max: 6, step: 1 },
           { kind: 'num', key: 'lanesB', label: '對向車道數 Lanes ← (0=單行)', min: 0, max: 6, step: 1 },
+          { kind: 'num', key: 'lanesF2', label: '後段順向車道數 Lanes → after change', min: 0, max: 6, step: 1, dflt: el.lanesF },
+          ...(el.lanesB > 0 ? [{ kind: 'num', key: 'lanesB2', label: '後段對向車道數 Lanes ← after change', min: 0, max: 6, step: 1, dflt: el.lanesB }] : []),
+          ...((el.lanesF2 != null && +el.lanesF2 !== +el.lanesF) || (el.lanesB > 0 && el.lanesB2 != null && +el.lanesB2 !== +el.lanesB) ? [num('changeAt', '變化起點 Change starts at', 0, 2000, 1, '≈ 距路段起點 (第一個點) 的距離'),
+            Object.assign(num('taper', '漸變段長 Taper length', 5, 200, 1, '≈ 增減車道漸變段，常用 30–60 m'), { dflt: 30 })] : []),
           num('laneWidth', '車道寬 Lane width', 2.5, 4.0, 0.05, '≈ 市區常用 3.0–3.5m'),
         ];
         if (el.lanesB > 0) f.push({ kind: 'sel', key: 'centerType', label: '中央 Centre', options: centerTypes });
@@ -184,7 +193,8 @@ window.RoadPresets = window.RoadPresets || {};
         num('cwWidth', '穿越道寬 Width', 2, 8, 0.1, '法規 2–8 m'),
         num('setback', '退縮 Setback', 0, 10, 0.1, '§185 距橫交路口路面邊緣 3–5 m'),
         { kind: 'chk', key: 'stops', label: '停止線 Stop lines' },
-        num('stopGap', '停止線淨距 Stop gap', 1, 3, 0.1, '§170 與行人穿越道淨距 2–3 m (≥1 m)')];
+        num('stopGap', '停止線淨距 Stop gap', 1, 3, 0.1, '§170 與行人穿越道淨距 2–3 m (≥1 m)'),
+        ...junctionCorner];
       case 'roundaboutTool': case 'roundabout': {
         const tool = el.type === 'roundaboutTool', f = [];
         if (tool) f.push({ kind: 'info', text: el.turbo
@@ -218,7 +228,7 @@ window.RoadPresets = window.RoadPresets || {};
         { kind: 'chk', key: 'triangles', label: '倒三角形 Triangles' }].concat(el.arcC ? [{ kind: 'chk', key: 'curved', label: '沿圓環弧線 Follow roundabout curve' }] : []).concat([
         { kind: 'law', text: '§172 讓路線：白色雙虛線＋倒三角形 (寬1.2m 長3.0m 線寬15cm 頂部60cm)，三角形距虛線2.0–2.5m。虛線尺寸量自附圖 (≈)。' },
         { kind: 'btn', action: 'realign', label: '對齊車道 Align to lanes' }, { kind: 'btn', action: 'flip', label: '反轉方向 Flip' }]);
-      case 'junction': return [{ kind: 'btn', action: 'regenJunction', label: '↻ 重新產生 Regenerate' }, { kind: 'info', text: '路口範圍：範圍內的車道線、路段標線會被中斷 (行人穿越道、箭頭等不受影響)。拖曳節點可調整範圍；此框只在編輯時顯示，不會匯出。' }];
+      case 'junction': return [...junctionCorner, { kind: 'btn', action: 'regenJunction', label: '↻ 重新產生 Regenerate' }, { kind: 'info', text: '路口範圍：範圍內的車道線、路段標線會被中斷 (行人穿越道、箭頭等不受影響)。拖曳節點可調整範圍；此框只在編輯時顯示，不會匯出。' }];
       case 'bikelane': {
         const minW = el.kind === 'priority' ? 1.2 : el.twoWay ? 2.5 : 1.2;
         const f = [{ kind: 'sel', key: 'kind', label: '種類 Type', options: [['exclusive', '專用車道 Exclusive (§174)'], ['priority', '優先車道 Priority (§174-4)']] },
