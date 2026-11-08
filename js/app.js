@@ -110,7 +110,7 @@
   const findEl = (id) => S.els.find((e) => e.id === id);
 
   function hitRank(el) {
-    return { sidewalk: 5, arrow: 4, text: 4, stopline: 4, crosswalk: 3.5, scooterbox: 3.4, line: 3, chevron: 2.5, yellowbox: 2.5, surface: 2, section: 1, road: 0 }[el.type] || 0;
+    return { junction: 0.5, sidewalk: 5, arrow: 4, text: 4, stopline: 4, crosswalk: 3.5, scooterbox: 3.4, line: 3, chevron: 2.5, yellowbox: 2.5, surface: 2, section: 1, road: 0 }[el.type] || 0;
   }
   function hitTest(w) {
     const tol = 6 / S.view.s;
@@ -221,6 +221,7 @@
       if (m === 'poly') h = '逐點點擊描繪範圍，<kbd>Enter</kbd>/雙擊/點回起點 完成，<kbd>⌫</kbd> 退一點，<kbd>Esc</kbd> 取消，<kbd>Shift</kbd> 鎖角度，<kbd>Alt</kbd> 不吸附';
       if (m === 'polyline') h = '沿道路中心 (或標線位置) 逐點點擊，<kbd>Enter</kbd>/雙擊 完成。畫線方向的右側=順向車道';
       if (m === 'two') h = '從道路一側點到另一側 — 會自動對齊最近車道方向 (與車流同向)';
+      if (m === 'junction') h = '點兩條路段 (路段中心線) 的交會處 — 自動產生路口範圍、行人穿越道與停止線';
       if (m === 'point') h = '點擊放置 — 自動對齊最近車道的行車方向；<kbd>[ ]</kbd> 旋轉，<kbd>F</kbd> 反轉';
     }
     $('#stHint').innerHTML = h;
@@ -280,8 +281,8 @@
     drawOverlay(W, H);
   }
 
-  function strokeShape(sh, color, width) {
-    ctx.strokeStyle = color; ctx.lineWidth = width; ctx.setLineDash([]);
+  function strokeShape(sh, color, width, keepDash) {
+    ctx.strokeStyle = color; ctx.lineWidth = width; if (!keepDash) ctx.setLineDash([]);
     if (sh.poly && sh.poly.length >= 2) { R.path(ctx, sh.poly.map(toScreen), true); ctx.stroke(); }
     else if (sh.line && sh.line.length >= 2) { R.path(ctx, sh.line.map(toScreen)); ctx.stroke(); }
   }
@@ -294,11 +295,14 @@
       const el = findEl(S.hover); const sh = el && R.shape(el, ppm(), P());
       if (sh) strokeShape(sh, '#3fb6ff88', 1.5);
     }
+    for (const j of S.els) if (j.type === 'junction' && j.pts.length > 2) {
+      ctx.setLineDash([6, 5]); strokeShape({ poly: j.pts }, '#c58cff99', 1.2, true); ctx.setLineDash([]);
+    }
     const sel = findEl(S.sel);
     if (sel) {
       const sh = R.shape(sel, ppm(), P());
       if (sh) strokeShape(sh, '#3fb6ff', 1.5);
-      if (sel.type === 'section' || sel.type === 'line') { ctx.setLineDash([4, 4]); strokeShape({ line: sel.pts }, '#ffffffaa', 1); ctx.setLineDash([]); }
+      if (sel.type === 'section' || sel.type === 'line') { ctx.setLineDash([4, 4]); strokeShape({ line: sel.pts }, '#ffffffaa', 1, true); ctx.setLineDash([]); }
       for (const h of handlesOf(sel)) {
         const s = toScreen(h.p);
         const isRot = h.key === 'rot' || h.key === 'rot2';
@@ -422,6 +426,9 @@
           const el = buildElement(S.item, { a: S.draft.a, b: p });
           S.els.push(el); S.sel = el.id; S.draft = null; commit();
         }
+      } else if (m === 'junction') {
+        const made = buildJunction(w, S.params);
+        if (made) { S.els.push(...made); S.sel = made[0].id; commit(); setTool('select'); S.sel = made[0].id; renderProps(); }
       } else if (m === 'point') {
         const el = buildElement(S.item, { p: w });
         S.els.push(el); S.sel = el.id; commit();
@@ -600,7 +607,7 @@
   // ---------------- align two objects ----------------
   const BAND = new Set(['crosswalk', 'stopline', 'scooterbox']);
   const POINT = new Set(['arrow', 'text', 'symbol']);
-  const canAlign = (el) => el && (BAND.has(el.type) || POINT.has(el.type));
+  const canAlign = (el) => el && el.type !== 'junction';
   const centerOf = (el) => (el.a ? G.mid(el.a, el.b) : el.p ? el.p : G.centroid(el.pts));
   function dirOf(el, near) {
     if (el.a || el.p) return el.dir || 0;
@@ -626,7 +633,7 @@
     if (!canAlign(el)) return;
     if (S.tool !== 'select') setTool('select');
     S.sel = el.id;
-    S.align = { srcId: el.id, orig: clone(el), tgtId: null, opts: { gap: 0, ends: false, axis: true } };
+    S.align = { srcId: el.id, orig: clone(el), tgtId: null, opts: { gap: 0, ends: false, axis: false, parallel: true, frame: 'target', ax: null, ay: null } };
     renderProps(); updateHint(); redraw();
   }
   function endAlign(cancel) {
@@ -639,19 +646,22 @@
     if (!src || !tgt) return;
     Object.assign(src, clone(A.orig));
     const o = A.opts;
-    if (BAND.has(src.type)) {
+    if (!o.parallel) { /* translation-only alignment below */ }
+    else if (BAND.has(src.type)) {
       const c = centerOf(src), L = G.dist(src.a, src.b);
       let tDir = dirOf(tgt, c);
       if (G.dot(G.fromAngle(tDir), G.fromAngle(src.dir)) < 0) tDir += Math.PI; // keep the source's own traffic sense
       src.dir = tDir;
       if (BAND.has(tgt.type)) {
+        const dock = o.ay == null; // edge-to-edge docking unless a top/middle/bottom alignment is chosen
         let uT = G.norm(G.sub(tgt.b, tgt.a));
         if (G.dot(uT, G.sub(src.b, src.a)) < 0) uT = G.mul(uT, -1);
         src.a = G.sub(c, G.mul(uT, L / 2)); src.b = G.add(c, G.mul(uT, L / 2));
         const n = G.rightN(G.norm(G.sub(tgt.b, tgt.a)));
         const dC = G.dot(G.sub(c, tgt.a), n), side = Math.sign(dC) || 1, ns = G.mul(n, side);
         const want = side * (bandExtent(tgt, ns) + o.gap * ppm() + bandExtent(src, G.mul(ns, -1)));
-        if (o.ends) {
+        if (!dock) { /* keep position; ax/ay below */ }
+        else if (o.ends && o.ax == null) {
           const tA = G.dot(G.sub(src.a, tgt.a), uT) < G.dot(G.sub(src.b, tgt.a), uT) ? [tgt.a, tgt.b] : [tgt.b, tgt.a];
           const flip = G.dot(G.sub(tgt.b, tgt.a), uT) < 0;
           src.a = G.add(flip ? tgt.b : tgt.a, G.mul(n, want)); src.b = G.add(flip ? tgt.a : tgt.b, G.mul(n, want));
@@ -674,14 +684,138 @@
         src.p = G.add(c, G.mul(t, G.dot(G.sub(src.p, c), t)));
       }
     }
+    applyEdgeAlign(src, tgt);
   }
+  function alignAxes(tgt, src) {
+    if (A_frame() === 'screen') return { F: { x: 0, y: -1 }, Rt: { x: 1, y: 0 } };
+    const F = G.fromAngle(dirOf(tgt, centerOf(src)));
+    return { F, Rt: G.rightN(F) };
+  }
+  const A_frame = () => (S.align && S.align.opts.frame) || 'target';
+  function extentAlong(el, axis) {
+    const sh = R.shape(el, ppm(), P());
+    if (!sh) return [0, 0];
+    const pts = sh.poly || sh.line, pad = sh.line ? sh.w / 2 : 0;
+    let lo = Infinity, hi = -Infinity;
+    for (const q of pts) { const v = G.dot(q, axis); lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    return [lo - pad, hi + pad];
+  }
+  function shiftToAlign(src, tgt, axis, mode) {
+    if (!mode) return;
+    const [sl, sh] = extentAlong(src, axis), [tl, th] = extentAlong(tgt, axis);
+    const d = mode === 'min' ? tl - sl : mode === 'max' ? th - sh : (tl + th) / 2 - (sl + sh) / 2;
+    moveEl(src, clone(src), G.mul(axis, d));
+  }
+  function applyEdgeAlign(src, tgt) {
+    const o = S.align.opts, ax = alignAxes(tgt, src);
+    shiftToAlign(src, tgt, ax.Rt, o.ax);
+    shiftToAlign(src, tgt, ax.F, o.ay);
+  }
+
   function pickAlignTarget(el) {
     const A = S.align;
     if (!el || el.id === A.srcId) return;
     A.tgtId = el.id;
     const src = findEl(A.srcId);
     A.opts.gap = defaultGap(src, el);
+    A.opts.parallel = BAND.has(src.type) || POINT.has(src.type);
+    A.opts.frame = (el.a || el.p || ['line', 'section'].includes(el.type)) ? 'target' : 'screen';
     applyAlign(); commit(); updateHint();
+  }
+
+
+  // ---------------- intersection generator ----------------
+  function lineIntersect(p1, t1, p2, t2) {
+    const den = G.cross(t1, t2);
+    if (Math.abs(den) < 0.15) return null; // (nearly) parallel
+    const s = G.cross(G.sub(p2, p1), t2) / den;
+    return G.add(p1, G.mul(t1, s));
+  }
+  function lengthsFrom(pts, i, proj) {
+    let f = G.dist(proj, pts[i + 1]), b = G.dist(pts[i], proj);
+    for (let k = i + 1; k < pts.length - 1; k++) f += G.dist(pts[k], pts[k + 1]);
+    for (let k = 0; k < i; k++) b += G.dist(pts[k], pts[k + 1]);
+    return { f, b };
+  }
+  function buildJunction(click, prm) {
+    const m = ppm();
+    let roads = [];
+    for (const el of S.els) {
+      if (el.type !== 'section') continue;
+      const pts = R.basePts(el, m);
+      if (pts.length < 2) continue;
+      const L = R.sectionLayout(el);
+      const r = G.nearestOnPolyline(click, pts);
+      if (!r || r.d > (Math.max(L.left, L.right) + 6) * m) continue;
+      roads.push({ el, pts, L, r });
+    }
+    if (roads.length < 2) {
+      alert('找不到兩條交會的路段。請先用「② 路段」沿每條道路的中心線畫過路口，再點兩路交會處。\nNeed two road sections crossing here — draw sections along each road first.');
+      return null;
+    }
+    const cs = [];
+    for (let i = 0; i < roads.length; i++) for (let j = i + 1; j < roads.length; j++) {
+      const p = lineIntersect(roads[i].r.proj, roads[i].r.tangent, roads[j].r.proj, roads[j].r.tangent);
+      if (p && G.dist(p, click) < 40 * m) cs.push(p);
+    }
+    if (!cs.length) { alert('這些路段幾乎平行，無法判斷路口。Sections are parallel here.'); return null; }
+    const C = { x: cs.reduce((a, p) => a + p.x, 0) / cs.length, y: cs.reduce((a, p) => a + p.y, 0) / cs.length };
+    for (const rd of roads) { rd.r = G.nearestOnPolyline(C, rd.pts); rd.t = rd.r.tangent; rd.n = G.rightN(rd.t); }
+
+    const legs = [];
+    for (const rd of roads) {
+      const len = lengthsFrom(rd.pts, rd.r.i, rd.r.proj);
+      for (const sgn of [1, -1]) {
+        if ((sgn > 0 ? len.f : len.b) < 6 * m) continue; // road ends here (T-junction)
+        const v = G.mul(rd.t, sgn), nv = G.rightN(v);
+        legs.push({ rd, v, nv, sgn, rightExt: sgn > 0 ? rd.L.right : rd.L.left, leftExt: sgn > 0 ? rd.L.left : rd.L.right });
+      }
+    }
+    // distance along each leg from C to the crossing roads' pavement edge (checked at both leg edges, so skewed crossings work)
+    for (const lg of legs) {
+      let E = 0;
+      for (const B of roads) {
+        if (B === lg.rd) continue;
+        const k = G.dot(lg.v, B.n);
+        if (Math.abs(k) < 0.2) continue;
+        const ext = (k > 0 ? B.L.right : B.L.left) * m;
+        const base = G.dot(G.sub(C, B.r.proj), B.n);
+        for (const q of [G.mul(lg.nv, lg.rightExt * m), G.mul(lg.nv, -lg.leftExt * m)]) {
+          const s = (Math.sign(k) * ext - base - G.dot(q, B.n)) / k;
+          E = Math.max(E, s);
+        }
+      }
+      lg.E = E;
+    }
+    const out = [];
+    const jid = newId();
+    const stopW = 0.4;
+    const poly = [];
+    legs.sort((a, b) => G.angle(a.v) - G.angle(b.v));
+    for (const lg of legs) {
+      const el = lg.rd.el;
+      const at = (d, off) => G.add(G.add(C, G.mul(lg.v, d)), G.mul(lg.nv, off * m));
+      const cwIn = lg.E + prm.setback * m, cwOut = cwIn + (prm.crosswalks ? prm.cwWidth * m : 0);
+      if (prm.crosswalks) {
+        const w = G.clamp(prm.cwWidth, P().crosswalk[prm.cwKind].width.min, P().crosswalk[prm.cwKind].width.max);
+        const d = cwIn + (w * m) / 2;
+        out.push({ id: newId(), type: 'crosswalk', kind: prm.cwKind, width: w, gap: 0.4, green: false,
+          a: at(d, -lg.leftExt + 0.05), b: at(d, lg.rightExt - 0.05), dir: G.angle(lg.v) });
+      }
+      // incoming lanes: traffic heading toward C keeps right, i.e. the left side of v
+      const oneWay = el.lanesB === 0;
+      const incoming = oneWay ? lg.sgn < 0 : true;
+      const ds = cwOut + (prm.crosswalks ? prm.stopGap * m : 0) + (stopW * m) / 2;
+      if (prm.stops && incoming) {
+        const inner = oneWay ? lg.rightExt - 0.3 : -((el.centerType === 'median' ? el.medianWidth / 2 + 0.2 : 0.15));
+        out.push({ id: newId(), type: 'stopline', width: stopW, a: at(ds, inner), b: at(ds, -lg.leftExt + 0.3), dir: G.angle(G.mul(lg.v, -1)) });
+      }
+      const dIn = prm.stops && incoming ? ds + (stopW * m) / 2 : cwOut;
+      const dOut = oneWay && incoming && prm.stops ? dIn : cwOut;
+      poly.push(at(dIn, -lg.leftExt - 1), at(dOut, lg.rightExt + 1));
+    }
+    out.unshift({ id: jid, type: 'junction', pts: poly });
+    return out;
   }
 
   // ---------------- side panels ----------------
@@ -771,17 +905,30 @@
     box.appendChild(t);
     if (tgt) {
       const set = (k, v) => { A.opts[k] = v; applyAlign(); commit(); };
-      if (BAND.has(el.type) && BAND.has(tgt.type)) {
-        box.appendChild(fieldRow({ kind: 'num', key: 'gap', label: '間距 Gap', min: 0, max: 30, step: 0.1,
-          law: new Set([el.type, tgt.type]).has('crosswalk') && new Set([el.type, tgt.type]).has('stopline') ? '§170 停止線與行人穿越道淨距 2–3 m (受限時≥1 m)' : null }, A.opts, set));
-        box.appendChild(fieldRow({ kind: 'chk', key: 'ends', label: '端點對齊 Match ends' }, A.opts, set));
-        const i = document.createElement('div'); i.className = 'info'; i.textContent = '已設為平行並貼齊邊緣 (間距由邊緣量起)。Parallel, measured edge to edge.'; box.appendChild(i);
-      } else if (POINT.has(el.type)) {
-        if (tgt.a || tgt.p) box.appendChild(fieldRow({ kind: 'chk', key: 'axis', label: '對齊中心線 Same centre line' }, A.opts, set));
-        const i = document.createElement('div'); i.className = 'info'; i.textContent = '方向已與目標一致。Direction matched to target.'; box.appendChild(i);
-      } else {
-        const i = document.createElement('div'); i.className = 'info'; i.textContent = '已轉為與目標行車方向垂直。Squared to target direction.'; box.appendChild(i);
+      box.appendChild(fieldRow({ kind: 'sel', key: 'frame', label: '基準 Frame', options: [['target', '依目標方向 (前方=上)'], ['screen', '依畫面 Screen']] }, A.opts, set));
+      if (BAND.has(el.type) || POINT.has(el.type)) box.appendChild(fieldRow({ kind: 'chk', key: 'parallel', label: '同方向 Match direction' }, A.opts, set));
+      // 3×2 alignment grid
+      const grid = document.createElement('div'); grid.className = 'aligngrid';
+      const btn = (axis, mode, icon, label) => {
+        const b = document.createElement('button'); b.innerHTML = `<span>${icon}</span><small>${label}</small>`;
+        if (A.opts[axis] === mode) b.className = 'on';
+        b.title = label;
+        b.onclick = () => set(axis, A.opts[axis] === mode ? null : mode);
+        grid.appendChild(b);
+      };
+      btn('ax', 'min', '⇤', '靠左 Left'); btn('ax', 'mid', '⇹', '水平置中 Centre'); btn('ax', 'max', '⇥', '靠右 Right');
+      btn('ay', 'max', '⤒', '靠上 Top'); btn('ay', 'mid', '⇕', '垂直置中 Middle'); btn('ay', 'min', '⤓', '靠下 Bottom');
+      box.appendChild(grid);
+      const note = document.createElement('div'); note.className = 'info';
+      note.textContent = A.opts.frame === 'target' ? '依目標方向：上=行車前方，左右=駕駛人左右。Target frame: up = direction of travel.' : '依畫面：上下左右即螢幕方向。Screen frame.';
+      box.appendChild(note);
+      if (BAND.has(el.type) && BAND.has(tgt.type) && A.opts.parallel && A.opts.ay == null) {
+        const pair = new Set([el.type, tgt.type]);
+        box.appendChild(fieldRow({ kind: 'num', key: 'gap', label: '貼齊間距 Edge gap', min: 0, max: 30, step: 0.1,
+          law: pair.has('crosswalk') && pair.has('stopline') ? '§170 停止線與行人穿越道淨距 2–3 m (受限時≥1 m)' : null }, A.opts, set));
+        if (A.opts.ax == null) box.appendChild(fieldRow({ kind: 'chk', key: 'ends', label: '端點對齊 Match ends' }, A.opts, set));
       }
+      if (POINT.has(el.type) && (tgt.a || tgt.p) && A.opts.ax == null) box.appendChild(fieldRow({ kind: 'chk', key: 'axis', label: '對齊中心線 Same centre line' }, A.opts, set));
     }
     const row = document.createElement('div'); row.className = 'btnrow';
     const ok = document.createElement('button'); ok.className = 'primary'; ok.textContent = '完成 Done'; ok.onclick = () => endAlign(false);

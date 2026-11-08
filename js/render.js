@@ -413,10 +413,18 @@ window.Render = (function () {
         }
       }
     }
-    // Layer 2: markings
+    // Layer 2: markings. Lane lines are interrupted inside intersection areas.
+    const junctions = els.filter((e) => e.type === 'junction' && e.pts.length >= 3);
+    const cutJunctions = () => {
+      if (!junctions.length) return;
+      ctx.beginPath(); ctx.rect(-1e6, -1e6, 2e6, 2e6);
+      for (const j of junctions) { ctx.moveTo(j.pts[0].x, j.pts[0].y); for (let i = 1; i < j.pts.length; i++) ctx.lineTo(j.pts[i].x, j.pts[i].y); ctx.closePath(); }
+      ctx.clip('evenodd');
+    };
     for (const el of els) {
       if (!MARK.has(el.type)) continue;
       ctx.save();
+      if (el.type === 'line' || el.type === 'section') cutJunctions();
       switch (el.type) {
         case 'line': R.drawStyled(ctx, R.basePts(el, ppm), P.lineStyles[el.style], ppm); break;
         case 'section': {
@@ -456,7 +464,7 @@ window.Render = (function () {
   // ---------- shapes for hit-testing & selection outline ----------
   R.shape = function (el, ppm, P) {
     switch (el.type) {
-      case 'road': case 'sidewalk': case 'surface': case 'chevron': case 'yellowbox': return { poly: el.pts };
+      case 'road': case 'sidewalk': case 'surface': case 'chevron': case 'yellowbox': case 'junction': return { poly: el.pts };
       case 'line': { const st = P.lineStyles[el.style]; return { line: R.basePts(el, ppm), w: ((st ? st.width + (st.sep || 0) * 2 : 0.2) * ppm) }; }
       case 'section': { const p = R.sectionPoly(el, ppm); return p ? { poly: p } : { line: el.pts, w: 4 }; }
       case 'crosswalk': return { poly: R.frame(el, ppm, el.width, false).corners };

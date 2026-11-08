@@ -48,7 +48,7 @@ window.RoadPresets = window.RoadPresets || {};
   const typeNames = {
     road: '車道範圍 Road area', sidewalk: '人行道/分隔島 Sidewalk', surface: '彩色鋪面 Surface', section: '路段 Road section',
     line: '標線 Line', crosswalk: '行人穿越道 Crosswalk', stopline: '停止線 Stop line', scooterbox: '機車停等區 Scooter box',
-    arrow: '指向線 Arrow', symbol: '圖示 Icon', text: '路面文字 Text', chevron: '槽化線 Channelizing', yellowbox: '網狀線 Box junction',
+    junction: '路口範圍 Intersection', arrow: '指向線 Arrow', symbol: '圖示 Icon', text: '路面文字 Text', chevron: '槽化線 Channelizing', yellowbox: '網狀線 Box junction',
   };
 
   const sec = (label, en, o) => ({ id: 'sec_' + label, label, en, mode: 'polyline', icon: { glyph: '═' },
@@ -69,10 +69,12 @@ window.RoadPresets = window.RoadPresets || {};
     ] },
     { title: '② 路段 Road sections', items: [
       sec('雙向2車道', 'Local 1+1', { lanesF: 1, lanesB: 1, laneWidth: 3.0, centerType: 'centerDash' }),
-      sec('市區4車道', 'Urban 2+2 + 機慢車道', { lanesF: 2, lanesB: 2, laneWidth: 3.25, centerType: 'centerDouble', slowLane: 2.5 }),
-      sec('幹道6車道', 'Arterial 3+3 median', { lanesF: 3, lanesB: 3, laneWidth: 3.25, centerType: 'median', medianWidth: 2, slowLane: 2.5 }),
+      sec('市區4車道', 'Urban 2+2', { lanesF: 2, lanesB: 2, laneWidth: 3.25, centerType: 'centerDouble', slowLane: 0 }),
+      sec('幹道6車道', 'Arterial 3+3 median', { lanesF: 3, lanesB: 3, laneWidth: 3.25, centerType: 'median', medianWidth: 2, slowLane: 0 }),
       sec('單行道', 'One-way 2 lanes', { lanesF: 2, lanesB: 0, laneWidth: 3.0, slowLane: 0 }),
       sec('自行車道路段', 'With bike lanes', { lanesF: 1, lanesB: 1, laneWidth: 3.25, centerType: 'centerDouble', bikeLane: 1.5 }),
+      { id: 'junction', label: '路口 (自動)', en: 'Intersection: click crossing', mode: 'junction', icon: { glyph: '✚' },
+        defaults: { type: 'junctionTool', cwKind: 'ties', cwWidth: 4, setback: 3, stopGap: 2, crosswalks: true, stops: true } },
     ] },
     { title: '③ 標線 Lines', items: Object.entries(lineStyles).map(([k, s]) => ({ id: 'line_' + k, label: s.name, en: s.en, mode: 'polyline', icon: { line: k }, defaults: { type: 'line', style: k, smooth: true } })) },
     { title: '④ 路口 Intersection', items: [
@@ -150,6 +152,15 @@ window.RoadPresets = window.RoadPresets || {};
         { kind: 'deg', key: 'dir', label: '方向 Angle' },
         { kind: 'law', text: '§150 直式文字一律由遠而近；正楷或變體字；禁止(臨時)停車字樣30cm見方、字距30cm (§168/169)' },
         { kind: 'btn', action: 'realign', label: '對齊車道 Align to lanes' }, { kind: 'btn', action: 'flip', label: '反轉 Flip' }];
+      case 'junctionTool': return [
+        { kind: 'info', text: '先用「路段」沿兩條道路中心線畫過路口，再用此工具點兩路交會處：會自動產生路口範圍 (中斷車道線)、各路口行人穿越道及停止線。十字、T字、斜交皆可。' },
+        { kind: 'chk', key: 'crosswalks', label: '行人穿越道 Crosswalks' },
+        { kind: 'sel', key: 'cwKind', label: '型式 Type', options: [['ties', '枕木紋 Ties'], ['zebra', '斑馬紋 Zebra']] },
+        num('cwWidth', '穿越道寬 Width', 2, 8, 0.1, '法規 2–8 m'),
+        num('setback', '退縮 Setback', 0, 10, 0.1, '§185 距橫交路口路面邊緣 3–5 m'),
+        { kind: 'chk', key: 'stops', label: '停止線 Stop lines' },
+        num('stopGap', '停止線淨距 Stop gap', 1, 3, 0.1, '§170 與行人穿越道淨距 2–3 m (≥1 m)')];
+      case 'junction': return [{ kind: 'info', text: '路口範圍：範圍內的車道線、路段標線會被中斷 (行人穿越道、箭頭等不受影響)。拖曳節點可調整範圍；此框只在編輯時顯示，不會匯出。' }];
       case 'symbol': return [{ kind: 'sel', key: 'kind', label: '圖示 Icon', options: [['scooter', '機車 0.9×2.5m (§174-1)'], ['scooterSmall', '機車 0.65×1.8m (§183-1)'], ['bike', '自行車 1.0×1.8m (§183-1)']] },
         { kind: 'chk', key: 'small', label: '縮小型 Reduced (×0.7, §183-1)' }, { kind: 'deg', key: 'dir', label: '方向 Angle' },
         { kind: 'law', text: '§183-1 慢車道於路口進口處繪設機車及自行車圖示，超過500m 每500m 增設；慢車道寬<2m 用縮小型' },

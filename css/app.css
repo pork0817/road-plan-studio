@@ -73,3 +73,9 @@ kbd { background: #2c3036; border: 1px solid #424851; border-radius: 3px; paddin
 .aligntitle { font-weight: 600; color: #f3d48a; margin-bottom: 4px; }
 button.primary { background: var(--accent2); border-color: var(--accent2); }
 #topbar .chk.magnet { color: var(--text); }
+.aligngrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin: 8px 0; }
+.aligngrid button { display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 5px 2px; }
+.aligngrid button span { font-size: 17px; line-height: 1; }
+.aligngrid button small { font-size: 10px; color: var(--muted); }
+.aligngrid button.on { border-color: #f0b429; background: #3a3016; }
+.aligngrid button.on small { color: #f3d48a; }
