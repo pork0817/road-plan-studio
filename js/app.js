@@ -905,6 +905,7 @@
     let acc = 0; for (let i = 0; i < r.i; i++) acc += G.dist(line[i], line[i + 1]);
     return acc + G.dist(line[r.i], r.proj);
   }
+  const rbStopGap = (rb) => G.clamp(rb.stopGap != null ? rb.stopGap : 2, 1, 3); // §170 net distance to the crosswalk
   const splitBase = (lg) => (lg.median ? lg.el.medianWidth / 2 : 0.6); // splitter island half-width at its start
   function rbCurves(rb, legs) {
     const m = ppm();
@@ -993,7 +994,7 @@
     const cw = S.els.find((e) => e.owner === rb.id && e.type === 'crosswalk' && e.legKey === lg.key);
     if (!cw) return;
     const sIn = RB_YD + 0.54 + (cw.setback || 0), sOut = sIn + cw.width;
-    const solidLen = rb.solidApproach === false ? 0 : (rb.solidLen != null ? rb.solidLen : 30);
+    const solidLen = rb.solidApproach === true ? (rb.solidLen != null ? rb.solidLen : 30) : 0;
     const atL = (sA, off) => G.add(G.add(lg.X, G.mul(lg.v, sA * m)), G.mul(lg.nv, off * m));
     for (const ln of laneLines) {
       const base = styles[ln.style];
@@ -1012,8 +1013,27 @@
         if (q >= 0) inner.push(G.add(atL(0, vo), G.mul(lg.v, -b + Math.sqrt(q))));
       }
       if (inner.length > 1) rb.curves.push({ pts: inner, style: solid });
-      // approach zone: solid for solidLen beyond the crosswalk
-      if (solidLen > 0 && base.pattern === 'dashed') {
+      // approach zone, like an intersection: entry lane lines end at the stop line, exit lane lines start after
+      // the crosswalk; the dashes next to them are re-timed so a full dash meets the line (no stubs) and
+      // blend back into the road's own dash pattern inside a gap, so there is no visible seam.
+      const stopOn = rb.stopLines !== false && lg.incoming;
+      const sStopFar = sOut + rbStopGap(rb) + 0.4;                   // upstream edge of the stop line
+      const startS = incomingHalf && stopOn ? sStopFar : sOut;
+      if (incomingHalf && stopOn) rb.legMasks.push([atL(sOut, vo - 0.3), atL(sStopFar, vo - 0.3), atL(sStopFar, vo + 0.3), atL(sOut, vo + 0.3)]);
+      if (!(rb.solidApproach === true && solidLen > 0) && base.pattern === 'dashed' && base.dash) {
+        const P0 = base.dash[0], PP = base.dash[0] + base.dash[1];
+        const Ls = posOnSectionLine(lg.el, ln.off, atL(startS, vo)) / m, dirSign = lg.sgn > 0 ? 1 : -1;
+        const secDash = (u) => { const q = (((Ls + dirSign * u) % PP) + PP) % PP; return q < P0; };
+        const locDash = (u) => (u % PP) < P0;
+        let e = null;
+        for (let u = P0 + 0.05; u < 3 * PP; u += 0.05) if (!secDash(u) && !locDash(u) && !secDash(u + 0.3) && !locDash(u + 0.3)) { e = u + 0.15; break; }
+        if (e != null) {
+          rb.legMasks.push([atL(startS, vo - 0.3), atL(startS + e, vo - 0.3), atL(startS + e, vo + 0.3), atL(startS, vo + 0.3)]);
+          for (let u0 = 0; u0 < e; u0 += PP) rb.curves.push({ pts: [atL(startS + u0, vo), atL(startS + Math.min(u0 + P0, e), vo)], style: Object.assign({}, base, { pattern: 'solid' }) });
+        }
+      }
+      // optional: solid 禁止變換車道線 for solidLen beyond the crosswalk
+      if (rb.solidApproach === true && solidLen > 0 && base.pattern === 'dashed') {
         rb.legMasks.push([atL(sOut, vo - 0.3), atL(sOut + solidLen, vo - 0.3), atL(sOut + solidLen, vo + 0.3), atL(sOut, vo + 0.3)]);
         const line = G.offset(R.basePts(lg.el, m), ln.off * m), seg = [];
         const sOf = (q) => G.dot(G.sub(q, lg.X), lg.v) / m;
@@ -1140,6 +1160,15 @@
         c.a = at(dc, -lg.leftExt + 0.05); c.b = at(dc, lg.rightExt - 0.05); c.dir = G.angle(lg.v);
         c.anchor = { X: G.copy(lg.X), v: G.copy(lg.v), w: c.width };
         keep.add(c.id);
+        // like an intersection approach: a stop line 2–3 m before the crosswalk on the entry side (§170)
+        if (rb.stopLines !== false && lg.incoming && !removed.includes('stopline:' + lg.key)) {
+          let sl = kids.find((k) => k.type === 'stopline' && k.legKey === lg.key);
+          if (!sl) { sl = { id: newId(), type: 'stopline', owner: rb.id, legKey: lg.key, width: 0.4 }; S.els.push(sl); }
+          const ds = RB_YD + 0.54 + c.setback + c.width + rbStopGap(rb) + sl.width / 2;
+          const inner = lg.oneWay ? lg.rightExt - 0.3 : -(lg.median ? lg.el.medianWidth / 2 + 0.2 : 0.15);
+          sl.a = at(ds, inner); sl.b = at(ds, -lg.leftExt + 0.3); sl.dir = G.angle(G.mul(lg.v, -1));
+          keep.add(sl.id);
+        }
       }
     }
     S.els = S.els.filter((e) => e.owner !== rb.id || keep.has(e.id));
@@ -1181,7 +1210,7 @@
   const syncAll = () => { for (const e of S.els.slice()) if (e.type === 'roundabout') syncRoundabout(e); };
   function buildRoundabout(C, prm) {
     return { id: newId(), type: 'roundabout', p: G.copy(C), R: prm.R, lanes: prm.turbo ? 2 : prm.lanes, laneWidth: prm.laneWidth, apron: prm.turbo ? 0 : prm.apron,
-      turbo: !!prm.turbo, divider: prm.divider || 'raised', turboAxis: prm.turboAxis || 0, turboTaper: 20, cornerR: prm.cornerR != null ? prm.cornerR : 12, laneStop: prm.laneStop !== false, solidApproach: prm.solidApproach !== false, solidLen: prm.solidLen != null ? prm.solidLen : 30, curveLanes: prm.curveLanes !== false, splitters: prm.splitters !== false, curvedYield: prm.curvedYield !== false,
+      turbo: !!prm.turbo, divider: prm.divider || 'raised', turboAxis: prm.turboAxis || 0, turboTaper: 20, cornerR: prm.cornerR != null ? prm.cornerR : 12, laneStop: prm.laneStop !== false, solidApproach: prm.solidApproach === true, solidLen: prm.solidLen != null ? prm.solidLen : 30, stopLines: prm.stopLines !== false, stopGap: prm.stopGap != null ? prm.stopGap : 2, curveLanes: prm.curveLanes !== false, splitters: prm.splitters !== false, curvedYield: prm.curvedYield !== false,
       island: prm.island || 'island', legs: [], yields: prm.yields, crosswalks: prm.crosswalks, cwKind: prm.cwKind, cwWidth: prm.cwWidth, cwSetback: prm.cwSetback, removed: [] };
   }
 
