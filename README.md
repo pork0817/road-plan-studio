@@ -6,7 +6,7 @@ Browser tool for drawing road redesigns over satellite images. Open `index.html`
 1. **Image**: open, drag in, or paste (⌘V) a satellite screenshot.
 2. **Calibrate**: click two points a known distance apart (for example the two ends of the Google Maps scale bar) and type the length in metres. Every marking size is in metres, so this step matters.
 3. **Road area** (車道範圍) and **sidewalks** (人行道): click the outline point by point. Finish with Enter, a double-click, or by clicking the first point.
-4. **Markings**: pick presets from the library. Click a group heading to open or close it; **Expand all / Collapse all** sits at the top, and **◀** hides the whole panel (**▶** brings it back). Choosing a tool opens its group automatically.
+4. **Markings**: pick presets from the library. Click a group heading to open it (only one group is open at a time, so the panel fits without scrolling). **◀** hides the whole panel (**▶** brings it back). Choosing a tool opens its group automatically.
    - *Road sections* (路段): click along the road centreline and the tool generates all the lanes. Lanes on the right of your drawing direction carry forward traffic.
    - *Crosswalks / stop lines / scooter boxes*: click from one kerb to the other. They line up with the nearest lane's direction of travel automatically.
    - *Arrows / text*: click to place. They face the direction of traffic in the nearest lane.

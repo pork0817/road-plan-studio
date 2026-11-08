@@ -221,8 +221,8 @@
   // ---------------- tools ----------------
   const BASIC = [
     { id: 'select', label: '選取', en: 'Select / edit (V)', glyph: '⬉' },
-    { id: 'pan', label: '平移', en: 'Pan (H / Space)', glyph: '✋' },
-    { id: 'calibrate', label: '校正比例尺', en: 'Calibrate scale', glyph: '📏' },
+    { id: 'pan', label: '平移', en: 'Pan (H / Space)', glyph: '✥' },
+    { id: 'calibrate', label: '比例尺', en: 'Calibrate scale', glyph: '⊢' },
     { id: 'measure', label: '量測', en: 'Measure (M)', glyph: '↔' },
   ];
   function findItem(id) { for (const g of P().library) for (const it of g.items) if (it.id === id) return it; return null; }
@@ -233,7 +233,7 @@
     if (item) { S.tool = 'item'; S.item = item; S.params = clone(item.defaults); S.sel = null; }
     else { S.tool = id; S.item = null; S.params = null; }
     document.querySelectorAll('.tool').forEach((b) => b.classList.toggle('active', b.dataset.id === id));
-    const act = document.querySelector('.tool.active'); if (act) act.closest('.group')?.classList.remove('collapsed');
+    const act = document.querySelector('.tool.active'); if (act) { const g = act.closest('.group'); if (g && g.classList.contains('collapsed')) g.querySelector('.grouphead').click(); }
     stage.style.cursor = S.tool === 'pan' ? 'grab' : S.tool === 'select' ? 'default' : 'crosshair';
     renderProps(); updateHint(); redraw();
   }
@@ -1595,18 +1595,17 @@
     lib.innerHTML = '';
     const mk = (id, label, en, icon) => {
       const b = document.createElement('button');
-      b.className = 'tool'; b.dataset.id = id; b.title = label + ' — ' + en;
+      b.className = 'tool'; b.dataset.id = id; b.title = en;
       const ico = document.createElement('span'); ico.className = 'ico';
       if (icon.line) {
-        const c = document.createElement('canvas'); c.width = 60; c.height = 36; c.style.width = '30px'; c.style.height = '18px';
+        const c = document.createElement('canvas'); c.width = 60; c.height = 36; c.style.width = '18px'; c.style.height = '14px';
         const g = c.getContext('2d'); g.fillStyle = P().colors.asphalt; g.fillRect(0, 0, 60, 36);
         const st = P().lineStyles[icon.line];
         R.drawStyled(g, [{ x: 0, y: 18 }, { x: 60, y: 18 }], Object.assign({}, st, { dash: st.dash ? [0.35, 0.25] : null }), 40);
         ico.appendChild(c);
       } else if (icon.fill) ico.style.background = icon.fill;
       else ico.textContent = icon.glyph || '';
-      const lbl = document.createElement('span'); lbl.className = 'lbl';
-      lbl.innerHTML = `<b></b><small></small>`; lbl.querySelector('b').textContent = label; lbl.querySelector('small').textContent = en;
+      const lbl = document.createElement('span'); lbl.className = 'lbl'; lbl.textContent = label;
       b.append(ico, lbl);
       b.onclick = () => setTool(id);
       return b;
@@ -1614,18 +1613,22 @@
     // collapsible groups (remembered), an expand/collapse-all toggle, and a button that hides the whole panel
     const store = (k, v) => { try { if (v === undefined) return JSON.parse(localStorage.getItem(k) || 'null'); localStorage.setItem(k, JSON.stringify(v)); } catch (e) { return null; } return null; };
     const openState = store('roadplan:libOpen') || { tools: true, g0: true };
+    { const ks = Object.keys(openState).filter((k) => k !== 'tools' && openState[k]); ks.slice(1).forEach((k) => { openState[k] = false; }); }
     const bar = document.createElement('div'); bar.className = 'libbar';
-    const allBtn = document.createElement('button'); allBtn.className = 'libbtn';
     const hideBtn = document.createElement('button'); hideBtn.className = 'libbtn'; hideBtn.textContent = '◀'; hideBtn.title = '隱藏工具列 Hide panel';
-    bar.append(allBtn, hideBtn); lib.appendChild(bar);
+    const ttl = document.createElement('span'); ttl.className = 'libtitle'; ttl.textContent = '工具庫 Library'; bar.append(ttl, hideBtn); lib.appendChild(bar);
     const groups = [];
     const mkGroup = (key, title, tools) => {
       const g = document.createElement('div'); g.className = 'group';
       const h = document.createElement('h4'); h.className = 'grouphead'; h.textContent = title;
       const setOpen = (o) => { g.classList.toggle('collapsed', !o); openState[key] = o; };
       setOpen(!!openState[key]);
-      h.onclick = () => { setOpen(g.classList.contains('collapsed')); store('roadplan:libOpen', openState); syncAll2(); };
-      g.append(h, tools); lib.appendChild(g); groups.push({ g, setOpen });
+      h.onclick = () => { // accordion: one library group open at a time, so the panel never needs scrolling
+        const open = g.classList.contains('collapsed');
+        if (open) groups.forEach((x) => { if (x.key !== 'tools' && key !== 'tools') x.setOpen(false); });
+        setOpen(open); store('roadplan:libOpen', openState);
+      };
+      g.append(h, tools); lib.appendChild(g); groups.push({ g, setOpen, key });
     };
     const t0 = document.createElement('div'); t0.className = 'tools basic';
     BASIC.forEach((t) => t0.appendChild(mk(t.id, t.label, t.en, { glyph: t.glyph })));
@@ -1635,14 +1638,6 @@
       grp.items.forEach((it) => t.appendChild(mk(it.id, it.label, it.en, it.icon)));
       mkGroup('g' + gi, grp.title, t);
     });
-    const syncAll2 = () => {
-      const anyClosed = groups.some((x) => x.g.classList.contains('collapsed'));
-      allBtn.textContent = anyClosed ? '⇣ 全部展開 Expand all' : '⇡ 全部收合 Collapse all';
-    };
-    allBtn.onclick = () => {
-      const open = groups.some((x) => x.g.classList.contains('collapsed'));
-      groups.forEach((x) => x.setOpen(open)); store('roadplan:libOpen', openState); syncAll2();
-    };
     const setHidden = (hd) => { document.body.classList.toggle('lib-hidden', hd); store('roadplan:libHidden', hd); setTimeout(redraw, 0); };
     hideBtn.onclick = () => setHidden(true);
     let show = document.getElementById('libShow');
@@ -1652,7 +1647,6 @@
       document.querySelector('main').prepend(show);
     }
     setHidden(!!store('roadplan:libHidden'));
-    syncAll2();
     // open the group holding the active tool so it is always visible
     document.querySelectorAll('.tool').forEach((b) => b.classList.toggle('active', b.dataset.id === (S.item ? S.item.id : S.tool)));
   }

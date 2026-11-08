@@ -12,20 +12,20 @@ window.RoadPresets = window.RoadPresets || {};
   // All values below verified against the regulation text (全國法規資料庫, 115.03.11 版) unless marked ≈.
   const lineStyles = {
     lane:         { name: '車道線', en: 'Lane line', color: C.white, width: 0.10, pattern: 'dashed', dash: [4, 6], ref: '§182 白虛線 線段4m 間距6m 線寬10cm' },
-    laneSolid:    { name: '禁止變換車道線(單邊)', en: 'No lane change', color: C.white, width: 0.10, pattern: 'solid', ref: '§167 白實線 線寬10cm' },
-    laneDouble:   { name: '禁止變換車道線(雙邊)', en: 'Double white', color: C.white, width: 0.10, sep: 0.10, pattern: 'double', ref: '§167 雙白實線 線寬10cm 間隔10cm' },
+    laneSolid:    { short: '白實線', name: '禁止變換車道線(單邊)', en: 'No lane change', color: C.white, width: 0.10, pattern: 'solid', ref: '§167 白實線 線寬10cm' },
+    laneDouble:   { short: '雙白實線', name: '禁止變換車道線(雙邊)', en: 'Double white', color: C.white, width: 0.10, sep: 0.10, pattern: 'double', ref: '§167 雙白實線 線寬10cm 間隔10cm' },
     laneMixed:    { name: '白實虛線', en: 'White solid+dash', color: C.white, width: 0.10, sep: 0.10, pattern: 'solid-dashed', dash: [4, 6], ref: '§167 單邊禁止變換車道 白實線+白虛線 間隔10cm' },
-    reversible:   { name: '調撥車道線', en: 'Reversible lane', color: C.white, width: 0.10, sep: 0.10, pattern: 'double-dashed', dash: [4, 6], ref: '§158 雙白虛線 線段4m 間距6m 線寬10cm 間隔10cm' },
+    reversible:   { short: '調撥車道線', name: '調撥車道線', en: 'Reversible lane', color: C.white, width: 0.10, sep: 0.10, pattern: 'double-dashed', dash: [4, 6], ref: '§158 雙白虛線 線段4m 間距6m 線寬10cm 間隔10cm' },
     centerDash:   { name: '行車分向線', en: 'Centre line', color: C.yellow, width: 0.10, pattern: 'dashed', dash: [4, 6], ref: '§181 黃虛線 線段4m 間距6m 線寬10cm' },
     centerSolid:  { name: '單黃實線', en: 'Single yellow', color: C.yellow, width: 0.10, pattern: 'solid', ref: '§165 分向限制線 線寬10cm' },
     centerDouble: { name: '雙黃實線', en: 'Double yellow', color: C.yellow, width: 0.10, sep: 0.10, pattern: 'double', ref: '§165 分向限制線 線寬及間隔均為10cm' },
     centerMixed:  { name: '黃實虛線', en: 'Yellow solid+dash', color: C.yellow, width: 0.10, sep: 0.10, pattern: 'solid-dashed', dash: [4, 6], ref: '§166 單向禁止超車 黃實線+黃虛線 間隔10cm' },
     edge:         { name: '路面邊線', en: 'Edge line', color: C.white, width: 0.15, pattern: 'solid', ref: '§183 白實線 線寬15cm' },
-    slowSep:      { name: '快慢車道分隔線', en: 'Fast/slow divider', color: C.white, width: 0.10, pattern: 'solid', ref: '§183-1 白實線 線寬10cm' },
-    bikeSep:      { name: '自行車專用車道線', en: 'Bike lane divider', color: C.white, width: 0.10, sep: 0.10, pattern: 'double', ref: '§174 以雙白實線分隔 (線寬/間隔同§167: 10cm)' },
+    slowSep:      { short: '快慢分隔線', name: '快慢車道分隔線', en: 'Fast/slow divider', color: C.white, width: 0.10, pattern: 'solid', ref: '§183-1 白實線 線寬10cm' },
+    bikeSep:      { short: '自行車道線', name: '自行車專用車道線', en: 'Bike lane divider', color: C.white, width: 0.10, sep: 0.10, pattern: 'double', ref: '§174 以雙白實線分隔 (線寬/間隔同§167: 10cm)' },
     guide:        { name: '路口導引線', en: 'Junction guide line', color: C.white, width: 0.15, pattern: 'dashed', dash: [1, 1], ref: '≈ 白虛線 引導轉彎車流 (§189-2 附圖)' },
     noParking:    { name: '禁止停車線', en: 'No parking (curb)', color: C.yellow, width: 0.10, pattern: 'solid', curb: true, ref: '§168 黃實線 線寬10cm；無緣石時距路面邊緣30cm' },
-    noStopping:   { name: '禁止臨時停車線', en: 'No stopping (curb)', color: C.red, width: 0.10, pattern: 'solid', curb: true, ref: '§169 紅實線 線寬10cm；無緣石時距路面邊緣30cm' },
+    noStopping:   { short: '禁臨停線', name: '禁止臨時停車線', en: 'No stopping (curb)', color: C.red, width: 0.10, pattern: 'solid', curb: true, ref: '§169 紅實線 線寬10cm；無緣石時距路面邊緣30cm' },
   };
 
   const crosswalk = {
@@ -56,56 +56,56 @@ window.RoadPresets = window.RoadPresets || {};
     defaults: Object.assign({ type: 'section', lanesF: 1, lanesB: 1, laneWidth: 3.25, centerType: 'centerDouble', medianWidth: 2, slowLane: 0, bikeLane: 0, edge: true, pave: false, smooth: true, autoArrows: true, autoBox: true, boxDepth: 3, solidLen: 30, laneUse: '', leftGuide: false, leftTurn: 'shared', pocketLen: 30, pocketTaper: 20 }, o) });
   const arrow = (k, g) => ({ id: 'arrow_' + k, label: arrowKinds.find((a) => a[0] === k)[1].split(' ')[0], en: '指向線', mode: 'point', icon: { glyph: g }, defaults: { type: 'arrow', kind: k, length: 5, dir: -Math.PI / 2 } });
   const text = (t, o) => ({ id: 'text_' + t, label: t, en: (o && o.en) || '路面文字', mode: 'point', icon: { glyph: t.slice(0, 2) }, defaults: Object.assign({ type: 'text', text: t, charLen: 2.5, charWid: 1.0, charGap: 1.0, color: 'white', order: 'far', dir: -Math.PI / 2 }, o, { en: undefined }) });
-  const icon = (k, label, en, o) => ({ id: 'icon_' + k + (o && o.small ? '_s' : ''), label, en, mode: 'point', icon: { glyph: k === 'bike' ? '🚲' : '🛵' }, defaults: Object.assign({ type: 'symbol', kind: k, small: false, dir: -Math.PI / 2 }, o) });
+  const icon = (k, label, en, o) => ({ id: 'icon_' + k + (o && o.small ? '_s' : ''), label, en, mode: 'point', icon: { glyph: k === 'bike' ? '自' : '機' }, defaults: Object.assign({ type: 'symbol', kind: k, small: false, dir: -Math.PI / 2 }, o) });
 
   const library = [
-    { title: '① 區域 Areas', items: [
+    { title: '區域 Areas', items: [
       { id: 'road', label: '車道範圍', en: 'Road area', mode: 'poly', icon: { fill: C.asphalt }, defaults: { type: 'road', tone: 'asphalt' } },
       { id: 'sidewalk', label: '人行道', en: 'Sidewalk', mode: 'poly', icon: { fill: '#a7a49d' }, defaults: { type: 'sidewalk', style: 'pavers' } },
       { id: 'island', label: '分隔島', en: 'Island / planter', mode: 'poly', icon: { fill: '#6c9a52' }, defaults: { type: 'sidewalk', style: 'island' } },
-      { id: 'surf_ped', label: '標線型人行道', en: 'Painted sidewalk', mode: 'poly', icon: { fill: C.ped }, defaults: { type: 'surface', kind: 'ped', color: C.ped, edge: true } },
-      { id: 'surf_bike', label: '自行車道鋪面', en: 'Bike surface', mode: 'poly', icon: { fill: C.bike }, defaults: { type: 'surface', kind: 'bike', color: C.bike, edge: false } },
-      { id: 'surf_scooter', label: '機車專用道鋪面', en: 'Scooter lane (blue)', mode: 'poly', icon: { fill: C.scooter }, defaults: { type: 'surface', kind: 'scooter', color: C.scooter, edge: false } },
-      { id: 'surf_bus', label: '公車道鋪面', en: 'Bus surface', mode: 'poly', icon: { fill: C.bus }, defaults: { type: 'surface', kind: 'bus', color: C.bus, edge: false } },
+      { id: 'surf_ped', label: '標線人行道', en: 'Painted sidewalk', mode: 'poly', icon: { fill: C.ped }, defaults: { type: 'surface', kind: 'ped', color: C.ped, edge: true } },
+      { id: 'surf_bike', label: '自行車鋪面', en: 'Bike surface', mode: 'poly', icon: { fill: C.bike }, defaults: { type: 'surface', kind: 'bike', color: C.bike, edge: false } },
+      { id: 'surf_scooter', label: '機車鋪面', en: 'Scooter lane (blue)', mode: 'poly', icon: { fill: C.scooter }, defaults: { type: 'surface', kind: 'scooter', color: C.scooter, edge: false } },
+      { id: 'surf_bus', label: '公車鋪面', en: 'Bus surface', mode: 'poly', icon: { fill: C.bus }, defaults: { type: 'surface', kind: 'bus', color: C.bus, edge: false } },
     ] },
-    { title: '② 路段 Road sections', items: [
+    { title: '路段 Roads', items: [
       sec('雙向2車道', 'Local 1+1', { lanesF: 1, lanesB: 1, laneWidth: 3.0, centerType: 'centerDash' }),
       sec('市區4車道', 'Urban 2+2', { lanesF: 2, lanesB: 2, laneWidth: 3.25, centerType: 'centerDouble', slowLane: 0 }),
       sec('幹道6車道', 'Arterial 3+3 median', { lanesF: 3, lanesB: 3, laneWidth: 3.25, centerType: 'median', medianWidth: 2, slowLane: 0 }),
       sec('單行道', 'One-way 2 lanes', { lanesF: 2, lanesB: 0, laneWidth: 3.0, slowLane: 0 }),
       sec('自行車道路段', 'With bike lanes', { lanesF: 1, lanesB: 1, laneWidth: 3.25, centerType: 'centerDouble', bikeLane: 1.5 }),
-      { id: 'junction', label: '路口 (自動)', en: 'Intersection: click crossing', mode: 'junction', icon: { glyph: '✚' },
+      { id: 'junction', label: '路口', en: 'Intersection: click crossing', mode: 'junction', icon: { glyph: '✚' },
         defaults: { type: 'junctionTool', cwKind: 'ties', cwWidth: 4, setback: 3, stopGap: 2, crosswalks: true, stops: true } },
-      { id: 'roundabout', label: '圓環 (自動)', en: 'Roundabout: click centre', mode: 'roundabout', icon: { glyph: '◎' },
+      { id: 'roundabout', label: '圓環', en: 'Roundabout: click centre', mode: 'roundabout', icon: { glyph: '◎' },
         defaults: { type: 'roundaboutTool', R: 18, lanes: 1, laneWidth: 5.5, apron: 2, island: 'island', yields: true, curvedYield: true, crosswalks: true, cwKind: 'ties', cwWidth: 4, cwSetback: 6.5, cornerR: 12, curveLanes: true, splitters: true, laneStop: true, solidApproach: false, solidLen: 30, stopLines: true, stopGap: 2 } },
-      { id: 'turbo', label: '渦輪圓環', en: 'Turbo roundabout', mode: 'roundabout', icon: { glyph: '🌀' },
+      { id: 'turbo', label: '渦輪圓環', en: 'Turbo roundabout', mode: 'roundabout', icon: { glyph: '◉' },
         defaults: { type: 'roundaboutTool', turbo: true, R: 24, lanes: 2, laneWidth: 5, apron: 0, divider: 'raised', island: 'island', yields: true, curvedYield: true, crosswalks: true, cwKind: 'ties', cwWidth: 4, cwSetback: 6.5, cornerR: 12, curveLanes: true, splitters: true, laneStop: true, solidApproach: false, solidLen: 30, stopLines: true, stopGap: 2 } },
     ] },
-    { title: '③ 標線 Lines', items: Object.entries(lineStyles).map(([k, s]) => ({ id: 'line_' + k, label: s.name, en: s.en, mode: 'polyline', icon: { line: k }, defaults: { type: 'line', style: k, smooth: true } })) },
-    { title: '④ 路口 Intersection', items: [
-      { id: 'cw_ties', label: '枕木紋行人穿越道', en: 'Crosswalk (ties)', mode: 'two', icon: { glyph: '▥' }, defaults: { type: 'crosswalk', kind: 'ties', width: 4, gap: 0.40, green: false } },
-      { id: 'cw_zebra', label: '斑馬紋行人穿越道', en: 'Crosswalk (zebra)', mode: 'two', icon: { glyph: '▧' }, defaults: { type: 'crosswalk', kind: 'zebra', width: 4, green: false } },
+    { title: '標線 Lines', items: Object.entries(lineStyles).map(([k, s]) => ({ id: 'line_' + k, label: s.short || s.name, en: s.name + ' ' + s.en, mode: 'polyline', icon: { line: k }, defaults: { type: 'line', style: k, smooth: true } })) },
+    { title: '路口 Junction', items: [
+      { id: 'cw_ties', label: '枕木紋穿越道', en: 'Crosswalk (ties)', mode: 'two', icon: { glyph: '▥' }, defaults: { type: 'crosswalk', kind: 'ties', width: 4, gap: 0.40, green: false } },
+      { id: 'cw_zebra', label: '斑馬紋穿越道', en: 'Crosswalk (zebra)', mode: 'two', icon: { glyph: '▧' }, defaults: { type: 'crosswalk', kind: 'zebra', width: 4, green: false } },
       { id: 'yield', label: '讓路線', en: 'Yield line (§172)', mode: 'two', icon: { glyph: '▽' }, defaults: { type: 'yield', lanes: 1, triangles: true } },
       { id: 'stopline', label: '停止線', en: 'Stop line', mode: 'two', icon: { glyph: '▬' }, defaults: { type: 'stopline', width: 0.40 } },
-      { id: 'scooterbox', label: '機慢車停等區', en: 'Scooter waiting box', mode: 'two', icon: { glyph: '▭' }, defaults: { type: 'scooterbox', depth: 3, side: '0.15', icon: true, text: '' } },
+      { id: 'scooterbox', label: '機車停等區', en: 'Scooter waiting box', mode: 'two', icon: { glyph: '▭' }, defaults: { type: 'scooterbox', depth: 3, side: '0.15', icon: true, text: '' } },
       { id: 'chevron', label: '槽化線', en: 'Channelizing', mode: 'poly', icon: { glyph: '⫽' }, defaults: { type: 'chevron', color: 'white', border: 0.15, stripe: 0.20, gap: 0.30, dir: 0 } },
       { id: 'yellowbox', label: '網狀線', en: 'Box junction', mode: 'poly', icon: { glyph: '▦' }, defaults: { type: 'yellowbox', border: 0.20, stripe: 0.10, gap: 1.50, dir: 0 } },
     ] },
-    { title: '🚲🚌 自行車道・公車道 Bike & bus lanes', items: [
-      { id: 'bike_excl', label: '自行車專用車道', en: 'Bike lane (§174)', mode: 'polyline', icon: { fill: C.bike }, defaults: { type: 'bikelane', kind: 'exclusive', width: 1.5, twoWay: false, surface: true, sep: 'left', spacing: 40, icons: true, diamonds: true, smooth: true } },
+    { title: '自行車・公車道 Bike & bus', items: [
+      { id: 'bike_excl', label: '自行車道', en: 'Bike lane (§174)', mode: 'polyline', icon: { fill: C.bike }, defaults: { type: 'bikelane', kind: 'exclusive', width: 1.5, twoWay: false, surface: true, sep: 'left', spacing: 40, icons: true, diamonds: true, smooth: true } },
       { id: 'bike_two', label: '雙向自行車道', en: 'Two-way bike lane', mode: 'polyline', icon: { fill: C.bike }, defaults: { type: 'bikelane', kind: 'exclusive', width: 2.5, twoWay: true, surface: true, sep: 'both', spacing: 40, icons: true, diamonds: true, smooth: true } },
-      { id: 'bus_curb', label: '公車專用道 (路側)', en: 'Bus lane, kerbside (§174)', mode: 'polyline', icon: { fill: C.bus }, defaults: { type: 'buslane', kind: 'exclusive', width: 3.5, surface: false, sep: 'left', sepStyle: 'double', spacing: 50, text: '公車專用', smooth: true } },
-      { id: 'bus_median', label: '公車專用道 (中央)', en: 'Bus lane, median (§174)', mode: 'polyline', icon: { fill: C.bus }, defaults: { type: 'buslane', kind: 'exclusive', width: 3.5, surface: false, sep: 'both', sepStyle: 'double', spacing: 50, text: '公車專用', smooth: true } },
-      { id: 'bike_prio', label: '自行車優先車道', en: 'Bike priority lane (§174-4)', mode: 'polyline', icon: { glyph: '🚲' }, defaults: { type: 'bikelane', kind: 'priority', width: 1.5, twoWay: false, surface: false, sep: 'none', spacing: 40, icons: true, diamonds: false, smooth: true } },
+      { id: 'bus_curb', label: '公車道 路側', en: 'Bus lane, kerbside (§174)', mode: 'polyline', icon: { fill: C.bus }, defaults: { type: 'buslane', kind: 'exclusive', width: 3.5, surface: false, sep: 'left', sepStyle: 'double', spacing: 50, text: '公車專用', smooth: true } },
+      { id: 'bus_median', label: '公車道 中央', en: 'Bus lane, median (§174)', mode: 'polyline', icon: { fill: C.bus }, defaults: { type: 'buslane', kind: 'exclusive', width: 3.5, surface: false, sep: 'both', sepStyle: 'double', spacing: 50, text: '公車專用', smooth: true } },
+      { id: 'bike_prio', label: '自行車優先', en: 'Bike priority lane (§174-4)', mode: 'polyline', icon: { glyph: '◇' }, defaults: { type: 'bikelane', kind: 'priority', width: 1.5, twoWay: false, surface: false, sep: 'none', spacing: 40, icons: true, diamonds: false, smooth: true } },
     ] },
-    { title: '⑤ 指向線 Arrows (§188)', items: [arrow('S', '↑'), arrow('L', '↰'), arrow('R', '↱'), arrow('SL', '⬉'), arrow('SR', '⬈'), arrow('LR', '⇄'), arrow('SLR', '⇈'), arrow('U', '↶')] },
-    { title: '⑥ 路面文字 Text', items: [text('慢', { en: '§163' }), text('停', { en: '§177' }), text('禁行機車', { color: 'yellow', en: '§178 黃色' }),
+    { title: '指向線 Arrows', items: [arrow('S', '↑'), arrow('L', '↰'), arrow('R', '↱'), arrow('SL', '⬉'), arrow('SR', '⬈'), arrow('LR', '⇄'), arrow('SLR', '⇈'), arrow('U', '↶')] },
+    { title: '文字 Text', items: [text('慢', { en: '§163' }), text('停', { en: '§177' }), text('禁行機車', { color: 'yellow', en: '§178 黃色' }),
       text('公車專用', { en: '§175' }), text('機車專用', { en: '§175' }), text('大客車專用', { en: '§175' }), text('大貨車專用', { en: '§175' }),
       text('自行車專用', { en: '§175' }), text('高乘載專用', { en: '§175' }), text('直行專用', { en: '§176' }), text('左彎專用', { en: '§176' }), text('右彎專用', { en: '§176' }),
       text('機車優先', { en: '§174-1' }),
       text('禁止停車', { charLen: 0.3, charWid: 0.3, charGap: 0.3, color: 'yellow', en: '§168 30cm' }), text('禁止臨時停車', { charLen: 0.3, charWid: 0.3, charGap: 0.3, color: 'red', en: '§169 30cm' })] },
-    { title: '⑦ 圖示 Icons', items: [icon('scooter', '機車圖示', '§174-1 0.9×2.5m'), icon('scooterSmall', '機車圖示(慢車道)', '§183-1 0.65×1.8m'),
-      icon('bike', '自行車圖示', '§183-1 1.0×1.8m'), icon('scooterSmall', '機車圖示 縮小型', '§183-1 ×0.7', { small: true }), icon('bike', '自行車 縮小型', '§183-1 ×0.7', { small: true })] },
+    { title: '圖示 Icons', items: [icon('scooter', '機車圖示', '§174-1 0.9×2.5m'), icon('scooterSmall', '機車圖示 小', '§183-1 0.65×1.8m'),
+      icon('bike', '自行車圖示', '§183-1 1.0×1.8m'), icon('scooterSmall', '機車圖示 ×0.7', '§183-1 ×0.7', { small: true }), icon('bike', '自行車圖示 ×0.7', '§183-1 ×0.7', { small: true })] },
   ];
 
   const num = (key, label, min, max, step, law) => ({ kind: 'num', key, label, min, max, step, unit: 'm', law });
