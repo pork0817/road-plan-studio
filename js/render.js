@@ -766,7 +766,7 @@ window.Render = (function () {
       // traffic side, dashed on the lane side, 10 cm lines 10 cm apart)
       const mixed = { color: white, width: 0.10, sep: 0.10, pattern: 'solid-dashed', dash: [4, 6] };
       for (const sg of sides) {
-        const st = el.sepStyle === 'mixed' ? mixed : dbl, line = G.offset(pts, sideOff(sg, st) * ppm);
+        const st = el.sepStyle === 'mixed' ? mixed : el.sepStyle === 'single' ? solid : dbl, line = G.offset(pts, sideOff(sg, st) * ppm);
         R.drawStyled(ctx, sg > 0 && st === mixed ? line.slice().reverse() : line, st, ppm);
       }
     }
@@ -881,7 +881,7 @@ window.Render = (function () {
       }
     }
     // Layer 2: markings. Lane lines are interrupted inside intersection areas.
-    const junctions = els.filter((e) => e.type === 'junction' && e.pts.length >= 3)
+    const junctions = els.filter((e) => (e.type === 'junction' || e.type === 'lanemask') && e.pts.length >= 3)
       .concat(els.filter((e) => e.type === 'roundabout').map((e) => ({ pts: R.rbOutline(e, ppm, 1.2) })))
       .concat(els.filter((e) => e.type === 'roundabout').flatMap((e) => (e.corners || []).map((k) => ({ pts: k.mask })).concat((e.legMasks || []).concat(e.cornerMasks || []).map((pts) => ({ pts })))));
     const cutJunctions = () => {
@@ -892,7 +892,7 @@ window.Render = (function () {
     for (const el of els) {
       if (!MARK.has(el.type) || el.type === 'bikelane') continue; // bike lanes are drawn later, on any surface
       ctx.save();
-      if ((el.type === 'line' && el.style !== 'guide') || el.type === 'section') { // guide lines run through junctions
+      if ((el.type === 'line' && el.style !== 'guide' && !el.jline) || el.type === 'section') { // guide / junction-made lines aren't cut
         cutJunctions(); for (const c of crossCutsEarly) clipOutside(c); // crosswalks take priority
         for (const b of bikeMasks) clipOutside(b); // road lane lines give way to bike lanes drawn over them
       } else if (el.type === 'bikelane' || el.type === 'buslane') { for (const c of crossCutsEarly) clipOutside(c); }

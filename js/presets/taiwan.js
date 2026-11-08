@@ -53,7 +53,7 @@ window.RoadPresets = window.RoadPresets || {};
   };
 
   const sec = (label, en, o) => ({ id: 'sec_' + label, label, en, mode: 'polyline', icon: { glyph: '═' },
-    defaults: Object.assign({ type: 'section', lanesF: 1, lanesB: 1, laneWidth: 3.25, centerType: 'centerDouble', medianWidth: 2, slowLane: 0, bikeLane: 0, edge: true, pave: false, smooth: true, autoArrows: true, autoBox: false, leftGuide: false }, o) });
+    defaults: Object.assign({ type: 'section', lanesF: 1, lanesB: 1, laneWidth: 3.25, centerType: 'centerDouble', medianWidth: 2, slowLane: 0, bikeLane: 0, edge: true, pave: false, smooth: true, autoArrows: true, autoBox: true, boxDepth: 3, solidLen: 30, laneUse: '', leftGuide: false }, o) });
   const arrow = (k, g) => ({ id: 'arrow_' + k, label: arrowKinds.find((a) => a[0] === k)[1].split(' ')[0], en: '指向線', mode: 'point', icon: { glyph: g }, defaults: { type: 'arrow', kind: k, length: 5, dir: -Math.PI / 2 } });
   const text = (t, o) => ({ id: 'text_' + t, label: t, en: (o && o.en) || '路面文字', mode: 'point', icon: { glyph: t.slice(0, 2) }, defaults: Object.assign({ type: 'text', text: t, charLen: 2.5, charWid: 1.0, charGap: 1.0, color: 'white', order: 'far', dir: -Math.PI / 2 }, o, { en: undefined }) });
   const icon = (k, label, en, o) => ({ id: 'icon_' + k + (o && o.small ? '_s' : ''), label, en, mode: 'point', icon: { glyph: k === 'bike' ? '🚲' : '🛵' }, defaults: Object.assign({ type: 'symbol', kind: k, small: false, dir: -Math.PI / 2 }, o) });
@@ -95,6 +95,7 @@ window.RoadPresets = window.RoadPresets || {};
       { id: 'bike_excl', label: '自行車專用車道', en: 'Bike lane (§174)', mode: 'polyline', icon: { fill: C.bike }, defaults: { type: 'bikelane', kind: 'exclusive', width: 1.5, twoWay: false, surface: true, sep: 'left', spacing: 40, icons: true, diamonds: true, smooth: true } },
       { id: 'bike_two', label: '雙向自行車道', en: 'Two-way bike lane', mode: 'polyline', icon: { fill: C.bike }, defaults: { type: 'bikelane', kind: 'exclusive', width: 2.5, twoWay: true, surface: true, sep: 'both', spacing: 40, icons: true, diamonds: true, smooth: true } },
       { id: 'bus_curb', label: '公車專用道 (路側)', en: 'Bus lane, kerbside (§174)', mode: 'polyline', icon: { fill: C.bus }, defaults: { type: 'buslane', kind: 'exclusive', width: 3.5, surface: false, sep: 'left', sepStyle: 'double', spacing: 50, text: '公車專用', smooth: true } },
+      { id: 'bus_moto', label: '公車・二輪專用道', en: 'Bus + two-wheeler lane', mode: 'polyline', icon: { fill: '#3f8f1f' }, defaults: { type: 'buslane', kind: 'exclusive', width: 3.5, surface: true, color: '#3f8f1f', sep: 'left', sepStyle: 'single', diamonds: false, spacing: 50, text: '公車・二輪', smooth: true } },
       { id: 'bus_median', label: '公車專用道 (中央)', en: 'Bus lane, median (§174)', mode: 'polyline', icon: { fill: C.bus }, defaults: { type: 'buslane', kind: 'exclusive', width: 3.5, surface: false, sep: 'both', sepStyle: 'double', spacing: 50, text: '公車專用', smooth: true } },
       { id: 'bike_prio', label: '自行車優先車道', en: 'Bike priority lane (§174-4)', mode: 'polyline', icon: { glyph: '🚲' }, defaults: { type: 'bikelane', kind: 'priority', width: 1.5, twoWay: false, surface: false, sep: 'none', spacing: 40, icons: true, diamonds: false, smooth: true } },
     ] },
@@ -129,7 +130,9 @@ window.RoadPresets = window.RoadPresets || {};
           { kind: 'chk', key: 'edge', label: '路面邊線 Edge lines' }, { kind: 'chk', key: 'pave', label: '自動鋪路面 Pave band' }, { kind: 'chk', key: 'smooth', label: '平滑曲線 Smooth curve' },
           { kind: 'info', text: '路口自動標線 (由「路口」工具套用；改設定後按路口的「重新產生」)：' },
           { kind: 'chk', key: 'autoArrows', label: '自動指向線 Lane arrows (§188)' },
-          { kind: 'chk', key: 'autoBox', label: '機慢車停等區 Scooter box (§174-2)' },
+          { kind: 'txt', key: 'laneUse', label: '車道用途 Lane use (由左至右 L,S,R,SL,SR…；空白=自動)' },
+          { kind: 'chk', key: 'autoBox', label: '機慢車停等區 Scooter box (§174-2)' }, num('boxDepth', '停等區縱深 Box depth', 2.5, 6, 0.1, '法規 2.5–6 m'),
+          num('solidLen', '近路口實線 Solid lane lines before stop line', 0, 60, 1, '≈ 禁止變換車道線，0 = 不設'),
           { kind: 'chk', key: 'leftGuide', label: '左轉導引線 Left-turn guide lines' },
           { kind: 'info', text: '台灣靠右行駛：畫線方向的右側為順向車道。Right-hand traffic: lanes on the right of your drawing direction flow forward.' });
         return f;
@@ -231,7 +234,8 @@ window.RoadPresets = window.RoadPresets || {};
       }
       case 'buslane': return [num('width', '車道寬 Width', 3.0, 4.5, 0.05, '≈ 常用 3.25–3.5 m'),
         { kind: 'sel', key: 'sep', label: '分隔線位置 Separator side', options: [['left', '左側 (車道側) Left'], ['right', '右側 Right'], ['both', '兩側 Both (中央式)'], ['none', '無 None']] },
-        { kind: 'sel', key: 'sepStyle', label: '分隔線 Separator', options: [['double', '雙白實線 Double white (不可跨越)'], ['mixed', '單邊禁止變換車道線 (公車可駛出)']] },
+        { kind: 'sel', key: 'sepStyle', label: '分隔線 Separator', options: [['double', '雙白實線 Double white (不可跨越)'], ['mixed', '單邊禁止變換車道線 (公車可駛出)'], ['single', '白實線 Single white']] },
+        { kind: 'chk', key: 'diamonds', label: '菱形標記 Diamonds (§174)' },
         num('spacing', '標記間距 Spacing', 30, 60, 1, '§174 菱形每 30–60 m'), { kind: 'txt', key: 'text', label: '標字 Wording (§175)' },
         { kind: 'chk', key: 'surface', label: '彩色鋪面 Coloured surface (法規未規定)' }, { kind: 'color', key: 'color', label: '鋪面顏色 Surface colour' },
         { kind: 'chk', key: 'smooth', label: '平滑曲線 Smooth curve' },

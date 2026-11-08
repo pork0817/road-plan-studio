@@ -1392,16 +1392,11 @@
       // incoming lanes: traffic heading toward C keeps right, i.e. the left side of v
       const oneWay = el.lanesB === 0;
       const incoming = oneWay ? lg.sgn < 0 : true;
-      const front = cwOut + (prm.crosswalks ? prm.stopGap * m : 0);                // first line before the crosswalk
-      const boxD = 3, withBox = !!el.autoBox && incoming && prm.stops;
-      const ds = front + (withBox ? boxD * m : 0) + (stopW * m) / 2;              // car stop line (behind the box)
+      // stop line across every entering lane, 2–3 m before the crosswalk (§170)
+      const ds = cwOut + (prm.crosswalks ? prm.stopGap * m : 0) + (stopW * m) / 2;
       const inner = oneWay ? lg.rightExt - 0.3 : -((el.centerType === 'median' ? el.medianWidth / 2 + 0.2 : 0.15));
       if (prm.stops && incoming) {
         out.push({ id: newId(), owner: jid, type: 'stopline', width: stopW, a: at(ds, inner), b: at(ds, -lg.leftExt + 0.3), dir: G.angle(G.mul(lg.v, -1)) });
-      }
-      if (withBox) { // §174-2 機慢車停等區: between the car stop line and the crosswalk, across the entering lanes
-        const sb = ds - (stopW * m) / 2;
-        out.push({ id: newId(), owner: jid, type: 'scooterbox', depth: boxD, side: '0.15', icon: true, text: '', a: at(sb, inner), b: at(sb, -lg.leftExt + 0.3), dir: G.angle(G.mul(lg.v, -1)) });
       }
       if (incoming) lg.entry = { ds, inner, oneWay, el };
       lg.cwIn = cwIn;
@@ -1435,20 +1430,50 @@
       // lane centres in the leg frame, from the driver's left (k = 0) to right
       const W1 = n * lw + (el.slowLane || 0) + (el.bikeLane || 0);           // one-way: lanes start at the road's left edge
       const laneOff = (k) => (lg.entry.oneWay ? W1 / 2 - (k + 0.5) * lw : -(start + (k + 0.5) * lw));
-      // §188 指向線, repeated every 30 m (§176), chosen from the turns this entry allows
-      if (el.autoArrows !== false && n > 0) {
-        const pick = (k) => {
+      const edgeOff = (k) => (lg.entry.oneWay ? W1 / 2 - k * lw : -(start + k * lw)); // lane boundary k (0 = driver's left edge)
+      const stopRear = lg.entry.ds + (stopW * m) / 2;
+      // what each lane is for, from the driver's left: the road's 車道用途 setting (e.g. "L,L,S,S,R"), else automatic
+      const KINDS = new Set(['L', 'S', 'R', 'SL', 'SR', 'LR', 'SLR', 'U']);
+      const given = String(el.laneUse || '').toUpperCase().split(/[\s,，、]+/).filter((x) => KINDS.has(x));
+      const autoPick = (k) => {
           const L = !!t.L, Sx = !!t.S, Rx = !!t.R;
           const combo = (l, s, r) => (l && s && r ? 'SLR' : l && s ? 'SL' : s && r ? 'SR' : l && r ? 'LR' : l ? 'L' : r ? 'R' : 'S');
           if (n === 1) return combo(L, Sx, Rx);
           if (k === 0) return L ? (n >= 3 && Sx ? 'L' : combo(true, Sx, false)) : combo(false, Sx, !Sx && Rx);
           if (k === n - 1) return Rx ? combo(false, Sx, true) : combo(!Sx && L, Sx, false);
           return Sx ? 'S' : combo(L, false, Rx);
-        };
+      };
+      const uses = []; for (let k = 0; k < n; k++) uses.push(given[k] || autoPick(k));
+      // §174-2 機慢車停等區: right behind the stop line, over the lanes that go straight on (not turn-only lanes);
+      // cars stop at its back edge
+      let boxRear = stopRear, kS = -1, kE = -1;
+      if (el.autoBox && prm.stops && n > 0) {
+        uses.forEach((u, k) => { if (u.includes('S')) { if (kS < 0) kS = k; kE = k; } });
+        if (kS >= 0) {
+          const D = G.clamp(el.boxDepth || 3, 2.5, 6);
+          boxRear = stopRear + D * m;
+          const e0 = edgeOff(kS), e1 = edgeOff(kE + 1), inward = Math.sign(e0 - e1); // keep clear of the centre / edge lines
+          out.push({ id: newId(), owner: jid, type: 'scooterbox', depth: D, side: '0.15', icon: true, text: '',
+            a: atL(lg, boxRear, e0 - inward * 0.15), b: atL(lg, boxRear, e1 + inward * 0.15), dir: G.angle(tr) });
+        }
+      }
+      // lane lines on the approach: hidden inside the box, then solid 禁止變換車道線 for solidLen before the stop line
+      if (n > 1) {
+        const L0 = Math.max(0, el.solidLen != null ? el.solidLen : 30), sEnd = stopRear + L0 * m;
+        const lo = edgeOff(1), hi = edgeOff(n - 1), a0 = Math.min(lo, hi) - 0.3, a1 = Math.max(lo, hi) + 0.3;
+        const maskEnd = Math.max(sEnd, boxRear);
+        if (maskEnd > stopRear) out.push({ id: newId(), owner: jid, type: 'lanemask', pts: [atL(lg, stopRear - 0.1 * m, a0), atL(lg, maskEnd, a0), atL(lg, maskEnd, a1), atL(lg, stopRear - 0.1 * m, a1)] });
+        if (L0 > 0) for (let k = 1; k < n; k++) {
+          const inBox = kS >= 0 && k > kS && k <= kE, s0 = inBox ? boxRear : stopRear;
+          if (sEnd > s0) out.push({ id: newId(), owner: jid, type: 'line', style: 'laneSolid', smooth: false, jline: true, pts: [atL(lg, s0, edgeOff(k)), atL(lg, sEnd, edgeOff(k))] });
+        }
+      }
+      // §188 指向線 for each lane's use, behind the box / stop line and again 30 m back (§176)
+      if (el.autoArrows !== false && n > 0) {
         for (let g = 0; g < 2; g++) {
-          const sA = lg.entry.ds + (0.2 + 3 + 2.5 + g * 30) * m;
+          const sA = boxRear + (3 + 2.5 + g * 30) * m;
           if (sA + 3 * m > lg.len) break;
-          for (let k = 0; k < n; k++) out.push({ id: newId(), owner: jid, type: 'arrow', kind: pick(k), length: 5, p: atL(lg, sA, laneOff(k)), dir: G.angle(tr) });
+          for (let k = 0; k < n; k++) out.push({ id: newId(), owner: jid, type: 'arrow', kind: uses[k], length: 5, p: atL(lg, sA, laneOff(k)), dir: G.angle(tr) });
         }
       }
       // 左轉導引線: from the left-turn lane at the stop line, through the junction, into the road on the left
