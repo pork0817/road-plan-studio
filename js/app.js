@@ -103,14 +103,15 @@
   // ---------------- elements ----------------
   function buildElement(item, geom) {
     const el = Object.assign({ id: newId() }, clone(S.params || item.defaults), geom);
-    if (el.type === 'crosswalk' || el.type === 'stopline' || el.type === 'scooterbox') { el.dir = null; alignTwo(el, false); }
+    if (el.type === 'crosswalk' || el.type === 'stopline' || el.type === 'scooterbox' || el.type === 'yield') { el.dir = null; alignTwo(el, false); }
+    if (el.type === 'yield') el.lanes = Math.max(1, Math.round(G.dist(el.a, el.b) / ppm() / 3.25));
     if (el.type === 'arrow' || el.type === 'text' || el.type === 'symbol' || el.type === 'chevron' || el.type === 'yellowbox') alignPoint(el);
     return el;
   }
   const findEl = (id) => S.els.find((e) => e.id === id);
 
   function hitRank(el) {
-    return { junction: 0.5, sidewalk: 5, arrow: 4, text: 4, stopline: 4, crosswalk: 3.5, scooterbox: 3.4, line: 3, chevron: 2.5, yellowbox: 2.5, surface: 2, section: 1, road: 0 }[el.type] || 0;
+    return { junction: 0.5, roundabout: 0.6, yield: 3.6, sidewalk: 5, arrow: 4, text: 4, stopline: 4, crosswalk: 3.5, scooterbox: 3.4, line: 3, chevron: 2.5, yellowbox: 2.5, surface: 2, section: 1, road: 0 }[el.type] || 0;
   }
   function hitTest(w) {
     const tol = 6 / S.view.s;
@@ -126,10 +127,21 @@
 
   function handlesOf(el) {
     if (!el) return [];
-    if (el.pts) return el.pts.map((p, i) => ({ key: 'pts', i, p }));
+    if (el.pts) {
+      // vertices, plus a "+" handle in the middle of every segment: drag it to add a point there
+      const hs = el.pts.map((p, i) => ({ key: 'pts', i, p }));
+      const open = ['line', 'section'].includes(el.type);
+      const n = el.pts.length, segs = open ? n - 1 : n;
+      for (let i = 0; i < segs; i++) {
+        const mid = el.smooth && open && n > 2 ? catmullMid(el.pts, i) : G.mid(el.pts[i], el.pts[(i + 1) % n]);
+        hs.push({ key: 'ins', i, p: mid });
+      }
+      return hs;
+    }
+    if (el.type === 'roundabout') return [{ key: 'p', p: el.p }, { key: 'rad', p: { x: el.p.x + el.R * ppm(), y: el.p.y } }];
     if (el.a) {
       const m = G.mid(el.a, el.b), t = G.fromAngle(el.dir || 0);
-      const ext = (el.type === 'crosswalk' ? el.width / 2 : el.type === 'scooterbox' ? el.depth : el.width / 2) + 1.5;
+      const ext = (el.type === 'crosswalk' ? el.width / 2 : el.type === 'scooterbox' ? el.depth : el.type === 'yield' ? 0 : el.width / 2) + 1.5;
       return [{ key: 'a', p: el.a }, { key: 'b', p: el.b }, { key: 'rot2', p: G.add(m, G.mul(t, ext * ppm())) }];
     }
     if (el.p) {
@@ -137,6 +149,11 @@
       return [{ key: 'p', p: el.p }, { key: 'rot', p: G.add(el.p, G.mul(G.fromAngle(el.dir), len / 2 + 1.2 * ppm())) }];
     }
     return [];
+  }
+  function catmullMid(pts, i) {
+    const p0 = pts[Math.max(i - 1, 0)], p1 = pts[i], p2 = pts[i + 1], p3 = pts[Math.min(i + 2, pts.length - 1)], t = 0.5;
+    const f = (a, b, c, d) => 0.5 * (2 * b + (-a + c) * t + (2 * a - 5 * b + 4 * c - d) * t * t + (-a + 3 * b - 3 * c + d) * t * t * t);
+    return { x: f(p0.x, p1.x, p2.x, p3.x), y: f(p0.y, p1.y, p2.y, p3.y) };
   }
   function hitHandle(sx, sy) {
     const el = findEl(S.sel);
@@ -212,7 +229,7 @@
     let h = '';
     if (S.align && !S.align.tgtId) h = '📐 點選要對齊的目標物件 (停止線、行人穿越道、車道、箭頭…)，<kbd>Esc</kbd> 取消';
     else if (S.align) h = '📐 已對齊 — 可在右側調整間距 / 端點，按「完成」結束';
-    else if (S.tool === 'select') h = '點選物件編輯，拖曳控制點修改；雙擊邊線新增節點，Alt+點節點刪除。<kbd>Del</kbd> 刪除 <kbd>⌘D</kbd> 複製 <kbd>[ ]</kbd> 旋轉';
+    else if (S.tool === 'select') h = '點選物件編輯，拖曳控制點修改；拖曳邊上的 ⊕ 新增節點，Alt+點節點刪除。<kbd>Del</kbd> 刪除 <kbd>⌘D</kbd> 複製 <kbd>[ ]</kbd> 旋轉';
     else if (S.tool === 'pan') h = '拖曳平移；⌘/Ctrl+滾輪或觸控板捏合縮放';
     else if (S.tool === 'calibrate') h = '在圖上點兩點 (例如 Google 地圖比例尺兩端)，再輸入實際距離 (公尺)';
     else if (S.tool === 'measure') h = '點兩點量測距離';
@@ -221,6 +238,7 @@
       if (m === 'poly') h = '逐點點擊描繪範圍，<kbd>Enter</kbd>/雙擊/點回起點 完成，<kbd>⌫</kbd> 退一點，<kbd>Esc</kbd> 取消，<kbd>Shift</kbd> 鎖角度，<kbd>Alt</kbd> 不吸附';
       if (m === 'polyline') h = '沿道路中心 (或標線位置) 逐點點擊，<kbd>Enter</kbd>/雙擊 完成。畫線方向的右側=順向車道';
       if (m === 'two') h = '從道路一側點到另一側 — 會自動對齊最近車道方向 (與車流同向)';
+      if (m === 'roundabout') h = '點圓環中心 — 已畫好的路段若接到圓環，會自動產生入口讓路線與行人穿越道';
       if (m === 'junction') h = '點兩條路段 (路段中心線) 的交會處 — 自動產生路口範圍、行人穿越道與停止線';
       if (m === 'point') h = '點擊放置 — 自動對齊最近車道的行車方向；<kbd>[ ]</kbd> 旋轉，<kbd>F</kbd> 反轉';
     }
@@ -252,6 +270,9 @@
       if (m === 'two' && S.draft && S.draft.a && G.dist(S.draft.a, w) > 1) {
         const el = Object.assign({ id: '_preview' }, clone(S.params), { a: S.draft.a, b: G.copy(w), dir: null });
         alignTwo(el, false); return el;
+      }
+      if (m === 'roundabout' && !S.drag) {
+        return { id: '_preview', type: 'roundabout', p: G.copy(w), R: S.params.R, lanes: S.params.lanes, laneWidth: S.params.laneWidth, apron: S.params.apron, island: S.params.island, legs: [] };
       }
       if (m === 'point' && !S.drag) {
         const el = Object.assign({ id: '_preview' }, clone(S.params), { p: G.copy(w) });
@@ -305,7 +326,13 @@
       if (sel.type === 'section' || sel.type === 'line') { ctx.setLineDash([4, 4]); strokeShape({ line: sel.pts }, '#ffffffaa', 1, true); ctx.setLineDash([]); }
       for (const h of handlesOf(sel)) {
         const s = toScreen(h.p);
-        const isRot = h.key === 'rot' || h.key === 'rot2';
+        const isRot = h.key === 'rot' || h.key === 'rot2' || h.key === 'rad';
+        if (h.key === 'ins') {
+          ctx.fillStyle = '#1e6fa8cc'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.2;
+          ctx.beginPath(); ctx.arc(s.x, s.y, 5.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(s.x - 3, s.y); ctx.lineTo(s.x + 3, s.y); ctx.moveTo(s.x, s.y - 3); ctx.lineTo(s.x, s.y + 3); ctx.stroke();
+          continue;
+        }
         ctx.fillStyle = isRot ? '#f0b429' : '#fff'; ctx.strokeStyle = '#1e6fa8'; ctx.lineWidth = 2;
         ctx.beginPath();
         if (isRot) ctx.arc(s.x, s.y, 5, 0, Math.PI * 2); else ctx.rect(s.x - 4.5, s.y - 4.5, 9, 9);
@@ -386,6 +413,12 @@
         if (sel.pts.length > min) { sel.pts.splice(h.i, 1); commit(); }
         return;
       }
+      if (h && h.key === 'ins') {
+        // insert a new point on that segment and start dragging it
+        sel.pts.splice(h.i + 1, 0, G.copy(h.p));
+        S.drag = { kind: 'handle', h: { key: 'pts', i: h.i + 1, p: sel.pts[h.i + 1] }, orig: clone(sel), moved: true };
+        redraw(); return;
+      }
       if (h) { S.drag = { kind: 'handle', h, orig: clone(sel), moved: false }; return; }
       const el = hitTest(w);
       if (el) { if (S.align && el.id !== S.align.srcId) endAlign(false); S.sel = el.id; S.drag = { kind: 'move', w0: w, orig: clone(el), moved: false }; renderProps(); redraw(); return; }
@@ -426,6 +459,9 @@
           const el = buildElement(S.item, { a: S.draft.a, b: p });
           S.els.push(el); S.sel = el.id; S.draft = null; commit();
         }
+      } else if (m === 'roundabout') {
+        const made = buildRoundabout(w, S.params);
+        S.els.push(...made); S.sel = made[0].id; commit(); setTool('select'); S.sel = made[0].id; renderProps();
       } else if (m === 'junction') {
         const made = buildJunction(w, S.params);
         if (made) { S.els.push(...made); S.sel = made[0].id; commit(); setTool('select'); S.sel = made[0].id; renderProps(); }
@@ -452,6 +488,7 @@
           const nb = o.pts[h.i - 1] || o.pts[h.i + 1];
           el.pts[h.i] = snapW(w, nb, e, el.id);
         } else if (h.key === 'p') el.p = snapW(w, null, e, el.id);
+        else if (h.key === 'rad') el.R = G.clamp(Math.round((G.dist(w, el.p) / ppm()) * 2) / 2, 8, 60);
         else if (h.key === 'a' || h.key === 'b') {
           // keep the crossing square to traffic: the dragged end slides along the line through the other end
           const other = h.key === 'a' ? o.b : o.a;
@@ -605,7 +642,7 @@
 
 
   // ---------------- align two objects ----------------
-  const BAND = new Set(['crosswalk', 'stopline', 'scooterbox']);
+  const BAND = new Set(['crosswalk', 'stopline', 'scooterbox', 'yield']);
   const POINT = new Set(['arrow', 'text', 'symbol']);
   const canAlign = (el) => el && el.type !== 'junction';
   const centerOf = (el) => (el.a ? G.mid(el.a, el.b) : el.p ? el.p : G.centroid(el.pts));
@@ -621,6 +658,7 @@
   // how far (px) a band element reaches from its a→b line on the side of unit normal n
   function bandExtent(el, n) {
     if (el.type === 'scooterbox') return G.dot(G.fromAngle(el.dir), n) > 0 ? el.depth * ppm() : 0;
+    if (el.type === 'yield') return G.dot(G.fromAngle(el.dir), n) > 0 ? 0 : R.YIELD_DEPTH * ppm();
     return (el.width / 2) * ppm();
   }
   function defaultGap(src, tgt) {
@@ -723,6 +761,51 @@
     applyAlign(); commit(); updateHint();
   }
 
+
+
+  // ---------------- roundabout generator ----------------
+  function buildRoundabout(C, prm) {
+    const m = ppm(), Rpx = prm.R * m;
+    const rb = { id: newId(), type: 'roundabout', p: G.copy(C), R: prm.R, lanes: prm.lanes, laneWidth: prm.laneWidth, apron: prm.apron, island: prm.island || 'island', legs: [] };
+    const out = [rb];
+    for (const el of S.els) {
+      if (el.type !== 'section') continue;
+      const pts = R.basePts(el, m), L = R.sectionLayout(el);
+      for (let i = 0; i < pts.length - 1; i++) {
+        const a = pts[i], d = G.sub(pts[i + 1], a), f = G.sub(a, C);
+        const A = G.dot(d, d), B = 2 * G.dot(f, d), Cc = G.dot(f, f) - Rpx * Rpx, disc = B * B - 4 * A * Cc;
+        if (A === 0 || disc < 0) continue;
+        for (const sgnRoot of [-1, 1]) {
+          const sp = (-B + sgnRoot * Math.sqrt(disc)) / (2 * A);
+          if (sp < 0 || sp > 1) continue;
+          const X = G.add(a, G.mul(d, sp)), t = G.norm(d);
+          const sgn = G.dot(t, G.sub(X, C)) > 0 ? 1 : -1;
+          const v = G.mul(t, sgn), nv = G.rightN(v);
+          const rightExt = sgn > 0 ? L.right : L.left, leftExt = sgn > 0 ? L.left : L.right;
+          rb.legs.push({ ang: G.angle(G.sub(X, C)), w: Math.max(rightExt, leftExt) });
+          const at = (dist, off) => G.add(G.add(X, G.mul(v, dist * m)), G.mul(nv, off * m));
+          const oneWay = el.lanesB === 0, incoming = oneWay ? sgn < 0 : true;
+          const median = !oneWay && el.centerType === 'median';
+          const yd = 0.6;
+          if (prm.yields && incoming) {
+            const inner = oneWay ? rightExt - 0.3 : -(median ? el.medianWidth / 2 + 0.3 : 0.15);
+            const lanes = oneWay ? el.lanesF : (sgn > 0 ? el.lanesB : el.lanesF);
+            out.push({ id: newId(), type: 'yield', a: at(yd, inner), b: at(yd, -leftExt + 0.3), dir: G.angle(G.mul(v, -1)), lanes: Math.max(1, lanes), triangles: true });
+          }
+          if (prm.crosswalks) {
+            const kind = prm.cwKind, w = G.clamp(prm.cwWidth, P().crosswalk[kind].width.min, P().crosswalk[kind].width.max);
+            const dc = yd + 0.54 + prm.cwSetback + w / 2;
+            out.push({ id: newId(), type: 'crosswalk', kind, width: w, gap: 0.4, green: false, a: at(dc, -leftExt + 0.05), b: at(dc, rightExt - 0.05), dir: G.angle(v) });
+            if (median) { // open the median where the crosswalk passes through it
+              const h = el.medianWidth / 2 + 0.05, d0 = dc - w / 2 - 0.3, d1 = dc + w / 2 + 0.3;
+              out.push({ id: newId(), type: 'junction', pts: [at(d0, -h), at(d1, -h), at(d1, h), at(d0, h)] });
+            }
+          }
+        }
+      }
+    }
+    return out;
+  }
 
   // ---------------- intersection generator ----------------
   function lineIntersect(p1, t1, p2, t2) {

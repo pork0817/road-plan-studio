@@ -366,8 +366,65 @@ window.Render = (function () {
     ctx.restore();
   }
 
+
+  // ---------- roundabout ----------
+  R.circlePts = (c, r, n = 96) => { const o = []; for (let i = 0; i < n; i++) { const a = (i / n) * 2 * Math.PI; o.push({ x: c.x + r * Math.cos(a), y: c.y + r * Math.sin(a) }); } return o; };
+  // R = outer edge of the circulating roadway; Ra = outer edge of the truck apron; Ri = raised central island
+  R.rbRadii = (el) => { const Ri = Math.max(2, el.R - el.lanes * el.laneWidth - el.apron); return { Ro: el.R, Ri, Ra: Ri + el.apron }; };
+  function drawRoundaboutLines(ctx, el, ppm, P) {
+    const { Ro, Ra } = R.rbRadii(el), c = el.p;
+    ctx.save(); ctx.strokeStyle = P.colors.white; ctx.lineCap = 'butt';
+    for (let k = 1; k < el.lanes; k++) { // circulating lane lines (§182 車道線 4 m / 6 m)
+      ctx.lineWidth = 0.1 * ppm; ctx.setLineDash([4 * ppm, 6 * ppm]);
+      ctx.beginPath(); ctx.arc(c.x, c.y, (Ra + k * el.laneWidth) * ppm, 0, 2 * Math.PI); ctx.stroke();
+    }
+    ctx.setLineDash([]); ctx.lineWidth = 0.15 * ppm; // §183 路面邊線 15 cm
+    ctx.beginPath(); ctx.arc(c.x, c.y, (Ra + 0.25) * ppm, 0, 2 * Math.PI); ctx.stroke();
+    const rr = Ro - 0.3;
+    const gaps = (el.legs || []).map((g) => ({ c: g.ang, h: Math.asin(Math.min(0.99, (g.w + 0.6) / rr)) })).sort((a, b) => a.c - b.c);
+    if (!gaps.length) { ctx.beginPath(); ctx.arc(c.x, c.y, rr * ppm, 0, 2 * Math.PI); ctx.stroke(); }
+    for (let i = 0; i < gaps.length; i++) {
+      const a0 = gaps[i].c + gaps[i].h, nx = gaps[(i + 1) % gaps.length];
+      let a1 = nx.c - nx.h; if (i === gaps.length - 1) a1 += 2 * Math.PI;
+      if (a1 > a0) { ctx.beginPath(); ctx.arc(c.x, c.y, rr * ppm, a0, a1); ctx.stroke(); }
+    }
+    ctx.restore();
+  }
+  function drawRoundaboutIsland(ctx, el, ppm, P) {
+    const { Ri, Ra } = R.rbRadii(el);
+    if (el.apron > 0) drawSidewalk(ctx, { pts: R.circlePts(el.p, Ra * ppm), style: 'concrete' }, ppm, P); // mountable truck apron
+    drawSidewalk(ctx, { pts: R.circlePts(el.p, Ri * ppm), style: el.island || 'island' }, ppm, P);
+  }
+
+  // ---------- §172 讓路線 yield line ----------
+  // Double white dashed line across the entry + an inverted triangle per lane (1.2 m × 3.0 m, 15 cm outline,
+  // 60 cm solid top) whose top sits 2.0–2.5 m before the line. Dash size measured from the §172 figure (≈).
+  R.YIELD_DEPTH = 0.54 + 2.25 + 3.0;
+  function drawYield(ctx, el, ppm, P) {
+    const u = G.norm(G.sub(el.b, el.a)), L = G.dist(el.a, el.b), t = G.fromAngle(el.dir);
+    ctx.save(); ctx.strokeStyle = ctx.fillStyle = P.colors.white; ctx.lineCap = 'butt';
+    ctx.lineWidth = 0.18 * ppm; ctx.setLineDash([0.36 * ppm, 0.24 * ppm]);
+    for (const sv of [-0.09, -0.45]) { const o = G.mul(t, sv * ppm); path(ctx, [G.add(el.a, o), G.add(el.b, o)]); ctx.stroke(); }
+    ctx.setLineDash([]);
+    if (el.triangles) {
+      const n = Math.max(1, el.lanes | 0);
+      const ins = 0.15 / Math.cos(Math.atan(0.6 / 3.0)), hw = (q) => (0.6 * q) / 3.0, u1 = 3.0 - 0.6, u0 = (ins * 3.0) / 0.6 + 0.1;
+      for (let k = 0; k < n; k++) {
+        const cpt = G.add(el.a, G.mul(u, (L * (k + 0.5)) / n));
+        const Q = (sv, wv) => G.add(G.add(cpt, G.mul(t, sv * ppm)), G.mul(u, wv * ppm));
+        const base = -(0.54 + 2.25), apex = base - 3.0;
+        ctx.beginPath();
+        [[base, -0.6], [base, 0.6], [apex, 0]].forEach(([sv, wv], i) => { const q = Q(sv, wv); i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y); });
+        ctx.closePath();
+        [[apex + u1, -(hw(u1) - ins)], [apex + u1, hw(u1) - ins], [apex + u0, 0]].forEach(([sv, wv], i) => { const q = Q(sv, wv); i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y); });
+        ctx.closePath(); ctx.fill('evenodd');
+      }
+    }
+    ctx.restore();
+  }
+
   // ---------- scene ----------
-  const MARK = new Set(['symbol', 'line', 'section', 'crosswalk', 'stopline', 'scooterbox', 'arrow', 'text', 'chevron', 'yellowbox']);
+  const MARK = new Set(['roundabout', 'yield', 'symbol', 'line', 'section', 'crosswalk', 'stopline', 'scooterbox', 'arrow', 'text', 'chevron', 'yellowbox']);
 
   R.drawScene = function (ctx, o) {
     const { ppm, P } = o;
@@ -381,6 +438,7 @@ window.Render = (function () {
     for (const el of els) {
       if (el.type === 'road' && el.pts.length >= 3) { ctx.fillStyle = tones[el.tone] || P.colors.asphalt; path(ctx, el.pts, true); ctx.fill(); }
       if (el.type === 'section' && el.pave) { const poly = R.sectionPoly(el, ppm); if (poly) { ctx.fillStyle = P.colors.asphalt; path(ctx, poly, true); ctx.fill(); } }
+      if (el.type === 'roundabout') { ctx.fillStyle = P.colors.asphalt; path(ctx, R.circlePts(el.p, el.R * ppm), true); ctx.fill(); }
     }
     ctx.restore();
 
@@ -391,6 +449,7 @@ window.Render = (function () {
       for (const el of els) {
         if (el.type === 'road' && el.pts.length >= 3) polys.push(el.pts);
         if (el.type === 'section' && el.pave) { const p = R.sectionPoly(el, ppm); if (p) polys.push(p); }
+        if (el.type === 'roundabout') polys.push(R.circlePts(el.p, el.R * ppm));
       }
       if (polys.length) {
         ctx.beginPath();
@@ -414,7 +473,8 @@ window.Render = (function () {
       }
     }
     // Layer 2: markings. Lane lines are interrupted inside intersection areas.
-    const junctions = els.filter((e) => e.type === 'junction' && e.pts.length >= 3);
+    const junctions = els.filter((e) => e.type === 'junction' && e.pts.length >= 3)
+      .concat(els.filter((e) => e.type === 'roundabout').map((e) => ({ pts: R.circlePts(e.p, (e.R + 1.2) * ppm, 72) })));
     const cutJunctions = () => {
       if (!junctions.length) return;
       ctx.beginPath(); ctx.rect(-1e6, -1e6, 2e6, 2e6);
@@ -438,6 +498,8 @@ window.Render = (function () {
         case 'scooterbox': drawScooterBox(ctx, el, ppm, P); break;
         case 'arrow': drawArrow(ctx, el, ppm, P); break;
         case 'symbol': drawIcon(ctx, el, ppm, P); break;
+        case 'roundabout': drawRoundaboutLines(ctx, el, ppm, P); break;
+        case 'yield': drawYield(ctx, el, ppm, P); break;
         case 'text': drawText(ctx, P, el.p, el.dir, el.text, el.charLen * ppm, el.charWid * ppm, colorOf(P, el.color), el.order, charGap(el) * ppm); break;
         // §171 槽化線 border 15 / stripe 20 / gap 30 cm; §173 網狀線 border 20 / lines 10 cm, spacing user (1–5 m)
         case 'chevron': drawHatched(ctx, Object.assign({}, el, { border: 0.15, stripe: 0.20, gap: 0.30 }), ppm, P, false); break;
@@ -450,6 +512,7 @@ window.Render = (function () {
     // Layer 3: sidewalks & medians always on top (crosswalks run "under" them)
     for (const el of els) {
       if (el.type === 'sidewalk') drawSidewalk(ctx, el, ppm, P);
+      if (el.type === 'roundabout') drawRoundaboutIsland(ctx, el, ppm, P);
       if (el.type === 'section') {
         const pts = R.basePts(el, ppm);
         if (pts.length < 2) continue;
@@ -475,6 +538,8 @@ window.Render = (function () {
       case 'section': { const p = R.sectionPoly(el, ppm); return p ? { poly: p } : { line: el.pts, w: 4 }; }
       case 'crosswalk': return { poly: R.frame(el, ppm, el.width, false).corners };
       case 'scooterbox': return { poly: R.frame(el, ppm, el.depth, true).corners };
+      case 'roundabout': return { poly: R.circlePts(el.p, el.R * ppm, 48) };
+      case 'yield': { const t = G.mul(G.fromAngle(el.dir), -R.YIELD_DEPTH * ppm); return { poly: [el.a, el.b, G.add(el.b, t), G.add(el.a, t)] }; }
       case 'stopline': { const n = G.mul(G.rightN(G.norm(G.sub(el.b, el.a))), (el.width * ppm) / 2); return { poly: [G.add(el.a, n), G.add(el.b, n), G.sub(el.b, n), G.sub(el.a, n)] }; }
       case 'arrow': case 'text': case 'symbol': {
         const sz = el.type === 'symbol' ? R.iconSize(el) : null;

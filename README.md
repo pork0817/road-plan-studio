@@ -20,6 +20,14 @@ Sidewalks always draw on top of markings, so a crosswalk that runs into a sidewa
 3. It builds the junction area (lane lines and road-section medians are cut inside it; medians end at the crosswalk with a curb), a crosswalk on every leg set back 3 m from the crossing road's edge (§185), and stop lines on the incoming half of each leg, 2 m behind the crosswalk (§170). Four-way, T and skewed junctions all work; one-way legs only get a stop line on the side traffic arrives from.
 4. Everything it makes is a normal object you can edit, move or delete. Drag the purple dashed junction outline's corners to change where lane lines stop (it is not exported).
 
+## Roundabouts
+Draw road sections for the roads that meet, pick **圓環 (自動) Roundabout**, and click the centre (a preview follows the cursor). It draws the circulating roadway, a central island with a mountable apron, lane and edge lines, and for every road that reaches the circle: a §172 讓路線 (double dashed line with an inverted triangle per entry lane) and a crosswalk about one car length back. Lane lines and medians inside the circle are cut; medians are opened where crosswalks pass through them. Drag the centre to move it and the orange handle to change the radius. The circulating dimensions are typical design values, since the regulation has no roundabout figure.
+
+The 讓路線 is also available on its own in ④ 路口 for T-junctions and minor-road entries.
+
+## Editing shapes
+Select a road area, sidewalk, road section or line: every segment shows a ⊕ handle at its middle. Drag it to add a new point there (it follows the curve on smooth sections). Alt+click a point to delete it.
+
 ## Aligning and the magnet
 - **Align (A)**: select a crosswalk, stop line, scooter box, arrow, text or icon, press **A** (or click 📐 對齊至…), then click the object to line it up with. A stop line aligned to a crosswalk becomes parallel and sits the §170 2.0 m edge-to-edge gap away. The panel then offers left / centre / right and top / middle / bottom alignment, measured either in the target's frame (up = direction of travel, left/right = the driver's left/right) or in screen directions. Any object can be aligned this way; crosswalks, stop lines, boxes, arrows, text and icons can also take the target's direction.
 - **🧲 Magnet** (top bar): while drawing, dragging or rotating, angles lock to horizontal, vertical, or parallel/perpendicular to the nearest lane within 3°, and points snap to existing corners. Hold Alt to turn it off for one move.
