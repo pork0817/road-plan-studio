@@ -48,7 +48,7 @@ window.RoadPresets = window.RoadPresets || {};
   const typeNames = {
     road: '車道範圍 Road area', sidewalk: '人行道/分隔島 Sidewalk', surface: '彩色鋪面 Surface', section: '路段 Road section',
     line: '標線 Line', crosswalk: '行人穿越道 Crosswalk', stopline: '停止線 Stop line', scooterbox: '機車停等區 Scooter box',
-    junction: '路口範圍 Intersection', roundabout: '圓環 Roundabout', yield: '讓路線 Yield line', arrow: '指向線 Arrow', symbol: '圖示 Icon', text: '路面文字 Text', chevron: '槽化線 Channelizing', yellowbox: '網狀線 Box junction',
+    junction: '路口範圍 Intersection', roundabout: '圓環 Roundabout', roundaboutTool: '圓環 Roundabout', yield: '讓路線 Yield line', arrow: '指向線 Arrow', symbol: '圖示 Icon', text: '路面文字 Text', chevron: '槽化線 Channelizing', yellowbox: '網狀線 Box junction',
   };
 
   const sec = (label, en, o) => ({ id: 'sec_' + label, label, en, mode: 'polyline', icon: { glyph: '═' },
@@ -76,7 +76,9 @@ window.RoadPresets = window.RoadPresets || {};
       { id: 'junction', label: '路口 (自動)', en: 'Intersection: click crossing', mode: 'junction', icon: { glyph: '✚' },
         defaults: { type: 'junctionTool', cwKind: 'ties', cwWidth: 4, setback: 3, stopGap: 2, crosswalks: true, stops: true } },
       { id: 'roundabout', label: '圓環 (自動)', en: 'Roundabout: click centre', mode: 'roundabout', icon: { glyph: '◎' },
-        defaults: { type: 'roundaboutTool', R: 18, lanes: 1, laneWidth: 5.5, apron: 2, island: 'island', yields: true, crosswalks: true, cwKind: 'ties', cwWidth: 4, cwSetback: 5 } },
+        defaults: { type: 'roundaboutTool', R: 18, lanes: 1, laneWidth: 5.5, apron: 2, island: 'island', yields: true, curvedYield: true, crosswalks: true, cwKind: 'ties', cwWidth: 4, cwSetback: 6.5 } },
+      { id: 'turbo', label: '渦輪圓環', en: 'Turbo roundabout', mode: 'roundabout', icon: { glyph: '🌀' },
+        defaults: { type: 'roundaboutTool', turbo: true, R: 24, lanes: 2, laneWidth: 5, apron: 0, divider: 'raised', island: 'island', yields: true, curvedYield: true, crosswalks: true, cwKind: 'ties', cwWidth: 4, cwSetback: 6.5 } },
     ] },
     { title: '③ 標線 Lines', items: Object.entries(lineStyles).map(([k, s]) => ({ id: 'line_' + k, label: s.name, en: s.en, mode: 'polyline', icon: { line: k }, defaults: { type: 'line', style: k, smooth: true } })) },
     { title: '④ 路口 Intersection', items: [
@@ -163,29 +165,35 @@ window.RoadPresets = window.RoadPresets || {};
         num('setback', '退縮 Setback', 0, 10, 0.1, '§185 距橫交路口路面邊緣 3–5 m'),
         { kind: 'chk', key: 'stops', label: '停止線 Stop lines' },
         num('stopGap', '停止線淨距 Stop gap', 1, 3, 0.1, '§170 與行人穿越道淨距 2–3 m (≥1 m)')];
-      case 'roundaboutTool': return [
-        { kind: 'info', text: '點圓環中心。若已有路段穿過或接到圓環，會自動在各入口畫讓路線、行人穿越道，並中斷圓環內的車道線與分隔島。Click the centre; road sections that reach the circle become legs.' },
-        num('R', '外半徑 Outer radius', 8, 60, 0.5, '≈ 單車道圓環常用 13–20 m'),
-        { kind: 'num', key: 'lanes', label: '環道車道數 Lanes', min: 1, max: 3, step: 1 },
-        num('laneWidth', '環道車道寬 Lane width', 4, 7, 0.1, '≈ 環道常用 5–6 m'),
-        num('apron', '可跨越緣帶 Truck apron', 0, 4, 0.1, '≈'),
-        { kind: 'chk', key: 'yields', label: '入口讓路線 Yield lines (§172)' },
-        { kind: 'chk', key: 'crosswalks', label: '行人穿越道 Crosswalks' },
-        { kind: 'sel', key: 'cwKind', label: '型式 Type', options: [['ties', '枕木紋 Ties'], ['zebra', '斑馬紋 Zebra']] },
-        num('cwWidth', '穿越道寬 Width', 2, 8, 0.1, '法規 2–8 m'),
-        num('cwSetback', '距讓路線 Setback', 2, 15, 0.5, '≈ 約一車長 5–6 m'),
-        { kind: 'law', text: '設置規則對圓環無專門附圖；環道尺寸為設計常用值。讓路線依 §172。' }];
-      case 'roundabout': return [num('R', '外半徑 Outer radius', 8, 60, 0.5, '≈'),
-        { kind: 'num', key: 'lanes', label: '環道車道數 Lanes', min: 1, max: 3, step: 1 },
-        num('laneWidth', '環道車道寬 Lane width', 4, 7, 0.1, '≈'), num('apron', '可跨越緣帶 Truck apron', 0, 4, 0.1, '≈'),
-        { kind: 'sel', key: 'island', label: '中央島 Island', options: sidewalkStyles },
-        { kind: 'chk', key: 'yields', label: '入口讓路線 Yield lines' }, { kind: 'chk', key: 'crosswalks', label: '行人穿越道 Crosswalks' },
-        { kind: 'info', text: '拖曳中心點移動、橘色點改半徑；入口讓路線與行人穿越道會跟著移動。若標線沒有跟著動，按「重新產生入口」。' },
-        { kind: 'btn', action: 'regen', label: '↻ 重新產生入口 Regenerate entries' }];
+      case 'roundaboutTool': case 'roundabout': {
+        const tool = el.type === 'roundaboutTool', f = [];
+        if (tool) f.push({ kind: 'info', text: el.turbo
+          ? '渦輪圓環：兩車道以螺旋分隔，進入前選車道、環內不變換車道。點中心放置；接到圓環的路段會自動產生入口讓路線與行人穿越道。Turbo: lanes are chosen before entry.'
+          : '點圓環中心。若已有路段穿過或接到圓環，會自動在各入口畫讓路線、行人穿越道，並中斷圓環內的車道線與分隔島。Click the centre; road sections that reach the circle become legs.' });
+        f.push(num('R', '外半徑 Outer radius', el.turbo ? 16 : 8, 70, 0.5, el.turbo ? '≈ 渦輪圓環常用 22–30 m' : '≈ 單車道圓環常用 13–20 m'));
+        if (el.turbo) {
+          f.push(num('laneWidth', '環道車道寬 Lane width', 4, 6.5, 0.1, '≈ 常用 5 m'),
+            { kind: 'sel', key: 'divider', label: '車道分隔 Divider', options: [['raised', '凸起分隔帶 Raised kerb'], ['double', '雙白實線 Double white (§167)']] });
+          if (!tool) f.push({ kind: 'deg', key: 'turboAxis', label: '螺旋方向 Spiral angle' });
+        } else {
+          f.push({ kind: 'num', key: 'lanes', label: '環道車道數 Lanes', min: 1, max: 3, step: 1 },
+            num('laneWidth', '環道車道寬 Lane width', 4, 7, 0.1, '≈ 環道常用 5–6 m'), num('apron', '可跨越緣帶 Truck apron', 0, 4, 0.1, '≈'));
+        }
+        if (!tool) f.push({ kind: 'sel', key: 'island', label: '中央島 Island', options: sidewalkStyles });
+        f.push({ kind: 'chk', key: 'yields', label: '入口讓路線 Yield lines (§172)' },
+          { kind: 'chk', key: 'curvedYield', label: '讓路線沿圓環弧線 Curved yield lines' },
+          { kind: 'chk', key: 'crosswalks', label: '行人穿越道 Crosswalks' });
+        if (tool) f.push({ kind: 'sel', key: 'cwKind', label: '型式 Type', options: [['ties', '枕木紋 Ties'], ['zebra', '斑馬紋 Zebra']] },
+          num('cwWidth', '穿越道寬 Width', 2, 8, 0.1, '法規 2–8 m'), num('cwSetback', '距讓路線 Setback', 2, 15, 0.5, '≈ 讓路線標記約5.8m 深，建議≥6.5 m'));
+        f.push({ kind: 'law', text: '設置規則對圓環無專門附圖；環道尺寸為設計常用值 (≈)。讓路線依 §172。' });
+        if (!tool) f.push({ kind: 'info', text: '拖曳中心點移動、橘色點改半徑；入口讓路線與行人穿越道會跟著移動。若標線沒有跟著動，按「重新產生入口」。' },
+          { kind: 'btn', action: 'regen', label: '↻ 重新產生入口 Regenerate entries' });
+        return f;
+      }
       case 'yield': return [{ kind: 'num', key: 'lanes', label: '車道數 Lanes (三角形數)', min: 1, max: 6, step: 1 },
-        { kind: 'chk', key: 'triangles', label: '倒三角形 Triangles' },
+        { kind: 'chk', key: 'triangles', label: '倒三角形 Triangles' }].concat(el.arcC ? [{ kind: 'chk', key: 'curved', label: '沿圓環弧線 Follow roundabout curve' }] : []).concat([
         { kind: 'law', text: '§172 讓路線：白色雙虛線＋倒三角形 (寬1.2m 長3.0m 線寬15cm 頂部60cm)，三角形距虛線2.0–2.5m。虛線尺寸量自附圖 (≈)。' },
-        { kind: 'btn', action: 'realign', label: '對齊車道 Align to lanes' }, { kind: 'btn', action: 'flip', label: '反轉方向 Flip' }];
+        { kind: 'btn', action: 'realign', label: '對齊車道 Align to lanes' }, { kind: 'btn', action: 'flip', label: '反轉方向 Flip' }]);
       case 'junction': return [{ kind: 'info', text: '路口範圍：範圍內的車道線、路段標線會被中斷 (行人穿越道、箭頭等不受影響)。拖曳節點可調整範圍；此框只在編輯時顯示，不會匯出。' }];
       case 'symbol': return [{ kind: 'sel', key: 'kind', label: '圖示 Icon', options: [['scooter', '機車 0.9×2.5m (§174-1)'], ['scooterSmall', '機車 0.65×1.8m (§183-1)'], ['bike', '自行車 1.0×1.8m (§183-1)']] },
         { kind: 'chk', key: 'small', label: '縮小型 Reduced (×0.7, §183-1)' }, { kind: 'deg', key: 'dir', label: '方向 Angle' },

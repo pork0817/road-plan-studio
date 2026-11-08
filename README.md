@@ -23,6 +23,10 @@ Sidewalks always draw on top of markings, so a crosswalk that runs into a sidewa
 ## Roundabouts
 Draw road sections for the roads that meet, pick **圓環 (自動) Roundabout**, and click the centre (a preview follows the cursor). It draws the circulating roadway, a central island with a mountable apron, lane and edge lines, and for every road that reaches the circle: a §172 讓路線 (double dashed line with an inverted triangle per entry lane) and a crosswalk about one car length back. Lane lines and medians inside the circle are cut; medians are opened where crosswalks pass through them. Drag the centre to move it and the orange handle to change the radius; the yield lines and crosswalks follow (and follow edits to the roads), while keeping your own changes to them, such as a crosswalk's width or how far you moved it along its road. The circulating dimensions are typical design values, since the regulation has no roundabout figure.
 
+**Curved yield lines**: at roundabouts the 讓路線 follows the edge of the circle, with each triangle pointing at the centre. Turn it off for one roundabout (讓路線沿圓環弧線 in its panel) or for a single entry (沿圓環弧線 on that yield line).
+
+**Turbo roundabout (渦輪圓環)**: two circulating lanes separated by a spiral divider (raised kerb or §167 double white line), so drivers choose a lane before entering and never change lanes on the ring. The spiral is placed automatically so a new inner lane opens just before the busiest entry; adjust it with 螺旋方向 Spiral angle. Entries, yield lines and crosswalks work the same as the normal roundabout.
+
 The 讓路線 is also available on its own in ④ 路口 for T-junctions and minor-road entries.
 
 ## Linked pieces

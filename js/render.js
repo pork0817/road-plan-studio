@@ -372,6 +372,7 @@ window.Render = (function () {
   // R = outer edge of the circulating roadway; Ra = outer edge of the truck apron; Ri = raised central island
   R.rbRadii = (el) => { const Ri = Math.max(2, el.R - el.lanes * el.laneWidth - el.apron); return { Ro: el.R, Ri, Ra: Ri + el.apron }; };
   function drawRoundaboutLines(ctx, el, ppm, P) {
+    if (el.turbo) { drawTurboLines(ctx, el, ppm, P); return; }
     const { Ro, Ra } = R.rbRadii(el), c = el.p;
     ctx.save(); ctx.strokeStyle = P.colors.white; ctx.lineCap = 'butt';
     for (let k = 1; k < el.lanes; k++) { // circulating lane lines (§182 車道線 4 m / 6 m)
@@ -391,16 +392,115 @@ window.Render = (function () {
     ctx.restore();
   }
   function drawRoundaboutIsland(ctx, el, ppm, P) {
+    if (el.turbo) { drawTurboIsland(ctx, el, ppm, P); return; }
     const { Ri, Ra } = R.rbRadii(el);
     if (el.apron > 0) drawSidewalk(ctx, { pts: R.circlePts(el.p, Ra * ppm), style: 'concrete' }, ppm, P); // mountable truck apron
     drawSidewalk(ctx, { pts: R.circlePts(el.p, Ri * ppm), style: el.island || 'island' }, ppm, P);
+  }
+
+
+  // ---------- turbo roundabout ----------
+  // Two lanes separated by a spiral divider. Built from semicircles around two centres shifted ±Δ/2 along the
+  // turbo axis, so everything steps outward by Δ at the axis: the inner lane begins after each step and its
+  // traffic is carried to the outer lane — no lane changes on the ring (right-hand traffic, counter-clockwise).
+  R.turboGeom = (el, ppm) => {
+    const w = el.laneWidth, sep = el.divider === 'double' ? 0.3 : 0.45, D = w + sep;
+    const Rout = el.R - D / 2, Rdo = Rout - w, Rdi = Rdo - sep, R1 = Math.max(3, Rdi - w);
+    const al = el.turboAxis || 0, ax = G.fromAngle(al);
+    return { w, sep, D, Rout, Rdo, Rdi, R1, al, c1: G.add(el.p, G.mul(ax, (D / 2) * ppm)), c2: G.sub(el.p, G.mul(ax, (D / 2) * ppm)) };
+  };
+  const arcPts = (c, r, a0, a1, n = 48) => { const o = []; for (let i = 0; i <= n; i++) { const a = a0 + ((a1 - a0) * i) / n; o.push({ x: c.x + r * Math.cos(a), y: c.y + r * Math.sin(a) }); } return o; };
+  // spiral ring of radius r (m): semicircle [al, al+π] around c1 and [al+π, al+2π] around c2 (px)
+  const spiral = (g, r, ppm) => {
+    const c1 = { x: g.c1.x, y: g.c1.y }, c2 = { x: g.c2.x, y: g.c2.y };
+    return [arcPts(c1, r * ppm, g.al, g.al + Math.PI), arcPts(c2, r * ppm, g.al + Math.PI, g.al + 2 * Math.PI)];
+  };
+  // radius (px) along the ray at angle th from the centre to the outer boundary (union of the two discs)
+  R.turboEdgeAt = (el, g, th, rM, ppm) => {
+    const e = G.fromAngle(th); let best = 0;
+    for (const c of [g.c1, g.c2]) {
+      const s = G.sub(c, el.p), es = G.dot(e, s), q = (rM * ppm) ** 2 - G.dot(s, s) + es * es;
+      if (q >= 0) best = Math.max(best, es + Math.sqrt(q));
+    }
+    return best;
+  };
+  R.rbOutline = (el, ppm, extraM = 0) => {
+    if (!el.turbo) return R.circlePts(el.p, (el.R + extraM) * ppm);
+    const g = R.turboGeom(el, ppm), o = [];
+    for (let i = 0; i < 120; i++) { const th = (i / 120) * 2 * Math.PI, r = R.turboEdgeAt(el, g, th, g.Rout + extraM, ppm); o.push({ x: el.p.x + r * Math.cos(th), y: el.p.y + r * Math.sin(th) }); }
+    return o;
+  };
+  // outer edge line with gaps where legs join (angles around the centre)
+  function edgeWithGaps(ctx, el, ppm, radiusAt, legs) {
+    const inGap = (th) => (legs || []).some((g) => { const r = radiusAt(g.ang) / ppm; const h = Math.asin(Math.min(0.99, (g.w + 0.6) / Math.max(r, 1))); return Math.abs(Math.atan2(Math.sin(th - g.ang), Math.cos(th - g.ang))) < h; });
+    const N = 360; let open = false;
+    ctx.beginPath();
+    for (let i = 0; i <= N; i++) {
+      const th = (i / N) * 2 * Math.PI, r = radiusAt(th);
+      const q = { x: el.p.x + r * Math.cos(th), y: el.p.y + r * Math.sin(th) };
+      if (inGap(th)) { open = false; continue; }
+      if (open) ctx.lineTo(q.x, q.y); else { ctx.moveTo(q.x, q.y); open = true; }
+    }
+    ctx.stroke();
+  }
+  function drawTurboLines(ctx, el, ppm, P) {
+    const g = R.turboGeom(el, ppm);
+    ctx.save(); ctx.strokeStyle = P.colors.white; ctx.lineCap = 'butt'; ctx.setLineDash([]);
+    ctx.lineWidth = 0.15 * ppm;
+    for (const arc of spiral(g, g.R1 + 0.25, ppm)) { path(ctx, arc); ctx.stroke(); }       // edge line along the island
+    if (el.divider === 'double') {                                                         // 雙白實線 divider
+      ctx.lineWidth = 0.1 * ppm;
+      for (const r of [g.Rdi + 0.05, g.Rdo - 0.05]) for (const arc of spiral(g, r, ppm)) { path(ctx, arc); ctx.stroke(); }
+    }
+    ctx.lineWidth = 0.15 * ppm;
+    edgeWithGaps(ctx, el, ppm, (th) => R.turboEdgeAt(el, g, th, g.Rout - 0.3, ppm), el.legs);
+    ctx.restore();
+  }
+  function drawTurboIsland(ctx, el, ppm, P) {
+    const g = R.turboGeom(el, ppm);
+    const isl = spiral(g, g.R1, ppm);
+    drawSidewalk(ctx, { pts: isl[0].concat(isl[1]), style: el.island || 'island' }, ppm, P);
+    if (el.divider !== 'double') { // raised lane divider (mountable kerb strip)
+      const inn = spiral(g, g.Rdi, ppm), out = spiral(g, g.Rdo, ppm);
+      for (let k = 0; k < 2; k++) drawSidewalk(ctx, { pts: inn[k].concat(out[k].slice().reverse()), style: 'concrete' }, ppm, P);
+    }
   }
 
   // ---------- §172 讓路線 yield line ----------
   // Double white dashed line across the entry + an inverted triangle per lane (1.2 m × 3.0 m, 15 cm outline,
   // 60 cm solid top) whose top sits 2.0–2.5 m before the line. Dash size measured from the §172 figure (≈).
   R.YIELD_DEPTH = 0.54 + 2.25 + 3.0;
+  const YIELD_INS = 0.15 / Math.cos(Math.atan(0.6 / 3.0));
+  function yieldTriangle(ctx, Q) {
+    const hw = (q) => (0.6 * q) / 3.0, u1 = 3.0 - 0.6, u0 = (YIELD_INS * 3.0) / 0.6 + 0.1, ins = YIELD_INS;
+    const base = -(0.54 + 2.25), apex = base - 3.0;
+    ctx.beginPath();
+    [[base, -0.6], [base, 0.6], [apex, 0]].forEach(([sv, wv], i) => { const q = Q(sv, wv); i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y); });
+    ctx.closePath();
+    [[apex + u1, -(hw(u1) - ins)], [apex + u1, hw(u1) - ins], [apex + u0, 0]].forEach(([sv, wv], i) => { const q = Q(sv, wv); i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y); });
+    ctx.closePath(); ctx.fill('evenodd');
+  }
+  // Yield line that follows the roundabout's edge: arcs around arcC, triangles set radially per lane.
+  function drawYieldCurved(ctx, el, ppm, P) {
+    const C = el.arcC, r0 = el.arcR * ppm;
+    const a0 = Math.atan2(el.a.y - C.y, el.a.x - C.x), a1 = Math.atan2(el.b.y - C.y, el.b.x - C.x);
+    const d = Math.atan2(Math.sin(a1 - a0), Math.cos(a1 - a0));
+    ctx.save(); ctx.strokeStyle = ctx.fillStyle = P.colors.white; ctx.lineCap = 'butt';
+    ctx.lineWidth = 0.18 * ppm; ctx.setLineDash([0.36 * ppm, 0.24 * ppm]);
+    for (const off of [0.09, 0.45]) { ctx.beginPath(); ctx.arc(C.x, C.y, r0 + off * ppm, a0, a0 + d, d < 0); ctx.stroke(); }
+    ctx.setLineDash([]);
+    if (el.triangles) {
+      const n = Math.max(1, el.lanes | 0);
+      for (let k = 0; k < n; k++) {
+        const th = a0 + (d * (k + 0.5)) / n, e = G.fromAngle(th), t = G.mul(e, -1), u = G.rightN(t);
+        const cpt = G.add(C, G.mul(e, r0));
+        yieldTriangle(ctx, (sv, wv) => G.add(G.add(cpt, G.mul(t, sv * ppm)), G.mul(u, wv * ppm)));
+      }
+    }
+    ctx.restore();
+  }
   function drawYield(ctx, el, ppm, P) {
+    if (el.curved && el.arcC) { drawYieldCurved(ctx, el, ppm, P); return; }
     const u = G.norm(G.sub(el.b, el.a)), L = G.dist(el.a, el.b), t = G.fromAngle(el.dir);
     ctx.save(); ctx.strokeStyle = ctx.fillStyle = P.colors.white; ctx.lineCap = 'butt';
     ctx.lineWidth = 0.18 * ppm; ctx.setLineDash([0.36 * ppm, 0.24 * ppm]);
@@ -408,16 +508,9 @@ window.Render = (function () {
     ctx.setLineDash([]);
     if (el.triangles) {
       const n = Math.max(1, el.lanes | 0);
-      const ins = 0.15 / Math.cos(Math.atan(0.6 / 3.0)), hw = (q) => (0.6 * q) / 3.0, u1 = 3.0 - 0.6, u0 = (ins * 3.0) / 0.6 + 0.1;
       for (let k = 0; k < n; k++) {
         const cpt = G.add(el.a, G.mul(u, (L * (k + 0.5)) / n));
-        const Q = (sv, wv) => G.add(G.add(cpt, G.mul(t, sv * ppm)), G.mul(u, wv * ppm));
-        const base = -(0.54 + 2.25), apex = base - 3.0;
-        ctx.beginPath();
-        [[base, -0.6], [base, 0.6], [apex, 0]].forEach(([sv, wv], i) => { const q = Q(sv, wv); i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y); });
-        ctx.closePath();
-        [[apex + u1, -(hw(u1) - ins)], [apex + u1, hw(u1) - ins], [apex + u0, 0]].forEach(([sv, wv], i) => { const q = Q(sv, wv); i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y); });
-        ctx.closePath(); ctx.fill('evenodd');
+        yieldTriangle(ctx, (sv, wv) => G.add(G.add(cpt, G.mul(t, sv * ppm)), G.mul(u, wv * ppm)));
       }
     }
     ctx.restore();
@@ -438,7 +531,7 @@ window.Render = (function () {
     for (const el of els) {
       if (el.type === 'road' && el.pts.length >= 3) { ctx.fillStyle = tones[el.tone] || P.colors.asphalt; path(ctx, el.pts, true); ctx.fill(); }
       if (el.type === 'section' && el.pave) { const poly = R.sectionPoly(el, ppm); if (poly) { ctx.fillStyle = P.colors.asphalt; path(ctx, poly, true); ctx.fill(); } }
-      if (el.type === 'roundabout') { ctx.fillStyle = P.colors.asphalt; path(ctx, R.circlePts(el.p, el.R * ppm), true); ctx.fill(); }
+      if (el.type === 'roundabout') { ctx.fillStyle = P.colors.asphalt; path(ctx, R.rbOutline(el, ppm), true); ctx.fill(); }
     }
     ctx.restore();
 
@@ -448,8 +541,8 @@ window.Render = (function () {
       const polys = [];
       for (const el of els) {
         if (el.type === 'road' && el.pts.length >= 3) polys.push(el.pts);
-        if (el.type === 'section' && el.pave) { const p = R.sectionPoly(el, ppm); if (p) polys.push(p); }
-        if (el.type === 'roundabout') polys.push(R.circlePts(el.p, el.R * ppm));
+        if (el.type === 'section') { const p = R.sectionPoly(el, ppm); if (p) polys.push(p); } // a road section always counts as road surface
+        if (el.type === 'roundabout') polys.push(R.rbOutline(el, ppm));
       }
       if (polys.length) {
         ctx.beginPath();
@@ -474,7 +567,7 @@ window.Render = (function () {
     }
     // Layer 2: markings. Lane lines are interrupted inside intersection areas.
     const junctions = els.filter((e) => e.type === 'junction' && e.pts.length >= 3)
-      .concat(els.filter((e) => e.type === 'roundabout').map((e) => ({ pts: R.circlePts(e.p, (e.R + 1.2) * ppm, 72) })));
+      .concat(els.filter((e) => e.type === 'roundabout').map((e) => ({ pts: R.rbOutline(e, ppm, 1.2) })));
     const cutJunctions = () => {
       if (!junctions.length) return;
       ctx.beginPath(); ctx.rect(-1e6, -1e6, 2e6, 2e6);

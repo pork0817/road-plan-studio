@@ -273,7 +273,7 @@
         alignTwo(el, false); return el;
       }
       if (m === 'roundabout' && !S.drag) {
-        return { id: '_preview', type: 'roundabout', p: G.copy(w), R: S.params.R, lanes: S.params.lanes, laneWidth: S.params.laneWidth, apron: S.params.apron, island: S.params.island, legs: [] };
+        return { id: '_preview', type: 'roundabout', p: G.copy(w), R: S.params.R, lanes: S.params.turbo ? 2 : S.params.lanes, laneWidth: S.params.laneWidth, apron: S.params.turbo ? 0 : S.params.apron, island: S.params.island, turbo: !!S.params.turbo, divider: S.params.divider, turboAxis: 0, legs: [] };
       }
       if (m === 'point' && !S.drag) {
         const el = Object.assign({ id: '_preview' }, clone(S.params), { p: G.copy(w) });
@@ -462,6 +462,11 @@
         }
       } else if (m === 'roundabout') {
         const rb = buildRoundabout(w, S.params);
+        if (rb.turbo) {
+          // put the spiral step just upstream of the busiest entry, so its traffic can pick the new inner lane
+          const legs = rbLegs(rb).filter((l) => l.incoming).sort((p, q) => q.lanes - p.lanes);
+          if (legs.length) rb.turboAxis = G.angle(G.sub(legs[0].X, rb.p)) + (25 * Math.PI) / 180;
+        }
         S.els.push(rb); syncRoundabout(rb); S.sel = rb.id; commit(); setTool('select'); S.sel = rb.id; renderProps();
       } else if (m === 'junction') {
         const made = buildJunction(w, S.params);
@@ -489,7 +494,7 @@
           const nb = o.pts[h.i - 1] || o.pts[h.i + 1];
           el.pts[h.i] = snapW(w, nb, e, el.id);
         } else if (h.key === 'p') el.p = snapW(w, null, e, el.id);
-        else if (h.key === 'rad') el.R = G.clamp(Math.round((G.dist(w, el.p) / ppm()) * 2) / 2, 8, 60);
+        else if (h.key === 'rad') el.R = G.clamp(Math.round((G.dist(w, el.p) / ppm()) * 2) / 2, el.turbo ? 3 + 2 * el.laneWidth + 0.45 + (el.laneWidth + 0.45) / 2 : 8, 70);
         else if (h.key === 'a' || h.key === 'b') {
           // keep the crossing square to traffic: the dragged end slides along the line through the other end
           const other = h.key === 'a' ? o.b : o.a;
@@ -779,33 +784,47 @@
   // and how far a crosswalk was moved along its leg).
   const RB_YD = 0.6; // yield line distance outside the circle (m)
   function rbLegs(rb) {
-    const m = ppm(), Rpx = rb.R * m, C = rb.p, legs = [];
+    const m = ppm(), C = rb.p, legs = [];
+    // the outer edge: one circle, or for a turbo roundabout the union of its two offset circles
+    let circles;
+    if (rb.turbo) { const g = R.turboGeom(rb, m); circles = [{ c: g.c1, r: g.Rout * m, rM: g.Rout }, { c: g.c2, r: g.Rout * m, rM: g.Rout }]; }
+    else circles = [{ c: C, r: rb.R * m, rM: rb.R }];
     for (const el of S.els) {
       if (el.type !== 'section') continue;
       const pts = R.basePts(el, m), L = R.sectionLayout(el);
-      let k = 0;
+      const hits = [];
       for (let i = 0; i < pts.length - 1; i++) {
-        const a = pts[i], d = G.sub(pts[i + 1], a), f = G.sub(a, C);
-        const A = G.dot(d, d), B = 2 * G.dot(f, d), Cc = G.dot(f, f) - Rpx * Rpx, disc = B * B - 4 * A * Cc;
-        if (A === 0 || disc < 0) continue;
-        for (const root of [-1, 1]) {
-          const sp = (-B + root * Math.sqrt(disc)) / (2 * A);
-          if (sp < 0 || sp > 1) continue;
-          const X = G.add(a, G.mul(d, sp)), t = G.norm(d);
-          const sgn = G.dot(t, G.sub(X, C)) > 0 ? 1 : -1;
-          const v = G.mul(t, sgn), nv = G.rightN(v);
-          const rightExt = sgn > 0 ? L.right : L.left, leftExt = sgn > 0 ? L.left : L.right;
-          const oneWay = el.lanesB === 0, median = !oneWay && el.centerType === 'median';
-          legs.push({ key: el.id + ':' + (k++), el, X, v, nv, sgn, rightExt, leftExt, oneWay, median,
-            incoming: oneWay ? sgn < 0 : true,
-            inner: oneWay ? rightExt - 0.3 : -(median ? el.medianWidth / 2 + 0.3 : 0.15),
-            lanes: Math.max(1, oneWay ? el.lanesF : (sgn > 0 ? el.lanesB : el.lanesF)) });
+        const a = pts[i], d = G.sub(pts[i + 1], a), A = G.dot(d, d);
+        if (A === 0) continue;
+        for (const cc of circles) {
+          const f = G.sub(a, cc.c), B = 2 * G.dot(f, d), Cc = G.dot(f, f) - cc.r * cc.r, disc = B * B - 4 * A * Cc;
+          if (disc < 0) continue;
+          for (const root of [-1, 1]) {
+            const sp = (-B + root * Math.sqrt(disc)) / (2 * A);
+            if (sp < 0 || sp > 1) continue;
+            const X = G.add(a, G.mul(d, sp));
+            if (circles.some((o) => o !== cc && G.dist(X, o.c) < o.r - 0.5)) continue; // inside the other disc: not on the edge
+            hits.push({ pos: i + sp, X, t: G.norm(d), cc });
+          }
         }
       }
+      hits.sort((p, q) => p.pos - q.pos);
+      hits.forEach((h, k) => {
+        const { X, t, cc } = h;
+        const sgn = G.dot(t, G.sub(X, C)) > 0 ? 1 : -1;
+        const v = G.mul(t, sgn), nv = G.rightN(v);
+        const rightExt = sgn > 0 ? L.right : L.left, leftExt = sgn > 0 ? L.left : L.right;
+        const oneWay = el.lanesB === 0, median = !oneWay && el.centerType === 'median';
+        legs.push({ key: el.id + ':' + k, el, X, v, nv, sgn, rightExt, leftExt, oneWay, median, bc: G.copy(cc.c), br: cc.rM,
+          incoming: oneWay ? sgn < 0 : true,
+          inner: oneWay ? rightExt - 0.3 : -(median ? el.medianWidth / 2 + 0.3 : 0.15),
+          lanes: Math.max(1, oneWay ? el.lanesF : (sgn > 0 ? el.lanesB : el.lanesF)) });
+      });
     }
     return legs;
   }
   function syncRoundabout(rb) {
+    if (rb.curvedYield === undefined) rb.curvedYield = true;
     const m = ppm(), legs = rbLegs(rb);
     rb.legs = legs.map((lg) => ({ ang: G.angle(G.sub(lg.X, rb.p)), w: Math.max(lg.rightExt, lg.leftExt) }));
     if (rb.yields === undefined) adoptLegacy(rb, legs); // roundabouts made before pieces were linked
@@ -822,11 +841,15 @@
         let y = kids.find((k) => k.type === 'yield' && k.legKey === lg.key);
         if (!y) { y = { id: newId(), type: 'yield', owner: rb.id, legKey: lg.key, triangles: true, lanes: lg.lanes }; S.els.push(y); }
         y.a = at(RB_YD, lg.inner); y.b = at(RB_YD, -lg.leftExt + 0.3); y.dir = G.angle(G.mul(lg.v, -1));
+        // follow the roundabout's edge (arc around the edge circle at this entry); toggle on the roundabout or per yield
+        y.arcC = G.copy(lg.bc); y.arcR = lg.br + RB_YD;
+        const cv = rb.curvedYield !== false;
+        if (y.curvedFrom !== cv) { y.curved = cv; y.curvedFrom = cv; }
         keep.add(y.id);
       }
       if (rb.crosswalks && !removed.includes('crosswalk:' + lg.key)) {
         let c = kids.find((k) => k.type === 'crosswalk' && k.legKey === lg.key);
-        if (!c) { c = { id: newId(), type: 'crosswalk', owner: rb.id, legKey: lg.key, kind: rb.cwKind || 'ties', width: rb.cwWidth || 4, gap: 0.4, green: false, setback: rb.cwSetback != null ? rb.cwSetback : 5 }; S.els.push(c); }
+        if (!c) { c = { id: newId(), type: 'crosswalk', owner: rb.id, legKey: lg.key, kind: rb.cwKind || 'ties', width: rb.cwWidth || 4, gap: 0.4, green: false, setback: rb.cwSetback != null ? rb.cwSetback : 6.5 }; S.els.push(c); }
         const dc = RB_YD + 0.54 + c.setback + c.width / 2;
         c.a = at(dc, -lg.leftExt + 0.05); c.b = at(dc, lg.rightExt - 0.05); c.dir = G.angle(lg.v);
         c.anchor = { X: G.copy(lg.X), v: G.copy(lg.v), w: c.width };
@@ -854,7 +877,7 @@
     }
   }
   function adoptLegacy(rb, legs) {
-    rb.yields = true; rb.crosswalks = true; rb.cwKind = rb.cwKind || 'ties'; rb.cwWidth = rb.cwWidth || 4; rb.cwSetback = rb.cwSetback != null ? rb.cwSetback : 5; rb.removed = rb.removed || [];
+    rb.yields = true; rb.crosswalks = true; rb.cwKind = rb.cwKind || 'ties'; rb.cwWidth = rb.cwWidth || 4; rb.cwSetback = rb.cwSetback != null ? rb.cwSetback : 6.5; rb.removed = rb.removed || [];
     // the old version cut medians with small 4-point areas; medians are now opened live under crosswalks
     const lim = (rb.R + 30) * ppm();
     S.els = S.els.filter((e) => !(e.type === 'junction' && !e.owner && e.pts.length === 4 && e.pts.every((q) => G.dist(q, rb.p) < lim)));
@@ -871,7 +894,8 @@
   }
   const syncAll = () => { for (const e of S.els.slice()) if (e.type === 'roundabout') syncRoundabout(e); };
   function buildRoundabout(C, prm) {
-    return { id: newId(), type: 'roundabout', p: G.copy(C), R: prm.R, lanes: prm.lanes, laneWidth: prm.laneWidth, apron: prm.apron,
+    return { id: newId(), type: 'roundabout', p: G.copy(C), R: prm.R, lanes: prm.turbo ? 2 : prm.lanes, laneWidth: prm.laneWidth, apron: prm.turbo ? 0 : prm.apron,
+      turbo: !!prm.turbo, divider: prm.divider || 'raised', turboAxis: prm.turboAxis || 0, curvedYield: prm.curvedYield !== false,
       island: prm.island || 'island', legs: [], yields: prm.yields, crosswalks: prm.crosswalks, cwKind: prm.cwKind, cwWidth: prm.cwWidth, cwSetback: prm.cwSetback, removed: [] };
   }
 
