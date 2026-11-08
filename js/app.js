@@ -1154,6 +1154,7 @@
     const m = ppm(), legs = rbLegs(rb);
     rb.legs = legs.map((lg) => ({ ang: G.angle(G.sub(lg.X, rb.p)), w: Math.max(lg.rightExt, lg.leftExt) }));
     legs.forEach((lg, i) => { lg.li = i; });
+    rb.legSecIds = [...new Set(legs.map((lg) => lg.el.id))]; // roads joining the ring: their outline is part of the kerb
     rbCorners(rb, legs);
     rbCurves(rb, legs);
     if (rb.yields === undefined) adoptLegacy(rb, legs); // roundabouts made before pieces were linked

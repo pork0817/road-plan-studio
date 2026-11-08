@@ -29,6 +29,8 @@ Draw road sections for the roads that meet, pick **圓環 (自動) Roundabout**,
 
 The 讓路線 is also available on its own in ④ 路口 for T-junctions and minor-road entries.
 
+**Kerb lines**: around a roundabout the edge line is traced once along the outline of the whole paved area (ring + curved corners + joining roads), 0.225 m inside it, so it stays a single continuous line however the roads meet the ring.
+
 ## Linked pieces
 Crosswalks, stop lines and yield lines made by the intersection or roundabout tools belong to it: deleting the intersection/roundabout deletes them too (⌘Z brings everything back). Select one and click **解除連動 Detach** to make it independent. A deleted roundabout piece is not re-created. Lane and edge lines are never drawn through a crosswalk, and medians are opened automatically wherever any crosswalk crosses them, so the opening follows the crosswalk's width and position.
 

@@ -391,9 +391,7 @@ window.Render = (function () {
     }
     ctx.setLineDash([]); ctx.lineWidth = 0.15 * ppm; // §183 路面邊線 15 cm
     ctx.beginPath(); ctx.arc(c.x, c.y, (Ra + 0.25) * ppm, 0, 2 * Math.PI); ctx.stroke();
-    const rr = Ro - 0.225;
-    edgeWithGaps(ctx, el, ppm, () => rr * ppm, el.legs, openMouth(el, ppm));
-    ctx.restore();
+    ctx.restore(); // outer edge: drawRoundaboutKerbs
   }
   function drawRoundaboutIsland(ctx, el, ppm, P) {
     if (el.turbo) { drawTurboIsland(ctx, el, ppm, P); return; }
@@ -475,9 +473,7 @@ window.Render = (function () {
       ctx.lineWidth = 0.1 * ppm;
       for (const [d0, d1] of dividerRanges(g)) for (const r of [g.Rdi + 0.05, g.Rdo - 0.05]) { path(ctx, ringPts(el, g, r, ppm, d0, d1)); ctx.stroke(); }
     }
-    ctx.lineWidth = 0.15 * ppm;
-    edgeWithGaps(ctx, el, ppm, (th) => R.turboR(g, g.Rout - 0.225, th) * ppm, el.legs, openMouth(el, ppm));
-    ctx.restore();
+    ctx.restore(); // outer edge: drawRoundaboutKerbs
   }
   function drawTurboIsland(ctx, el, ppm, P) {
     const g = R.turboGeom(el);
@@ -514,6 +510,69 @@ window.Render = (function () {
       }
       if (pts.length > 1) { path(ctx, pts); ctx.stroke(); }
     });
+    ctx.restore();
+  }
+
+
+  // ---------- roundabout kerb (edge) lines from the real outline ----------
+  // The paved area around a roundabout is the union of the ring, the curved corners and the roads that join
+  // it. Its edge line is drawn ONCE, 0.225 m inside the boundary of that union: boundary pieces that lie
+  // inside another piece (road mouths, shared edges) are skipped, so lines can never overlap, gap or step.
+  // Outside the zone near the ring, each road keeps drawing its own edge line at the same position.
+  function drawRoundaboutKerbs(ctx, el, ppm, P) {
+    const els = R._els || [];
+    const polys = [R.rbOutline(el, ppm)].concat(R.cornerPaving(el, ppm));
+    for (const id of el.legSecIds || []) { const sec = els.find((e) => e.id === id); const sp = sec && R.sectionPoly(sec, ppm); if (sp) polys.push(sp); }
+    const C = el.p;
+    let zone = el.R + 2;
+    for (const k of el.corners || []) zone = Math.max(zone, G.dist(k.T1, C) / ppm + 1.5);
+    const zonePx = zone * ppm, inset = 0.225 * ppm, eps = 0.06 * ppm, step = 0.2 * ppm;
+    ctx.save(); ctx.strokeStyle = P.colors.white; ctx.lineWidth = 0.15 * ppm; ctx.setLineDash([]); ctx.lineCap = 'butt'; ctx.lineJoin = 'round';
+    const runs = [];
+    polys.forEach((poly, pi) => {
+      if (!poly || poly.length < 3) return;
+      const ccw = G.area(poly) > 0;
+      let run = [];
+      const flush = () => { if (run.length > 1) { path(ctx, run); ctx.stroke(); runs.push(run); } run = []; };
+      for (let i = 0; i < poly.length; i++) {
+        const a = poly[i], b = poly[(i + 1) % poly.length], len = G.dist(a, b);
+        if (len < 1e-6) continue;
+        const t = G.mul(G.sub(b, a), 1 / len);
+        const nIn = ccw ? G.rightN(t) : G.leftN(t); // inward normal (screen coords, y down)
+        const keep = (u) => { // is the boundary point at distance u along this edge part of the outer kerb?
+          const q = G.add(a, G.mul(t, u));
+          if (G.dist(q, C) > zonePx) return false;
+          const out = G.sub(q, G.mul(nIn, eps));
+          return !polys.some((o, oi) => oi !== pi && o && G.pointInPoly(out, o));
+        };
+        const ptAt = (u) => G.add(G.add(a, G.mul(t, u)), G.mul(nIn, inset));
+        const n = Math.max(1, Math.ceil(len / step));
+        let prevU = 0, prevK = keep(0);
+        if (prevK) run.push(ptAt(0));
+        for (let j = 1; j <= n; j++) {
+          const u = (len * j) / n, k = keep(u);
+          if (k !== prevK) { // find the exact switch point so neighbouring pieces meet without a notch
+            let lo = prevU, hi = u;
+            for (let r = 0; r < 18; r++) { const md = (lo + hi) / 2; if (keep(md) === prevK) lo = md; else hi = md; }
+            const sw = (lo + hi) / 2;
+            if (prevK) { run.push(ptAt(sw)); flush(); } else { run.push(ptAt(sw)); }
+          }
+          if (k) run.push(ptAt(u));
+          prevU = u; prevK = k;
+        }
+        if (!prevK) flush();
+      }
+      flush();
+      flush();
+    });
+    // where two outline pieces meet at an angle, their inset lines end a little apart: join those ends
+    const ends = runs.flatMap((r, ri) => [{ p: r[0], ri }, { p: r[r.length - 1], ri }]);
+    ctx.lineCap = 'round';
+    for (let i = 0; i < ends.length; i++) for (let j = i + 1; j < ends.length; j++) {
+      if (ends[i].ri === ends[j].ri) continue;
+      const d = G.dist(ends[i].p, ends[j].p);
+      if (d > 1e-3 && d < 0.8 * ppm) { path(ctx, [ends[i].p, ends[j].p]); ctx.stroke(); }
+    }
     ctx.restore();
   }
 
@@ -591,6 +650,7 @@ window.Render = (function () {
   const MARK = new Set(['roundabout', 'yield', 'symbol', 'line', 'section', 'crosswalk', 'stopline', 'scooterbox', 'arrow', 'text', 'chevron', 'yellowbox']);
 
   R.drawScene = function (ctx, o) {
+    R._els = o.preview ? o.els.concat([o.preview]) : o.els;
     const clipOutside = (pts) => {
       if (!pts || pts.length < 3) return;
       ctx.beginPath(); ctx.rect(-1e6, -1e6, 2e6, 2e6);
@@ -692,7 +752,7 @@ window.Render = (function () {
         case 'scooterbox': drawScooterBox(ctx, el, ppm, P); break;
         case 'arrow': drawArrow(ctx, el, ppm, P); break;
         case 'symbol': drawIcon(ctx, el, ppm, P); break;
-        case 'roundabout': drawRoundaboutLines(ctx, el, ppm, P); drawCornerLines(ctx, el, ppm, P); for (const c of el.curves || []) R.drawStyled(ctx, c.pts, c.style, ppm, c.dashOffset); break;
+        case 'roundabout': drawRoundaboutLines(ctx, el, ppm, P); drawRoundaboutKerbs(ctx, el, ppm, P); for (const c of el.curves || []) R.drawStyled(ctx, c.pts, c.style, ppm, c.dashOffset); break;
         case 'yield': drawYield(ctx, el, ppm, P); break;
         case 'text': drawText(ctx, P, el.p, el.dir, el.text, el.charLen * ppm, el.charWid * ppm, colorOf(P, el.color), el.order, charGap(el) * ppm); break;
         // §171 槽化線 border 15 / stripe 20 / gap 30 cm; §173 網狀線 border 20 / lines 10 cm, spacing user (1–5 m)
