@@ -935,7 +935,7 @@ window.Render = (function () {
 
     // Layer 3: sidewalks & medians always on top (crosswalks run "under" them)
     // medians end flush with a roundabout's yield line (0.6 m outside the ring), not behind it
-    const medianCuts = els.filter((e) => e.type === 'junction' && e.pts.length >= 3).map((e) => e.pts)
+    const medianCuts = els.filter((e) => (e.type === 'junction' || e.type === 'mediancut') && e.pts.length >= 3).map((e) => e.pts)
       .concat(els.filter((e) => e.type === 'roundabout').map((e) => R.rbOutline(e, ppm, 0.6)))
       .concat(els.filter((e) => e.type === 'roundabout').flatMap((e) => e.splits || [])); // splitter replaces the median there
     const crossCuts = els.filter((e) => e.type === 'crosswalk' && e.a && e.b && e.dir != null)

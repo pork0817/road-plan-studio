@@ -53,7 +53,7 @@ window.RoadPresets = window.RoadPresets || {};
   };
 
   const sec = (label, en, o) => ({ id: 'sec_' + label, label, en, mode: 'polyline', icon: { glyph: '═' },
-    defaults: Object.assign({ type: 'section', lanesF: 1, lanesB: 1, laneWidth: 3.25, centerType: 'centerDouble', medianWidth: 2, slowLane: 0, bikeLane: 0, edge: true, pave: false, smooth: true, autoArrows: true, autoBox: true, boxDepth: 3, solidLen: 30, laneUse: '', leftGuide: false }, o) });
+    defaults: Object.assign({ type: 'section', lanesF: 1, lanesB: 1, laneWidth: 3.25, centerType: 'centerDouble', medianWidth: 2, slowLane: 0, bikeLane: 0, edge: true, pave: false, smooth: true, autoArrows: true, autoBox: true, boxDepth: 3, solidLen: 30, laneUse: '', leftGuide: false, leftTurn: 'shared', pocketLen: 30, pocketTaper: 20 }, o) });
   const arrow = (k, g) => ({ id: 'arrow_' + k, label: arrowKinds.find((a) => a[0] === k)[1].split(' ')[0], en: '指向線', mode: 'point', icon: { glyph: g }, defaults: { type: 'arrow', kind: k, length: 5, dir: -Math.PI / 2 } });
   const text = (t, o) => ({ id: 'text_' + t, label: t, en: (o && o.en) || '路面文字', mode: 'point', icon: { glyph: t.slice(0, 2) }, defaults: Object.assign({ type: 'text', text: t, charLen: 2.5, charWid: 1.0, charGap: 1.0, color: 'white', order: 'far', dir: -Math.PI / 2 }, o, { en: undefined }) });
   const icon = (k, label, en, o) => ({ id: 'icon_' + k + (o && o.small ? '_s' : ''), label, en, mode: 'point', icon: { glyph: k === 'bike' ? '🚲' : '🛵' }, defaults: Object.assign({ type: 'symbol', kind: k, small: false, dir: -Math.PI / 2 }, o) });
@@ -132,6 +132,9 @@ window.RoadPresets = window.RoadPresets || {};
           { kind: 'txt', key: 'laneUse', label: '車道用途 Lane use (由左至右 L,S,R,SL,SR…；空白=自動)' },
           { kind: 'chk', key: 'autoBox', label: '機慢車停等區 Scooter box (§174-2)' }, num('boxDepth', '停等區縱深 Box depth', 2.5, 6, 0.1, '法規 2.5–6 m'),
           num('solidLen', '近路口實線 Solid lane lines before stop line', 0, 60, 1, '≈ 禁止變換車道線，0 = 不設'),
+          { kind: 'sel', key: 'leftTurn', label: '左轉設計 Left-turn design', options: [['shared', '共用車道 Shared (直左)'], ['dedicated', '左轉專用車道 Dedicated lane'], ['pocket', '左轉附加車道 Pocket from median'], ['twoStage', '機慢車兩段式左轉 Two-stage (待轉區)'], ['banned', '禁止左轉 No left turn']] },
+          ...(el.leftTurn === 'pocket' ? [num('pocketLen', '附加車道長 Pocket length', 10, 120, 1, '≈ 依左轉需求，常用 30 m'), num('pocketTaper', '漸變段長 Taper length', 5, 80, 1, '≈'),
+            { kind: 'info', text: el.centerType === 'median' ? '從中央分隔島切出一條左轉車道 (寬 ≤ 分隔島寬 − 0.5 m，需 ≥ 1.5 m)。' : '附加車道需要中央分隔島 (中央 Centre → 中央分隔島)。' }] : []),
           { kind: 'chk', key: 'leftGuide', label: '左轉導引線 Left-turn guide lines' },
           { kind: 'info', text: '台灣靠右行駛：畫線方向的右側為順向車道。Right-hand traffic: lanes on the right of your drawing direction flow forward.' });
         return f;

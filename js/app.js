@@ -1302,7 +1302,7 @@
   }
   // An intersection keeps the click and settings it was made with; whenever one of the roads it is built from
   // changes (shape, lanes, lane use, arrow / box / guide options …) its markings are rebuilt straight away.
-  const SEC_KEYS = ['pts', 'smooth', 'lanesF', 'lanesB', 'laneWidth', 'centerType', 'medianWidth', 'slowLane', 'bikeLane', 'edge', 'autoArrows', 'autoBox', 'boxDepth', 'solidLen', 'laneUse', 'leftGuide'];
+  const SEC_KEYS = ['pts', 'smooth', 'lanesF', 'lanesB', 'laneWidth', 'centerType', 'medianWidth', 'slowLane', 'bikeLane', 'edge', 'autoArrows', 'autoBox', 'boxDepth', 'solidLen', 'laneUse', 'leftGuide', 'leftTurn', 'pocketLen', 'pocketTaper'];
   function junctionSig(j) {
     const m = ppm(), near = (40 + 60) * m;
     const secs = S.els.filter((e) => e.type === 'section' && e.pts.some((p, i) => {
@@ -1441,7 +1441,11 @@
       const incoming = oneWay ? lg.sgn < 0 : true;
       // stop line across every entering lane, 2–3 m before the crosswalk (§170)
       const ds = cwOut + (prm.crosswalks ? prm.stopGap * m : 0) + (stopW * m) / 2;
-      const inner = oneWay ? lg.rightExt - 0.3 : -((el.centerType === 'median' ? el.medianWidth / 2 + 0.2 : 0.15));
+      // 左轉附加車道 (pocket): an extra left-turn lane carved out of the median next to the incoming lanes
+      const mhalf = el.centerType === 'median' && el.lanesB > 0 ? el.medianWidth / 2 : 0;
+      const pocketW = el.leftTurn === 'pocket' && mhalf > 0 ? Math.min(el.laneWidth, 2 * mhalf - 0.5) : 0;
+      lg.pocketW = pocketW > 1.5 ? pocketW : 0;
+      const inner = oneWay ? lg.rightExt - 0.3 : lg.pocketW ? -(mhalf - lg.pocketW) - 0.2 : -((el.centerType === 'median' ? el.medianWidth / 2 + 0.2 : 0.15));
       if (prm.stops && incoming) {
         out.push({ id: newId(), owner: jid, type: 'stopline', width: stopW, a: legPt(lg, ds, inner), b: legPt(lg, ds, -lg.leftExt + 0.3), dir: G.angle(G.mul(onLeg(lg, ds, 0).t, -1)) });
       }
@@ -1483,8 +1487,12 @@
       // what each lane is for, from the driver's left: the road's 車道用途 setting (e.g. "L,L,S,S,R"), else automatic
       const KINDS = new Set(['L', 'S', 'R', 'SL', 'SR', 'LR', 'SLR', 'U']);
       const given = String(el.laneUse || '').toUpperCase().split(/[\s,，、]+/).filter((x) => KINDS.has(x));
+      const design = el.leftTurn || 'shared';
       const autoPick = (k) => {
-          const L = !!t.L, Sx = !!t.S, Rx = !!t.R;
+          const Rx = !!t.R, Sx = !!t.S;
+          // the left turn is made from the pocket, the two-stage box, or not at all → not from these lanes
+          const L = !!t.L && !lg.pocketW && design !== 'twoStage' && design !== 'banned';
+          if (design === 'dedicated' && L && n >= 2 && k === 0) return 'L';
           const combo = (l, s, r) => (l && s && r ? 'SLR' : l && s ? 'SL' : s && r ? 'SR' : l && r ? 'LR' : l ? 'L' : r ? 'R' : 'S');
           if (n === 1) return combo(L, Sx, Rx);
           if (k === 0) return L ? (n >= 3 && Sx ? 'L' : combo(true, Sx, false)) : combo(false, Sx, !Sx && Rx);
@@ -1529,7 +1537,38 @@
         for (let k = 0; k < n; k++) put(k, tip2);
       }
       // 左轉導引線: from the left-turn lane at the stop line, through the junction, into the road on the left
-      if (el.leftGuide && t.L && !lg.entry.oneWay) {
+      // ---- 左轉附加車道: median cut with a taper, solid line beside it, new median edge line, 左轉 arrows ----
+      if (lg.pocketW && t.L) {
+        const pw = lg.pocketW, mh = el.medianWidth / 2, pIn = -(mh - pw);
+        const sP = stopRear + G.clamp(el.pocketLen || 30, 10, 120) * m, sT = sP + G.clamp(el.pocketTaper || 20, 5, 80) * m;
+        const offAt = (sv) => (sv <= sP ? pIn : pIn + (-mh - pIn) * Math.min(1, (sv - sP) / (sT - sP))); // pocket's inner boundary
+        const N = Math.max(8, Math.ceil((sT - 0) / m));
+        const inner = [], edge = [];
+        for (let i = 0; i <= N; i++) { const sv = (sT * i) / N; inner.push(legPt(lg, sv, offAt(sv))); if (sv >= stopRear) edge.push(legPt(lg, sv, offAt(sv) - 0.2)); }
+        out.push({ id: newId(), owner: jid, type: 'mediancut', pts: legLine(lg, 0, sT, -mh - 0.15).concat(inner.reverse()) });
+        // the road's own inner edge line gives way along the pocket and taper; redraw the edges
+        out.push({ id: newId(), owner: jid, type: 'lanemask', pts: legLine(lg, stopRear - 0.1 * m, sT, -(mh + 0.45)).concat(legLine(lg, stopRear - 0.1 * m, sT, -(mh - 0.05)).reverse()) });
+        if (edge.length > 1) out.push({ id: newId(), owner: jid, type: 'line', style: 'edge', smooth: false, jline: true, pts: edge });
+        out.push({ id: newId(), owner: jid, type: 'line', style: 'laneSolid', smooth: false, jline: true, pts: legLine(lg, stopRear, sP, -(mh + 0.15)) });
+        if (el.autoArrows !== false) {
+          const cOff = (pIn - 0.2 + -(mh + 0.15)) / 2;
+          for (const tip of [stopRear + 1 * m, Math.min(sP - 5 * m, stopRear + 20 * m)]) {
+            if (tip > stopRear) out.push({ id: newId(), owner: jid, type: 'arrow', kind: 'L', length: 5, p: atL(lg, tip + 2.5 * m, cOff), dir: dirAt(tip + 2.5 * m) });
+          }
+        }
+      }
+      // ---- 機慢車兩段式左轉: 待轉區 at the far-right corner, in front of the crosswalk of the road on the right ----
+      if (design === 'twoStage' && t.L && t.R) {
+        const Rg = t.R.o, elR = Rg.rd.el, lwR = elR.laneWidth;
+        const nR = elR.lanesB === 0 ? (Rg.sgn < 0 ? elR.lanesF : 0) : (Rg.sgn > 0 ? elR.lanesB : elR.lanesF);
+        if (nR > 0 && Rg.cwIn) {
+          const startR = elR.lanesB === 0 ? 0 : (elR.centerType === 'median' ? elR.medianWidth / 2 + 0.3 : 0);
+          const o0 = -(startR + (nR - 1) * lwR) - 0.2, o1 = -(startR + nR * lwR) + 0.2, sBack = Rg.cwIn - 0.6 * m;
+          out.push({ id: newId(), owner: jid, type: 'scooterbox', depth: 2.5, side: '0.15', icon: false, text: '待轉',
+            a: legPt(Rg, sBack, o0), b: legPt(Rg, sBack, o1), dir: G.angle(G.mul(onLeg(Rg, sBack, 0).t, -1)) });
+        }
+      }
+      if (el.leftGuide && t.L && !lg.entry.oneWay && design !== 'banned' && design !== 'twoStage') {
         const T = t.L.o, elT = T.rd.el, lwT = elT.laneWidth;
         const startT = elT.lanesB === 0 ? -(T.leftExt - 0.3) : (elT.centerType === 'median' ? elT.medianWidth / 2 + 0.3 : 0);
         const sIn = lg.entry.ds - (stopW * m) / 2, sOut = T.cwIn;
@@ -1749,9 +1788,9 @@
     box.appendChild(sc);
 
     // layers
-    const lh = document.createElement('h5'); lh.textContent = `圖層 Layers (${S.els.filter((e) => e.type !== 'lanemask').length})`; box.appendChild(lh);
+    const lh = document.createElement('h5'); lh.textContent = `圖層 Layers (${S.els.filter((e) => e.type !== 'lanemask' && e.type !== 'mediancut').length})`; box.appendChild(lh);
     const ul = document.createElement('ul'); ul.className = 'layers';
-    S.els.slice().reverse().filter((e) => e.type !== 'lanemask').forEach((e) => { // internal cut-outs aren't layers
+    S.els.slice().reverse().filter((e) => e.type !== 'lanemask' && e.type !== 'mediancut').forEach((e) => { // internal cut-outs aren't layers
       const li = document.createElement('li'); if (e.id === S.sel) li.className = 'sel';
       const sp = document.createElement('span');
       let extra = '';
