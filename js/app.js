@@ -233,6 +233,7 @@
     if (item) { S.tool = 'item'; S.item = item; S.params = clone(item.defaults); S.sel = null; }
     else { S.tool = id; S.item = null; S.params = null; }
     document.querySelectorAll('.tool').forEach((b) => b.classList.toggle('active', b.dataset.id === id));
+    const act = document.querySelector('.tool.active'); if (act) act.closest('.group')?.classList.remove('collapsed');
     stage.style.cursor = S.tool === 'pan' ? 'grab' : S.tool === 'select' ? 'default' : 'crosshair';
     renderProps(); updateHint(); redraw();
   }
@@ -1610,18 +1611,49 @@
       b.onclick = () => setTool(id);
       return b;
     };
-    const g0 = document.createElement('div'); g0.className = 'group';
-    g0.innerHTML = '<h4>工具 Tools</h4>';
+    // collapsible groups (remembered), an expand/collapse-all toggle, and a button that hides the whole panel
+    const store = (k, v) => { try { if (v === undefined) return JSON.parse(localStorage.getItem(k) || 'null'); localStorage.setItem(k, JSON.stringify(v)); } catch (e) { return null; } return null; };
+    const openState = store('roadplan:libOpen') || { tools: true, g0: true };
+    const bar = document.createElement('div'); bar.className = 'libbar';
+    const allBtn = document.createElement('button'); allBtn.className = 'libbtn';
+    const hideBtn = document.createElement('button'); hideBtn.className = 'libbtn'; hideBtn.textContent = '◀'; hideBtn.title = '隱藏工具列 Hide panel';
+    bar.append(allBtn, hideBtn); lib.appendChild(bar);
+    const groups = [];
+    const mkGroup = (key, title, tools) => {
+      const g = document.createElement('div'); g.className = 'group';
+      const h = document.createElement('h4'); h.className = 'grouphead'; h.textContent = title;
+      const setOpen = (o) => { g.classList.toggle('collapsed', !o); openState[key] = o; };
+      setOpen(!!openState[key]);
+      h.onclick = () => { setOpen(g.classList.contains('collapsed')); store('roadplan:libOpen', openState); syncAll2(); };
+      g.append(h, tools); lib.appendChild(g); groups.push({ g, setOpen });
+    };
     const t0 = document.createElement('div'); t0.className = 'tools basic';
     BASIC.forEach((t) => t0.appendChild(mk(t.id, t.label, t.en, { glyph: t.glyph })));
-    g0.appendChild(t0); lib.appendChild(g0);
-    for (const grp of P().library) {
-      const g = document.createElement('div'); g.className = 'group';
-      const h = document.createElement('h4'); h.textContent = grp.title; g.appendChild(h);
+    mkGroup('tools', '工具 Tools', t0);
+    P().library.forEach((grp, gi) => {
       const t = document.createElement('div'); t.className = 'tools';
       grp.items.forEach((it) => t.appendChild(mk(it.id, it.label, it.en, it.icon)));
-      g.appendChild(t); lib.appendChild(g);
+      mkGroup('g' + gi, grp.title, t);
+    });
+    const syncAll2 = () => {
+      const anyClosed = groups.some((x) => x.g.classList.contains('collapsed'));
+      allBtn.textContent = anyClosed ? '⇣ 全部展開 Expand all' : '⇡ 全部收合 Collapse all';
+    };
+    allBtn.onclick = () => {
+      const open = groups.some((x) => x.g.classList.contains('collapsed'));
+      groups.forEach((x) => x.setOpen(open)); store('roadplan:libOpen', openState); syncAll2();
+    };
+    const setHidden = (hd) => { document.body.classList.toggle('lib-hidden', hd); store('roadplan:libHidden', hd); setTimeout(redraw, 0); };
+    hideBtn.onclick = () => setHidden(true);
+    let show = document.getElementById('libShow');
+    if (!show) {
+      show = document.createElement('button'); show.id = 'libShow'; show.textContent = '▶'; show.title = '顯示工具列 Show panel';
+      show.onclick = () => setHidden(false);
+      document.querySelector('main').prepend(show);
     }
+    setHidden(!!store('roadplan:libHidden'));
+    syncAll2();
+    // open the group holding the active tool so it is always visible
     document.querySelectorAll('.tool').forEach((b) => b.classList.toggle('active', b.dataset.id === (S.item ? S.item.id : S.tool)));
   }
 
