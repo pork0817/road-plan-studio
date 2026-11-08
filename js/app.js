@@ -1493,14 +1493,17 @@
           if (sEnd > s0) out.push({ id: newId(), owner: jid, type: 'line', style: 'laneSolid', smooth: false, jline: true, pts: [atL(lg, s0, edgeOff(k)), atL(lg, sEnd, edgeOff(k))] });
         }
       }
-      // §188 指向線 for each lane's use, behind the box / stop line and again 30 m back (§176)
+      // §188 指向線 for each lane's use (tips facing the junction). First set: on lanes under the scooter box 3 m
+      // behind it, on the other lanes (e.g. turn-only lanes) 1 m behind the stop line. Second set (§176 repeat):
+      // one common position for every lane, just past where the solid lane lines end.
       if (el.autoArrows !== false && n > 0) {
-        for (let g = 0; g < 2; g++) {
-          // lanes under the scooter box start behind it; the others (e.g. turn-only lanes) right behind the stop line
-          const baseOf = (k) => (kS >= 0 && k >= kS && k <= kE ? boxRear : stopRear);
-          if (Math.min(...uses.map((u, k) => baseOf(k))) + (3 + 2.5 + g * 30) * m + 3 * m > lg.len) break;
-          for (let k = 0; k < n; k++) out.push({ id: newId(), owner: jid, type: 'arrow', kind: uses[k], length: 5, p: atL(lg, baseOf(k) + (3 + 2.5 + g * 30) * m, laneOff(k)), dir: G.angle(tr) });
-        }
+        const L0 = Math.max(0, el.solidLen != null ? el.solidLen : 30);
+        const inBox = (k) => kS >= 0 && k >= kS && k <= kE;
+        const tip1 = (k) => (inBox(k) ? boxRear + 3 * m : stopRear + 1 * m);
+        const tip2 = Math.max(boxRear + 33 * m, stopRear + (L0 + 3) * m);
+        const put = (k, tip) => { if (tip + 5 * m < lg.len) out.push({ id: newId(), owner: jid, type: 'arrow', kind: uses[k], length: 5, p: atL(lg, tip + 2.5 * m, laneOff(k)), dir: G.angle(tr) }); };
+        for (let k = 0; k < n; k++) put(k, tip1(k));
+        for (let k = 0; k < n; k++) put(k, tip2);
       }
       // 左轉導引線: from the left-turn lane at the stop line, through the junction, into the road on the left
       if (el.leftGuide && t.L && !lg.entry.oneWay) {
