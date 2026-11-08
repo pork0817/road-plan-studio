@@ -861,7 +861,7 @@
         // strip that hides the road's own straight edge line between T1 and the ring
         const at = (sAlong, off) => G.add(G.add(lg.X, G.mul(lg.v, sAlong)), G.mul(lg.nv, side * off));
         const curve = rb.curveLanes !== false;
-        const lo = curve ? 0 : ext - 0.75 * m, hi = ext + 0.6 * m, s1 = sq + 0.05 * m, s0 = -4 * m;
+        const lo = curve ? 0 : ext - 0.75 * m, hi = ext + 0.6 * m, s1 = sq, s0 = -4 * m;
         rb.corners.push({ leg: li, side, Q, rf: rb.cornerR != null ? rb.cornerR : 12, T1, T2, E, C: G.copy(C), Rb: Rb / m,
           sAlong: sq / m, ext: ext / m, mask: [at(s0, lo), at(s1, lo), at(s1, hi), at(s0, hi)] });
         angs.push(G.angle(G.sub(T2, C)));
@@ -897,6 +897,14 @@
     }
     return out;
   }
+  // distance (px) along a section's line at offset so (m) from its start to the point nearest p
+  function posOnSectionLine(el, so, p) {
+    const m = ppm(), line = G.offset(R.basePts(el, m), so * m);
+    const r = G.nearestOnPolyline(p, line);
+    if (!r) return 0;
+    let acc = 0; for (let i = 0; i < r.i; i++) acc += G.dist(line[i], line[i + 1]);
+    return acc + G.dist(line[r.i], r.proj);
+  }
   const splitBase = (lg) => (lg.median ? lg.el.medianWidth / 2 : 0.6); // splitter island half-width at its start
   function rbCurves(rb, legs) {
     const m = ppm();
@@ -924,9 +932,16 @@
           const o = Math.abs(vo);
           if (Math.abs(o - (k.ext - 0.225)) < 0.05) continue;          // outer edge line: drawn by the kerb curve
           const incomingHalf = lg.incoming && (lg.oneWay || side < 0);
-          const stopR = lg.br + (incomingHalf ? RB_YD + 0.54 : 0.3);
-          const pts = bendPath(rb, lg, k, o, stopR);
-          if (pts.length > 1) rb.curves.push({ pts, style });
+          // lines hugging the splitter/median end at its nose; other exit lines run to the ring
+          const stopR = lg.br + (incomingHalf ? RB_YD + 0.54 : o <= splitBase(lg) + 0.6 ? RB_YD : 0.3);
+          const bent = bendPath(rb, lg, k, o, stopR);
+          if (bent.length < 2) continue;
+          // overlap 5 cm with the straight line, and continue its dash pattern (position along the section line)
+          const U = G.add(bent[0], G.mul(lg.v, 0.05 * m)), pts = [U].concat(bent);
+          let total = 0; for (let i = 1; i < pts.length; i++) total += G.dist(pts[i - 1], pts[i]);
+          const L0 = posOnSectionLine(lg.el, so, U);
+          if (lg.sgn > 0) rb.curves.push({ pts: pts.slice().reverse(), style, dashOffset: L0 - total });
+          else rb.curves.push({ pts, style, dashOffset: L0 });
         }
       }
       // splitter island: the gap that opens between the two halves of a two-way road
@@ -934,12 +949,17 @@
         const b0 = splitBase(lg), endR = lg.br + RB_YD;
         const cR = bendPath(rb, lg, bySide[1], b0, endR), cL = bendPath(rb, lg, bySide[-1], b0, endR);
         const nose = shortArcPts(rb.p, endR * m, cR[cR.length - 1], cL[cL.length - 1]);
-        const poly = [];
+        const poly = [], atL = (sA, off) => G.add(G.add(lg.X, G.mul(lg.v, sA * m)), G.mul(lg.nv, off * m));
         if (!lg.median) { // tapered tail back along the centre line
           const sT = Math.max(bySide[1].sAlong, bySide[-1].sAlong) + 12;
-          poly.push(G.add(lg.X, G.mul(lg.v, sT * m)));
+          poly.push(atL(sT, 0));
+          poly.push(...cR, ...nose.slice(1, -1), ...cL.slice().reverse());
+        } else {
+          // one island with the median: run back to the middle of the crosswalk (the refuge cut hides the join)
+          const cw = S.els.find((e) => e.owner === rb.id && e.type === 'crosswalk' && e.legKey === lg.key);
+          const sBack = cw ? RB_YD + 0.54 + (cw.setback || 0) + cw.width / 2 : Math.max(bySide[1].sAlong, bySide[-1].sAlong) + 8;
+          poly.push(atL(sBack, b0), ...cR, ...nose.slice(1, -1), ...cL.slice().reverse(), atL(sBack, -b0));
         }
-        poly.push(...cR, ...nose.slice(1, -1), ...cL.slice().reverse());
         rb.splits.push(poly);
       }
     });
@@ -1040,7 +1060,7 @@
         y.arcC = G.copy(lg.bc); y.arcR = lg.br + RB_YD;
         // on bent lanes: the line runs from the splitter/centre to the kerb along the bent lane edges
         const aOff = lg.median ? lg.el.medianWidth / 2 + 0.3 : rb.splitters !== false ? splitBase(lg) + 0.3 : 0.15;
-        const ends = lg.oneWay ? [lg.rightExt - 0.3, -(lg.leftExt - 0.3)] : [-aOff, -(lg.leftExt - 0.3)]; // signed, leg frame
+        const ends = lg.oneWay ? [lg.rightExt - 0.5, -(lg.leftExt - 0.5)] : [-aOff, -(lg.leftExt - 0.5)]; // signed, leg frame; ends clear of the edge line
         const pa = bentPoint(rb, lg, Math.sign(ends[0]) || -1, Math.abs(ends[0]), y.arcR), pb = bentPoint(rb, lg, Math.sign(ends[1]) || -1, Math.abs(ends[1]), y.arcR);
         if (pa && pb) { y.a = pa; y.b = pb; }
         const n = Math.max(1, y.lanes | 0), offs = [];

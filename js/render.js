@@ -17,10 +17,11 @@ window.Render = (function () {
   const colorOf = (P, c) => P.colors[c] || c;
 
   // ---------- styled lines ----------
-  R.drawStyled = function (ctx, pts, st, ppm) {
+  R.drawStyled = function (ctx, pts, st, ppm, dashOffsetPx) {
     if (!st || pts.length < 2) return;
     ctx.save();
     ctx.strokeStyle = st.color; ctx.lineCap = 'butt'; ctx.lineJoin = 'round';
+    ctx.lineDashOffset = dashOffsetPx || 0; // lets a bent continuation keep the dash rhythm of the straight line
     const w = st.width * ppm;
     const one = (p, dashed) => {
       ctx.lineWidth = w;
@@ -381,7 +382,7 @@ window.Render = (function () {
     }
     ctx.setLineDash([]); ctx.lineWidth = 0.15 * ppm; // §183 路面邊線 15 cm
     ctx.beginPath(); ctx.arc(c.x, c.y, (Ra + 0.25) * ppm, 0, 2 * Math.PI); ctx.stroke();
-    const rr = Ro - 0.3;
+    const rr = Ro - 0.225;
     const gaps = (el.legs || []).map((g) => ({ c: g.ang, h: g.h != null ? g.h : Math.asin(Math.min(0.99, (g.w + 0.6) / rr)) })).sort((a, b) => a.c - b.c);
     if (!gaps.length) { ctx.beginPath(); ctx.arc(c.x, c.y, rr * ppm, 0, 2 * Math.PI); ctx.stroke(); }
     for (let i = 0; i < gaps.length; i++) {
@@ -463,7 +464,7 @@ window.Render = (function () {
       for (const [d0, d1] of dividerRanges(g)) for (const r of [g.Rdi + 0.05, g.Rdo - 0.05]) { path(ctx, ringPts(el, g, r, ppm, d0, d1)); ctx.stroke(); }
     }
     ctx.lineWidth = 0.15 * ppm;
-    edgeWithGaps(ctx, el, ppm, (th) => R.turboR(g, g.Rout - 0.3, th) * ppm, el.legs);
+    edgeWithGaps(ctx, el, ppm, (th) => R.turboR(g, g.Rout - 0.225, th) * ppm, el.legs);
     ctx.restore();
   }
   function drawTurboIsland(ctx, el, ppm, P) {
@@ -484,7 +485,13 @@ window.Render = (function () {
     shortArc(k.Q, k.rf * ppm, k.T1, k.T2).concat(shortArc(k.C, k.Rb * ppm, k.T2, k.E).slice(1)));
   function drawCornerLines(ctx, rb, ppm, P) {
     ctx.save(); ctx.strokeStyle = P.colors.white; ctx.lineWidth = 0.15 * ppm; ctx.setLineDash([]); ctx.lineCap = 'butt';
-    for (const k of rb.corners || []) { path(ctx, shortArc(k.Q, (k.rf + 0.225) * ppm, k.T1, k.T2)); ctx.stroke(); }
+    for (const k of rb.corners || []) {
+      // start a hair before the tangent point so the straight edge line and the curve overlap (no gap)
+      const r = (k.rf + 0.225) * ppm, a1 = Math.atan2(k.T2.y - k.Q.y, k.T2.x - k.Q.x);
+      let a0 = Math.atan2(k.T1.y - k.Q.y, k.T1.x - k.Q.x); const d = Math.atan2(Math.sin(a1 - a0), Math.cos(a1 - a0));
+      a0 -= Math.sign(d) * (0.05 * ppm) / r;
+      ctx.beginPath(); ctx.arc(k.Q.x, k.Q.y, r, a0, a0 + d + Math.sign(d) * (0.05 * ppm) / r, d < 0); ctx.stroke();
+    }
     ctx.restore();
   }
 
@@ -574,14 +581,36 @@ window.Render = (function () {
     if (o.img && o.imgOpacity > 0) { ctx.globalAlpha = o.imgOpacity; ctx.drawImage(o.img, 0, 0); ctx.globalAlpha = 1; }
 
     // Layer 0: pavement
+    // Each tone is filled as ONE union path (shapes normalised to the same winding), so overlapping
+    // pavement leaves no hairline seams and no darker overlaps when road opacity is below 100 %.
+    // Roundabout paving is filled last so it always shows on top of existing road areas.
     ctx.save(); ctx.globalAlpha = o.roadOpacity;
     const tones = { asphalt: P.colors.asphalt, worn: P.colors.asphaltWorn, concrete: P.colors.concrete };
+    const byTone = new Map(), rbPave = [];
+    const addTo = (list, poly) => { if (poly && poly.length >= 3) list.push(G.area(poly) < 0 ? poly.slice().reverse() : poly); };
+    const toneList = (c) => { if (!byTone.has(c)) byTone.set(c, []); return byTone.get(c); };
     for (const el of els) {
-      if (el.type === 'road' && el.pts.length >= 3) { ctx.fillStyle = tones[el.tone] || P.colors.asphalt; path(ctx, el.pts, true); ctx.fill(); }
-      if (el.type === 'section' && el.pave) { const poly = R.sectionPoly(el, ppm); if (poly) { ctx.fillStyle = P.colors.asphalt; path(ctx, poly, true); ctx.fill(); } }
-      if (el.type === 'roundabout') { ctx.fillStyle = P.colors.asphalt; path(ctx, R.rbOutline(el, ppm), true); ctx.fill(); for (const pv of R.cornerPaving(el, ppm)) { path(ctx, pv, true); ctx.fill(); } }
+      if (el.type === 'road') addTo(toneList(tones[el.tone] || P.colors.asphalt), el.pts);
+      if (el.type === 'section' && el.pave) addTo(toneList(P.colors.asphalt), R.sectionPoly(el, ppm));
+      if (el.type === 'roundabout') { addTo(rbPave, R.rbOutline(el, ppm)); for (const pv of R.cornerPaving(el, ppm)) addTo(rbPave, pv); }
     }
+    const fillUnion = (color, list) => {
+      if (!list.length) return;
+      ctx.fillStyle = color; ctx.beginPath();
+      for (const q of list) { ctx.moveTo(q[0].x, q[0].y); for (let i = 1; i < q.length; i++) ctx.lineTo(q[i].x, q[i].y); ctx.closePath(); }
+      ctx.fill('nonzero');
+    };
+    const asphalt = P.colors.asphalt;
+    for (const [c, list] of byTone) { // other tones give way to roundabout paving
+      if (c === asphalt) continue;
+      ctx.save(); for (const q of rbPave) clipOutside(q); fillUnion(c, list); ctx.restore();
+    }
+    fillUnion(asphalt, (byTone.get(asphalt) || []).concat(rbPave));
     ctx.restore();
+    // areas covered by roundabouts: older drawings underneath (sidewalks, surfaces, markings) give way to them
+    const rbIds = new Set(els.filter((e) => e.type === 'roundabout').map((e) => e.id));
+    const rbAreas = els.filter((e) => e.type === 'roundabout').flatMap((e) => [R.rbOutline(e, ppm)].concat(R.cornerPaving(e, ppm), e.splits || []));
+    const yieldToRoundabouts = (el) => { if (rbAreas.length && !(el.owner && rbIds.has(el.owner)) && el.type !== 'roundabout') for (const a of rbAreas) clipOutside(a); };
 
     // Clip markings to the road surface
     ctx.save();
@@ -603,7 +632,7 @@ window.Render = (function () {
     }
     // Layer 1: coloured surfaces
     for (const el of els) {
-      if (el.type === 'surface') drawSurface(ctx, el, ppm, P);
+      if (el.type === 'surface') { ctx.save(); yieldToRoundabouts(el); drawSurface(ctx, el, ppm, P); ctx.restore(); }
       if (el.type === 'section') {
         const pts = R.basePts(el, ppm);
         if (pts.length < 2) continue;
@@ -625,6 +654,7 @@ window.Render = (function () {
       if (!MARK.has(el.type)) continue;
       ctx.save();
       if (el.type === 'line' || el.type === 'section') cutJunctions();
+      else yieldToRoundabouts(el);
       switch (el.type) {
         case 'line': R.drawStyled(ctx, R.basePts(el, ppm), P.lineStyles[el.style], ppm); break;
         case 'section': {
@@ -638,7 +668,7 @@ window.Render = (function () {
         case 'scooterbox': drawScooterBox(ctx, el, ppm, P); break;
         case 'arrow': drawArrow(ctx, el, ppm, P); break;
         case 'symbol': drawIcon(ctx, el, ppm, P); break;
-        case 'roundabout': drawRoundaboutLines(ctx, el, ppm, P); drawCornerLines(ctx, el, ppm, P); for (const c of el.curves || []) R.drawStyled(ctx, c.pts, c.style, ppm); break;
+        case 'roundabout': drawRoundaboutLines(ctx, el, ppm, P); drawCornerLines(ctx, el, ppm, P); for (const c of el.curves || []) R.drawStyled(ctx, c.pts, c.style, ppm, c.dashOffset); break;
         case 'yield': drawYield(ctx, el, ppm, P); break;
         case 'text': drawText(ctx, P, el.p, el.dir, el.text, el.charLen * ppm, el.charWid * ppm, colorOf(P, el.color), el.order, charGap(el) * ppm); break;
         // §171 槽化線 border 15 / stripe 20 / gap 30 cm; §173 網狀線 border 20 / lines 10 cm, spacing user (1–5 m)
@@ -652,11 +682,12 @@ window.Render = (function () {
     // Layer 3: sidewalks & medians always on top (crosswalks run "under" them)
     // medians end flush with a roundabout's yield line (0.6 m outside the ring), not behind it
     const medianCuts = els.filter((e) => e.type === 'junction' && e.pts.length >= 3).map((e) => e.pts)
-      .concat(els.filter((e) => e.type === 'roundabout').map((e) => R.rbOutline(e, ppm, 0.6)));
+      .concat(els.filter((e) => e.type === 'roundabout').map((e) => R.rbOutline(e, ppm, 0.6)))
+      .concat(els.filter((e) => e.type === 'roundabout').flatMap((e) => e.splits || [])); // splitter replaces the median there
     const crossCuts = els.filter((e) => e.type === 'crosswalk' && e.a && e.b && e.dir != null)
       .map((e) => R.frame(e, ppm, e.width + 0.6, false).corners);
     for (const el of els) {
-      if (el.type === 'sidewalk') drawSidewalk(ctx, el, ppm, P);
+      if (el.type === 'sidewalk') { ctx.save(); yieldToRoundabouts(el); drawSidewalk(ctx, el, ppm, P); ctx.restore(); }
       if (el.type === 'roundabout') {
         drawRoundaboutIsland(ctx, el, ppm, P);
         for (const sp of el.splits || []) { // splitter islands, opened where crosswalks pass (pedestrian refuge)
