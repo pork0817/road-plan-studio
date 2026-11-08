@@ -1345,6 +1345,31 @@
     for (let k = 0; k < i; k++) b += G.dist(pts[k], pts[k + 1]);
     return { f, b };
   }
+  // The road's own centre line, running outward from the junction (starting where the junction centre projects
+  // onto it). Markings are positioned along it, so they follow a road that curves away from the junction.
+  function legPath(rd, sgn) {
+    const pts = rd.pts, i = rd.r.i, P0 = rd.r.proj, out = [G.copy(P0)];
+    if (sgn > 0) for (let k = i + 1; k < pts.length; k++) out.push(pts[k]);
+    else for (let k = i; k >= 0; k--) out.push(pts[k]);
+    const cum = [0]; for (let k = 1; k < out.length; k++) cum.push(cum[k - 1] + G.dist(out[k - 1], out[k]));
+    return { pts: out, cum };
+  }
+  // point at distance s (px) along a leg's road and lateral offset off (m, leg frame: + = right of outward);
+  // also returns the outward tangent there
+  function onLeg(lg, s, off) {
+    const m = ppm(), { pts, cum } = lg.path;
+    let k = 1; while (k < pts.length - 1 && cum[k] < s) k++;
+    if (pts.length < 2) return { p: G.add(G.add(pts[0], G.mul(lg.v, s)), G.mul(lg.nv, off * m)), t: lg.v };
+    const a = pts[k - 1], b = pts[k], segL = Math.max(1e-9, cum[k] - cum[k - 1]), t = G.norm(G.sub(b, a));
+    const base = G.add(a, G.mul(t, s - cum[k - 1])); // extrapolates past either end along the end segment
+    return { p: G.add(base, G.mul(G.rightN(t), off * m)), t };
+  }
+  const legPt = (lg, s, off) => onLeg(lg, s, off).p;
+  const legLine = (lg, s0, s1, off) => { // a polyline along the leg's road between s0 and s1 at offset off
+    const m = ppm(), n = Math.max(2, Math.ceil(Math.abs(s1 - s0) / m) + 1), out = [];
+    for (let i = 0; i < n; i++) out.push(legPt(lg, s0 + ((s1 - s0) * i) / (n - 1), off));
+    return out;
+  };
   function buildJunction(click, prm) {
     const m = ppm();
     let roads = [];
@@ -1376,7 +1401,8 @@
       for (const sgn of [1, -1]) {
         if ((sgn > 0 ? len.f : len.b) < 6 * m) continue; // road ends here (T-junction)
         const v = G.mul(rd.t, sgn), nv = G.rightN(v);
-        legs.push({ rd, v, nv, sgn, len: sgn > 0 ? len.f : len.b, rightExt: sgn > 0 ? rd.L.right : rd.L.left, leftExt: sgn > 0 ? rd.L.left : rd.L.right });
+        legs.push({ rd, v, nv, sgn, len: sgn > 0 ? len.f : len.b, rightExt: sgn > 0 ? rd.L.right : rd.L.left, leftExt: sgn > 0 ? rd.L.left : rd.L.right,
+          path: legPath(rd, sgn) });
       }
     }
     // distance along each leg from C to the crossing roads' pavement edge (checked at both leg edges, so skewed crossings work)
@@ -1408,7 +1434,7 @@
         const w = G.clamp(prm.cwWidth, P().crosswalk[prm.cwKind].width.min, P().crosswalk[prm.cwKind].width.max);
         const d = cwIn + (w * m) / 2;
         out.push({ id: newId(), owner: jid, type: 'crosswalk', kind: prm.cwKind, width: w, gap: 0.4, green: false,
-          a: at(d, -lg.leftExt + 0.05), b: at(d, lg.rightExt - 0.05), dir: G.angle(lg.v) });
+          a: legPt(lg, d, -lg.leftExt + 0.05), b: legPt(lg, d, lg.rightExt - 0.05), dir: G.angle(onLeg(lg, d, 0).t) });
       }
       // incoming lanes: traffic heading toward C keeps right, i.e. the left side of v
       const oneWay = el.lanesB === 0;
@@ -1417,7 +1443,7 @@
       const ds = cwOut + (prm.crosswalks ? prm.stopGap * m : 0) + (stopW * m) / 2;
       const inner = oneWay ? lg.rightExt - 0.3 : -((el.centerType === 'median' ? el.medianWidth / 2 + 0.2 : 0.15));
       if (prm.stops && incoming) {
-        out.push({ id: newId(), owner: jid, type: 'stopline', width: stopW, a: at(ds, inner), b: at(ds, -lg.leftExt + 0.3), dir: G.angle(G.mul(lg.v, -1)) });
+        out.push({ id: newId(), owner: jid, type: 'stopline', width: stopW, a: legPt(lg, ds, inner), b: legPt(lg, ds, -lg.leftExt + 0.3), dir: G.angle(G.mul(onLeg(lg, ds, 0).t, -1)) });
       }
       if (incoming) lg.entry = { ds, inner, oneWay, el };
       lg.cwIn = cwIn;
@@ -1445,7 +1471,8 @@
     for (const lg of legs) {
       if (!lg.entry) continue;
       const el = lg.rd.el, lw = el.laneWidth, tr = G.mul(lg.v, -1), t = turnsFrom(lg);
-      const atL = (L, d, off) => G.add(G.add(C, G.mul(L.v, d)), G.mul(L.nv, off * m));
+      const atL = (L, d, off) => legPt(L, d, off); // along the road's own curve
+      const dirAt = (d) => G.angle(G.mul(onLeg(lg, d, 0).t, -1));                // travel direction there
       const n = lg.entry.oneWay ? el.lanesF : (lg.sgn > 0 ? el.lanesB : el.lanesF);
       const start = lg.entry.oneWay ? 0 : (el.centerType === 'median' ? el.medianWidth / 2 + 0.3 : 0);
       // lane centres in the leg frame, from the driver's left (k = 0) to right
@@ -1475,7 +1502,7 @@
           boxRear = stopRear + D * m;
           const e0 = edgeOff(kS), e1 = edgeOff(kE + 1), inward = Math.sign(e0 - e1); // keep clear of the centre / edge lines
           out.push({ id: newId(), owner: jid, type: 'scooterbox', depth: D, side: '0.15', icon: true, text: '',
-            a: atL(lg, boxRear, e0 - inward * 0.15), b: atL(lg, boxRear, e1 + inward * 0.15), dir: G.angle(tr) });
+            a: atL(lg, boxRear, e0 - inward * 0.15), b: atL(lg, boxRear, e1 + inward * 0.15), dir: dirAt(boxRear - (D * m) / 2) });
         }
       }
       // lane lines on the approach: hidden inside the box, then solid 禁止變換車道線 for solidLen before the stop line
@@ -1483,10 +1510,10 @@
         const L0 = Math.max(0, el.solidLen != null ? el.solidLen : 30), sEnd = stopRear + L0 * m;
         const lo = edgeOff(1), hi = edgeOff(n - 1), a0 = Math.min(lo, hi) - 0.3, a1 = Math.max(lo, hi) + 0.3;
         const maskEnd = Math.max(sEnd, boxRear);
-        if (maskEnd > stopRear) out.push({ id: newId(), owner: jid, type: 'lanemask', pts: [atL(lg, stopRear - 0.1 * m, a0), atL(lg, maskEnd, a0), atL(lg, maskEnd, a1), atL(lg, stopRear - 0.1 * m, a1)] });
+        if (maskEnd > stopRear) out.push({ id: newId(), owner: jid, type: 'lanemask', pts: legLine(lg, stopRear - 0.1 * m, maskEnd, a0).concat(legLine(lg, stopRear - 0.1 * m, maskEnd, a1).reverse()) });
         if (L0 > 0) for (let k = 1; k < n; k++) {
           const inBox = kS >= 0 && k > kS && k <= kE, s0 = inBox ? boxRear : stopRear;
-          if (sEnd > s0) out.push({ id: newId(), owner: jid, type: 'line', style: 'laneSolid', smooth: false, jline: true, pts: [atL(lg, s0, edgeOff(k)), atL(lg, sEnd, edgeOff(k))] });
+          if (sEnd > s0) out.push({ id: newId(), owner: jid, type: 'line', style: 'laneSolid', smooth: false, jline: true, pts: legLine(lg, s0, sEnd, edgeOff(k)) });
         }
       }
       // §188 指向線 for each lane's use (tips facing the junction). First set: on lanes under the scooter box 3 m
@@ -1497,7 +1524,7 @@
         const inBox = (k) => kS >= 0 && k >= kS && k <= kE;
         const tip1 = (k) => (inBox(k) ? boxRear + 3 * m : stopRear + 1 * m);
         const tip2 = Math.max(boxRear + 33 * m, stopRear + (L0 + 3) * m);
-        const put = (k, tip) => { if (tip + 5 * m < lg.len) out.push({ id: newId(), owner: jid, type: 'arrow', kind: uses[k], length: 5, p: atL(lg, tip + 2.5 * m, laneOff(k)), dir: G.angle(tr) }); };
+        const put = (k, tip) => { if (tip + 5 * m < lg.len) out.push({ id: newId(), owner: jid, type: 'arrow', kind: uses[k], length: 5, p: atL(lg, tip + 2.5 * m, laneOff(k)), dir: dirAt(tip + 2.5 * m) }); };
         for (let k = 0; k < n; k++) put(k, tip1(k));
         for (let k = 0; k < n; k++) put(k, tip2);
       }
@@ -1722,9 +1749,9 @@
     box.appendChild(sc);
 
     // layers
-    const lh = document.createElement('h5'); lh.textContent = `圖層 Layers (${S.els.length})`; box.appendChild(lh);
+    const lh = document.createElement('h5'); lh.textContent = `圖層 Layers (${S.els.filter((e) => e.type !== 'lanemask').length})`; box.appendChild(lh);
     const ul = document.createElement('ul'); ul.className = 'layers';
-    S.els.slice().reverse().forEach((e) => {
+    S.els.slice().reverse().filter((e) => e.type !== 'lanemask').forEach((e) => { // internal cut-outs aren't layers
       const li = document.createElement('li'); if (e.id === S.sel) li.className = 'sel';
       const sp = document.createElement('span');
       let extra = '';
