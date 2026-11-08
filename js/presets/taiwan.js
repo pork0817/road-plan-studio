@@ -179,7 +179,9 @@ window.RoadPresets = window.RoadPresets || {};
         { kind: 'num', key: 'lanes', label: '環道車道數 Lanes', min: 1, max: 3, step: 1 },
         num('laneWidth', '環道車道寬 Lane width', 4, 7, 0.1, '≈'), num('apron', '可跨越緣帶 Truck apron', 0, 4, 0.1, '≈'),
         { kind: 'sel', key: 'island', label: '中央島 Island', options: sidewalkStyles },
-        { kind: 'info', text: '拖曳中心點移動、橘色點改半徑。入口讓路線與行人穿越道是獨立物件，改尺寸後可刪除重新產生。' }];
+        { kind: 'chk', key: 'yields', label: '入口讓路線 Yield lines' }, { kind: 'chk', key: 'crosswalks', label: '行人穿越道 Crosswalks' },
+        { kind: 'info', text: '拖曳中心點移動、橘色點改半徑；入口讓路線與行人穿越道會跟著移動。若標線沒有跟著動，按「重新產生入口」。' },
+        { kind: 'btn', action: 'regen', label: '↻ 重新產生入口 Regenerate entries' }];
       case 'yield': return [{ kind: 'num', key: 'lanes', label: '車道數 Lanes (三角形數)', min: 1, max: 6, step: 1 },
         { kind: 'chk', key: 'triangles', label: '倒三角形 Triangles' },
         { kind: 'law', text: '§172 讓路線：白色雙虛線＋倒三角形 (寬1.2m 長3.0m 線寬15cm 頂部60cm)，三角形距虛線2.0–2.5m。虛線尺寸量自附圖 (≈)。' },

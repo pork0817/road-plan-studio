@@ -644,6 +644,7 @@
       const s = { id: newId(), type: 'stopline', width: sw, a: G.add(el.a, off), b: G.add(el.b, off), dir: el.dir };
       S.els.push(s); S.sel = s.id;
     }
+    if (a === 'regen' && el.type === 'roundabout') { regenerateRoundabout(el); return; }
     if (a === 'rotL') el.dir -= Math.PI / 12;
     if (a === 'rotR') el.dir += Math.PI / 12;
     commit();
@@ -807,6 +808,7 @@
   function syncRoundabout(rb) {
     const m = ppm(), legs = rbLegs(rb);
     rb.legs = legs.map((lg) => ({ ang: G.angle(G.sub(lg.X, rb.p)), w: Math.max(lg.rightExt, lg.leftExt) }));
+    if (rb.yields === undefined) adoptLegacy(rb, legs); // roundabouts made before pieces were linked
     const kids = S.els.filter((e) => e.owner === rb.id);
     // remember how far each crosswalk was moved along its leg (measured against where its leg was last time)
     for (const k of kids) if (k.type === 'crosswalk' && k.anchor) {
@@ -832,6 +834,40 @@
       }
     }
     S.els = S.els.filter((e) => e.owner !== rb.id || keep.has(e.id));
+  }
+  // Link existing, unlinked yield lines / crosswalks that sit on a roundabout's legs to that roundabout.
+  function adoptNearby(rb, legs) {
+    const m = ppm();
+    for (const lg of legs) {
+      for (const e of S.els) {
+        if (e.owner || (e.type !== 'yield' && e.type !== 'crosswalk') || !e.a) continue;
+        const c = G.mid(e.a, e.b), along = G.dot(G.sub(c, lg.X), lg.v) / m, lat = G.dot(G.sub(c, lg.X), lg.nv) / m;
+        if (lat < -lg.leftExt - 1 || lat > lg.rightExt + 1) continue;
+        const par = G.dot(G.fromAngle(e.dir || 0), lg.v);
+        if (e.type === 'yield' && along > -3 && along < 8 && par < -0.7 && !S.els.some((k) => k.owner === rb.id && k.type === 'yield' && k.legKey === lg.key)) {
+          e.owner = rb.id; e.legKey = lg.key;
+        }
+        if (e.type === 'crosswalk' && along > 0 && along < 35 && Math.abs(par) > 0.7 && !S.els.some((k) => k.owner === rb.id && k.type === 'crosswalk' && k.legKey === lg.key)) {
+          e.owner = rb.id; e.legKey = lg.key; e.anchor = { X: G.copy(lg.X), v: G.copy(lg.v), w: e.width };
+        }
+      }
+    }
+  }
+  function adoptLegacy(rb, legs) {
+    rb.yields = true; rb.crosswalks = true; rb.cwKind = rb.cwKind || 'ties'; rb.cwWidth = rb.cwWidth || 4; rb.cwSetback = rb.cwSetback != null ? rb.cwSetback : 5; rb.removed = rb.removed || [];
+    // the old version cut medians with small 4-point areas; medians are now opened live under crosswalks
+    const lim = (rb.R + 30) * ppm();
+    S.els = S.els.filter((e) => !(e.type === 'junction' && !e.owner && e.pts.length === 4 && e.pts.every((q) => G.dist(q, rb.p) < lim)));
+    adoptNearby(rb, legs);
+  }
+  function regenerateRoundabout(rb) {
+    const legs = rbLegs(rb);
+    S.els = S.els.filter((e) => e.owner !== rb.id);
+    rb.removed = [];
+    // also replace unlinked yield lines / crosswalks sitting on its legs
+    adoptNearby(rb, legs);
+    S.els = S.els.filter((e) => e.owner !== rb.id);
+    commit();
   }
   const syncAll = () => { for (const e of S.els.slice()) if (e.type === 'roundabout') syncRoundabout(e); };
   function buildRoundabout(C, prm) {
@@ -1203,7 +1239,7 @@
       try {
         const d = JSON.parse(fr.result);
         S.country = d.country && window.RoadPresets[d.country] ? d.country : 'TW';
-        S.els = d.els || []; S.ppm = d.ppm || 0; S.sel = null; S.hist = []; S.fut = []; S.cur = snapshot();
+        S.els = d.els || []; S.ppm = d.ppm || 0; S.sel = null; S.hist = []; S.fut = []; syncAll(); S.cur = snapshot();
         if (d.imgSrc) await loadImageSrc(d.imgSrc); else { S.img = null; S.imgSrc = null; stage.classList.remove('has-image'); }
         buildLibrary(); setTool('select'); autosave();
       } catch (e) { alert('專案檔格式錯誤 Invalid project file'); }
@@ -1249,6 +1285,7 @@
       S.els = d.els || []; S.ppm = d.ppm || 0;
       if (d.imgSrc) await loadImageSrc(d.imgSrc);
     }
+    syncAll();
     S.cur = snapshot();
     if (!S.img) fitView();
     setTool('select');
