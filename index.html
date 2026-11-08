@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Road Plan Studio</title>
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <header id="topbar">
+    <div class="brand">Road Plan Studio</div>
+    <label class="btn primary">開啟衛星圖 Open image<input type="file" id="fileImage" accept="image/*" hidden></label>
+    <button id="btnSave" title="Save project (.json, includes image)">儲存 Save</button>
+    <label class="btn">載入 Load<input type="file" id="fileProject" accept=".json,application/json" hidden></label>
+    <button id="btnExport">匯出 PNG</button>
+    <label class="chk"><input type="checkbox" id="chkExportBg" checked> 含衛星圖</label>
+    <span class="sep"></span>
+    <button id="btnUndo" title="Undo (⌘Z)">↶</button>
+    <button id="btnRedo" title="Redo (⇧⌘Z)">↷</button>
+    <span class="sep"></span>
+    <label class="ctl">國家 <select id="selCountry"></select></label>
+    <label class="ctl">衛星圖 <input type="range" id="rngImage" min="0" max="1" step="0.05" value="1"></label>
+    <label class="ctl">路面 <input type="range" id="rngRoad" min="0" max="1" step="0.05" value="1"></label>
+    <label class="chk"><input type="checkbox" id="chkClip" checked> 標線限路面內</label>
+    <span class="grow"></span>
+    <button id="btnNew" title="Clear everything">新專案 New</button>
+  </header>
+  <main>
+    <aside id="library"></aside>
+    <div id="stage" tabindex="0">
+      <canvas id="canvas"></canvas>
+      <div id="dropHint">
+        <div>
+          <b>拖曳、貼上 (⌘V) 或開啟衛星圖</b><br>
+          Drop, paste (⌘V) or open a satellite screenshot to start
+        </div>
+      </div>
+    </div>
+    <aside id="props"></aside>
+  </main>
+  <footer id="status"><span id="stHint"></span><span id="stInfo"></span></footer>
+  <script src="js/geom.js"></script>
+  <script src="js/presets/taiwan.js"></script>
+  <script src="js/render.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
