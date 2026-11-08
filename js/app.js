@@ -908,11 +908,21 @@
   const splitBase = (lg) => (lg.median ? lg.el.medianWidth / 2 : 0.6); // splitter island half-width at its start
   function rbCurves(rb, legs) {
     const m = ppm();
-    rb.curves = []; rb.splits = [];
+    rb.curves = []; rb.splits = []; rb.legMasks = [];
+    const stopAtCw = rb.laneStop !== false;
+    // the roundabout takes priority: on each leg, lane markings start on the far side of its crosswalk
+    if (stopAtCw) for (const lg of legs) {
+      const cw = S.els.find((e) => e.owner === rb.id && e.type === 'crosswalk' && e.legKey === lg.key);
+      if (!cw) continue;
+      const sOut = RB_YD + 0.54 + (cw.setback || 0) + cw.width, atL = (sA, off) => G.add(G.add(lg.X, G.mul(lg.v, sA * m)), G.mul(lg.nv, off * m));
+      const lo = -(lg.leftExt - 0.45), hi = lg.rightExt - 0.45; // edge lines (0.225 m from the kerb) stay
+      rb.legMasks.push([atL(-4, lo), atL(sOut, lo), atL(sOut, hi), atL(-4, hi)]);
+    }
     if (rb.curveLanes === false) return;
     legs.forEach((lg, li) => {
       const bySide = {};
       for (const k of rb.corners) if (k.leg === li) bySide[k.side] = k;
+      const hasCw = stopAtCw && S.els.some((e) => e.owner === rb.id && e.type === 'crosswalk' && e.legKey === lg.key);
       const L = R.sectionLayout(lg.el), styles = P().lineStyles;
       // split double / mixed lines into single components (section frame), then map to the leg frame
       const comps = [];
@@ -925,7 +935,7 @@
         else if (st.pattern === 'solid-dashed') comps.push([ln.off - o, single('solid')], [ln.off + o, single('dashed')]);
         else comps.push([ln.off, single(st.pattern)]);
       }
-      for (const [so, style] of comps) {
+      for (const [so, style] of hasCw ? [] : comps) { // lanes stop at the crosswalk: no bent continuations
         const vo = lg.sgn > 0 ? so : -so;
         for (const side of Math.abs(vo) < 0.02 ? [1, -1] : [Math.sign(vo)]) {
           const k = bySide[side]; if (!k) continue;
@@ -1118,7 +1128,7 @@
   const syncAll = () => { for (const e of S.els.slice()) if (e.type === 'roundabout') syncRoundabout(e); };
   function buildRoundabout(C, prm) {
     return { id: newId(), type: 'roundabout', p: G.copy(C), R: prm.R, lanes: prm.turbo ? 2 : prm.lanes, laneWidth: prm.laneWidth, apron: prm.turbo ? 0 : prm.apron,
-      turbo: !!prm.turbo, divider: prm.divider || 'raised', turboAxis: prm.turboAxis || 0, turboTaper: 20, cornerR: prm.cornerR != null ? prm.cornerR : 12, curveLanes: prm.curveLanes !== false, splitters: prm.splitters !== false, curvedYield: prm.curvedYield !== false,
+      turbo: !!prm.turbo, divider: prm.divider || 'raised', turboAxis: prm.turboAxis || 0, turboTaper: 20, cornerR: prm.cornerR != null ? prm.cornerR : 12, laneStop: prm.laneStop !== false, curveLanes: prm.curveLanes !== false, splitters: prm.splitters !== false, curvedYield: prm.curvedYield !== false,
       island: prm.island || 'island', legs: [], yields: prm.yields, crosswalks: prm.crosswalks, cwKind: prm.cwKind, cwWidth: prm.cwWidth, cwSetback: prm.cwSetback, removed: [] };
   }
 

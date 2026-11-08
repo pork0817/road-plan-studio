@@ -376,9 +376,18 @@ window.Render = (function () {
     if (el.turbo) { drawTurboLines(ctx, el, ppm, P); return; }
     const { Ro, Ra } = R.rbRadii(el), c = el.p;
     ctx.save(); ctx.strokeStyle = P.colors.white; ctx.lineCap = 'butt';
-    for (let k = 1; k < el.lanes; k++) { // circulating lane lines (§182 車道線 4 m / 6 m)
-      ctx.lineWidth = 0.1 * ppm; ctx.setLineDash([4 * ppm, 6 * ppm]);
-      ctx.beginPath(); ctx.arc(c.x, c.y, (Ra + k * el.laneWidth) * ppm, 0, 2 * Math.PI); ctx.stroke();
+    // circulating lane lines (§182 車道線, 4 m dash / 6 m gap on the outermost line). Every circle uses the same
+    // whole number of dashes at the same angles, so dashes stay lined up radially at any radius.
+    if (el.lanes > 1) {
+      const rOut = Ra + (el.lanes - 1) * el.laneWidth, N = Math.max(6, Math.round((2 * Math.PI * rOut) / 10));
+      const seg = (2 * Math.PI) / N, dash = seg * 0.4;
+      ctx.lineWidth = 0.1 * ppm; ctx.setLineDash([]);
+      for (let k = 1; k < el.lanes; k++) {
+        const r = (Ra + k * el.laneWidth) * ppm;
+        ctx.beginPath();
+        for (let i = 0; i < N; i++) { const a0 = i * seg; ctx.moveTo(c.x + r * Math.cos(a0), c.y + r * Math.sin(a0)); ctx.arc(c.x, c.y, r, a0, a0 + dash); }
+        ctx.stroke();
+      }
     }
     ctx.setLineDash([]); ctx.lineWidth = 0.15 * ppm; // §183 路面邊線 15 cm
     ctx.beginPath(); ctx.arc(c.x, c.y, (Ra + 0.25) * ppm, 0, 2 * Math.PI); ctx.stroke();
@@ -645,15 +654,17 @@ window.Render = (function () {
     // Layer 2: markings. Lane lines are interrupted inside intersection areas.
     const junctions = els.filter((e) => e.type === 'junction' && e.pts.length >= 3)
       .concat(els.filter((e) => e.type === 'roundabout').map((e) => ({ pts: R.rbOutline(e, ppm, 1.2) })))
-      .concat(els.filter((e) => e.type === 'roundabout').flatMap((e) => (e.corners || []).map((k) => ({ pts: k.mask }))));
+      .concat(els.filter((e) => e.type === 'roundabout').flatMap((e) => (e.corners || []).map((k) => ({ pts: k.mask })).concat((e.legMasks || []).map((pts) => ({ pts })))));
     const cutJunctions = () => {
       // one clip per area, so overlapping areas can't cancel each other out
       for (const j of junctions) clipOutside(j.pts);
     };
+    const crossCutsEarly = els.filter((e) => e.type === 'crosswalk' && e.a && e.b && e.dir != null)
+      .map((e) => R.frame(e, ppm, e.width + 0.6, false).corners);
     for (const el of els) {
       if (!MARK.has(el.type)) continue;
       ctx.save();
-      if (el.type === 'line' || el.type === 'section') cutJunctions();
+      if (el.type === 'line' || el.type === 'section') { cutJunctions(); for (const c of crossCutsEarly) clipOutside(c); } // crosswalks take priority
       else yieldToRoundabouts(el);
       switch (el.type) {
         case 'line': R.drawStyled(ctx, R.basePts(el, ppm), P.lineStyles[el.style], ppm); break;
