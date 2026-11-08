@@ -1495,7 +1495,8 @@
           if (design === 'dedicated' && L && n >= 2 && k === 0) return 'L';
           const combo = (l, s, r) => (l && s && r ? 'SLR' : l && s ? 'SL' : s && r ? 'SR' : l && r ? 'LR' : l ? 'L' : r ? 'R' : 'S');
           if (n === 1) return combo(L, Sx, Rx);
-          if (k === 0) return L ? (n >= 3 && Sx ? 'L' : combo(true, Sx, false)) : combo(false, Sx, !Sx && Rx);
+          // shared: the inner lane goes straight AND turns left (直左); dedicated is handled above (左轉 only)
+          if (k === 0) return L ? combo(true, Sx, false) : combo(false, Sx, !Sx && Rx);
           if (k === n - 1) return Rx ? combo(false, Sx, true) : combo(!Sx && L, Sx, false);
           return Sx ? 'S' : combo(L, false, Rx);
       };
@@ -1572,7 +1573,10 @@
         const T = t.L.o, elT = T.rd.el, lwT = elT.laneWidth;
         const startT = elT.lanesB === 0 ? -(T.leftExt - 0.3) : (elT.centerType === 'median' ? elT.medianWidth / 2 + 0.3 : 0);
         const sIn = lg.entry.ds - (stopW * m) / 2, sOut = T.cwIn;
-        for (const [oi, ot] of [[-start, startT], [-(start + lw), startT + lwT]]) {
+        // the left turn starts from the pocket when there is one, otherwise from the inner lane
+        const pocketEdges = lg.pocketW ? [-(el.medianWidth / 2 - lg.pocketW), -(el.medianWidth / 2 + 0.15)] : null;
+        const fromEdges = pocketEdges || [-start, -(start + lw)];
+        for (const [oi, ot] of [[fromEdges[0], startT], [fromEdges[1], startT + lwT]]) {
           const P0 = atL(lg, sIn, oi), P1 = atL(T, sOut, ot);
           const X = lineIntersect(P0, tr, P1, T.v), ctl = X && G.dot(G.sub(X, P0), tr) > 0 ? X : G.mid(P0, P1);
           const pts = []; for (let i = 0; i <= 24; i++) { const u = i / 24, a1 = (1 - u) * (1 - u), b1 = 2 * (1 - u) * u, c1 = u * u; pts.push({ x: a1 * P0.x + b1 * ctl.x + c1 * P1.x, y: a1 * P0.y + b1 * ctl.y + c1 * P1.y }); }
