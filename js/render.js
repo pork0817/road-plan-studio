@@ -16,6 +16,37 @@ window.Render = (function () {
   R.basePts = (el, ppm) => (el.smooth && el.pts.length > 2 ? G.smooth(el.pts, Math.max(2, ppm * 0.75)) : el.pts);
   const colorOf = (P, c) => P.colors[c] || c;
 
+
+  // ---------- curved area edges ----------
+  // el.bend[i] (px, relative to edge i's chord): the curve's midpoint sits n across and t along from the chord's
+  // midpoint. Edge i runs from pts[i] to pts[i+1] (closing edge last); drawn as a quadratic curve through that point.
+  R.areaPts = (el) => {
+    const pts = el.pts, bend = el.bend;
+    if (!pts || !bend || !bend.some(Boolean)) return pts;
+    const out = [], n = pts.length;
+    for (let i = 0; i < n; i++) {
+      const A = pts[i], B = pts[(i + 1) % n], bd = bend[i];
+      out.push(A);
+      if (!bd) continue;
+      const d = G.sub(B, A), L = G.len(d);
+      if (L < 1e-6) continue;
+      const dir = G.mul(d, 1 / L), nrm = G.rightN(dir), mid = G.mid(A, B);
+      const M = G.add(G.add(mid, G.mul(nrm, bd.n)), G.mul(dir, bd.t || 0)), Cc = G.sub(G.mul(M, 2), mid);
+      const k = Math.max(8, Math.min(48, Math.ceil((L + 2 * Math.abs(bd.n)) / 6)));
+      for (let j = 1; j < k; j++) {
+        const t = j / k, a = (1 - t) * (1 - t), b = 2 * (1 - t) * t, c = t * t;
+        out.push({ x: a * A.x + b * Cc.x + c * B.x, y: a * A.y + b * Cc.y + c * B.y });
+      }
+    }
+    return out;
+  };
+  R.bendMid = (el, i) => { // the point on edge i's curve halfway along (handle position)
+    const A = el.pts[i], B = el.pts[(i + 1) % el.pts.length], bd = el.bend && el.bend[i], mid = G.mid(A, B);
+    if (!bd) return mid;
+    const d = G.norm(G.sub(B, A));
+    return G.add(G.add(mid, G.mul(G.rightN(d), bd.n)), G.mul(d, bd.t || 0));
+  };
+
   // ---------- styled lines ----------
   R.drawStyled = function (ctx, pts, st, ppm, dashOffsetPx) {
     if (!st || pts.length < 2) return;
@@ -108,7 +139,57 @@ window.Render = (function () {
     ctx.stroke();
   }
 
+
+  // ---------- crosswalk geometry: rectangle/parallelogram or free trapezoid ----------
+  // el.quad (px): [c0, c1, c2, c3] — back edge c0→c1 and front edge c3→c2 (the two edges traffic crosses);
+  // side ends c0–c3 (at a) and c1–c2 (at b).
+  R.crosswalkQuad = (el, ppm) => (el.quad && el.quad.length === 4 ? el.quad : R.frame(el, ppm, el.width, false).corners);
+  // the crosswalk grown by pad (m) beyond its back and front edges (for median openings and lane-line cuts)
+  R.crosswalkPad = (el, ppm, padM) => {
+    if (!(el.quad && el.quad.length === 4)) return R.frame(el, ppm, el.width + 2 * padM, false).corners;
+    const [c0, c1, c2, c3] = el.quad, d = G.norm(G.sub(G.mid(c3, c2), G.mid(c0, c1))), o = G.mul(d, padM * ppm);
+    return [G.sub(c0, o), G.sub(c1, o), G.add(c2, o), G.add(c3, o)];
+  };
+  const lerpP = (a, b, t) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+  function drawCrosswalkQuad(ctx, el, ppm, P) {
+    const spec = P.crosswalk[el.kind], [c0, c1, c2, c3] = el.quad;
+    const back = (t) => lerpP(c0, c1, t), front = (t) => lerpP(c3, c2, t);
+    const L = G.dist(G.mid(c0, c3), G.mid(c1, c2)) / ppm; // crossing length along the centre line (m)
+    ctx.save();
+    path(ctx, el.quad, true);
+    if (el.green) { ctx.fillStyle = P.colors.crossGreen; ctx.fill(); }
+    ctx.clip();
+    ctx.strokeStyle = ctx.fillStyle = P.colors.white; ctx.lineCap = 'butt'; ctx.setLineDash([]);
+    const ext = (a, b, m) => { const d = G.mul(G.norm(G.sub(b, a)), m); return [G.sub(a, d), G.add(b, d)]; };
+    if (el.kind === 'ties') {
+      // bars fan between the two edges; each stays 40 cm wide, spaced by the gap along the centre line
+      const bar = spec.bar, gap = el.gap, pitch = bar + gap, n = Math.max(0, Math.floor((L + gap) / pitch));
+      const s0 = (L - (n * pitch - gap)) / 2;
+      ctx.lineWidth = bar * ppm;
+      for (let i = 0; i < n; i++) {
+        const tc = (s0 + i * pitch + bar / 2) / L;
+        const [p0, p1] = ext(back(tc), front(tc), 2 * ppm);
+        path(ctx, [p0, p1]); ctx.stroke();
+      }
+    } else {
+      // edge lines (10 cm) along both edges, inside the shape; 45° stripes between them
+      const inward = (a, b, other) => { let nn = G.rightN(G.norm(G.sub(b, a))); if (G.dot(G.sub(other, a), nn) < 0) nn = G.mul(nn, -1); return nn; };
+      const e = spec.edge * ppm;
+      const nb = inward(c0, c1, c3), nf = inward(c3, c2, c0);
+      ctx.lineWidth = e;
+      for (const [a, b, nn] of [[c0, c1, nb], [c3, c2, nf]]) { const [p0, p1] = ext(G.add(a, G.mul(nn, e / 2)), G.add(b, G.mul(nn, e / 2)), 2 * ppm); path(ctx, [p0, p1]); ctx.stroke(); }
+      ctx.save();
+      path(ctx, [G.add(c0, G.mul(nb, e)), G.add(c1, G.mul(nb, e)), G.add(c2, G.mul(nf, e)), G.add(c3, G.mul(nf, e))], true); ctx.clip();
+      const u = G.norm(G.sub(G.mid(c1, c2), G.mid(c0, c3))), cen = G.mid(G.mid(c0, c2), G.mid(c1, c3));
+      let rad = 0; for (const c of el.quad) rad = Math.max(rad, G.dist(c, cen));
+      stripes(ctx, cen, G.angle(u) + (spec.angle * Math.PI) / 180, spec.stripe * ppm, spec.gap * ppm, rad + ppm);
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
   function drawCrosswalk(ctx, el, ppm, P) {
+    if (el.quad && el.quad.length === 4) { drawCrosswalkQuad(ctx, el, ppm, P); return; }
     const spec = P.crosswalk[el.kind];
     const f = R.frame(el, ppm, el.width, false);
     ctx.fillStyle = P.colors.white;
@@ -284,17 +365,18 @@ window.Render = (function () {
   }
 
   function drawHatched(ctx, el, ppm, P, twoWay) {
-    if (el.pts.length < 3) return;
+    const aPts = R.areaPts(el);
+    if (aPts.length < 3) return;
     const col = twoWay ? P.colors.yellow : colorOf(P, el.color);
     ctx.save();
-    path(ctx, el.pts, true); ctx.clip();
+    path(ctx, aPts, true); ctx.clip();
     ctx.strokeStyle = col;
-    const c = G.centroid(el.pts);
-    let r = 0; el.pts.forEach((p) => { r = Math.max(r, G.dist(p, c)); });
+    const c = G.centroid(aPts);
+    let r = 0; aPts.forEach((p) => { r = Math.max(r, G.dist(p, c)); });
     stripes(ctx, c, el.dir + Math.PI / 4, el.stripe * ppm, el.gap * ppm, r);
     if (twoWay) stripes(ctx, c, el.dir - Math.PI / 4, el.stripe * ppm, el.gap * ppm, r);
     ctx.lineWidth = el.border * ppm * 2; ctx.lineJoin = 'miter';
-    path(ctx, el.pts, true); ctx.stroke();
+    path(ctx, aPts, true); ctx.stroke();
     ctx.restore();
   }
 
@@ -338,16 +420,17 @@ window.Render = (function () {
   }
 
   function drawSidewalk(ctx, el, ppm, P) {
-    if (el.pts.length < 3) return;
+    const aPts = R.areaPts(el);
+    if (aPts.length < 3) return;
     ctx.save();
     ctx.fillStyle = sidewalkPattern(ctx, el.style, ppm);
-    path(ctx, el.pts, true); ctx.fill();
+    path(ctx, aPts, true); ctx.fill();
     if (el.style === 'tactile') {
       // yellow tactile guide strip, 0.3m wide, 0.6m in from the first edge
-      ctx.save(); path(ctx, el.pts, true); ctx.clip();
-      const a = el.pts[0], b = el.pts[1];
+      ctx.save(); path(ctx, aPts, true); ctx.clip();
+      const a = aPts[0], b = aPts[1];
       const t = G.norm(G.sub(b, a)); let n = G.rightN(t);
-      if (!G.pointInPoly(G.add(G.mid(a, b), G.mul(n, ppm * 0.3)), el.pts)) n = G.mul(n, -1);
+      if (!G.pointInPoly(G.add(G.mid(a, b), G.mul(n, ppm * 0.3)), aPts)) n = G.mul(n, -1);
       const o = 0.75 * ppm;
       ctx.strokeStyle = '#e0b21c'; ctx.lineWidth = 0.3 * ppm; ctx.setLineDash([]);
       path(ctx, [G.add(G.add(a, G.mul(n, o)), G.mul(t, -1e4)), G.add(G.add(b, G.mul(n, o)), G.mul(t, 1e4))]); ctx.stroke();
@@ -355,15 +438,16 @@ window.Render = (function () {
     }
     ctx.strokeStyle = el.style === 'island' ? '#b9b5ab' : '#7d7a73';
     ctx.lineWidth = 0.25 * ppm; ctx.lineJoin = 'round'; ctx.setLineDash([]);
-    path(ctx, el.pts, true); ctx.stroke();
+    path(ctx, aPts, true); ctx.stroke();
     ctx.restore();
   }
 
   function drawSurface(ctx, el, ppm, P) {
-    if (el.pts.length < 3) return;
+    const aPts = R.areaPts(el);
+    if (aPts.length < 3) return;
     ctx.save();
-    ctx.fillStyle = el.color; path(ctx, el.pts, true); ctx.fill();
-    if (el.edge) { path(ctx, el.pts, true); ctx.clip(); ctx.strokeStyle = P.colors.white; ctx.lineWidth = 0.15 * ppm * 2; ctx.stroke(); }
+    ctx.fillStyle = el.color; path(ctx, aPts, true); ctx.fill();
+    if (el.edge) { path(ctx, aPts, true); ctx.clip(); ctx.strokeStyle = P.colors.white; ctx.lineWidth = 0.15 * ppm * 2; ctx.stroke(); }
     ctx.restore();
   }
 
@@ -646,10 +730,68 @@ window.Render = (function () {
     ctx.restore();
   }
 
-  // ---------- scene ----------
-  const MARK = new Set(['roundabout', 'yield', 'symbol', 'line', 'section', 'crosswalk', 'stopline', 'scooterbox', 'arrow', 'text', 'chevron', 'yellowbox']);
 
+  // ---------- bike lanes (draw the centre line; markings build themselves) ----------
+  // §174 自行車專用車道: brick-red surface, separated from traffic by 雙白實線, white diamonds 2.5 × 1.0 m
+  // (15 cm line) every 30–60 m, bike icons (§183-1). §174-4 自行車優先車道: two white solid lines ≥ 1.2 m apart
+  // with bike icons. Widths follow the design manual (≈): one-way ≥ 1.2 m (1.5–2.0 typical), two-way ≥ 2.5 m.
+  R.bikeBand = (el, ppm, padM = 0) => {
+    const pts = R.basePts(el, ppm);
+    if (pts.length < 2) return null;
+    const h = (el.width / 2 + padM) * ppm;
+    return G.offset(pts, -h).concat(G.offset(pts, h).reverse());
+  };
+  function along(pts) { const cum = [0]; for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + G.dist(pts[i - 1], pts[i])); return cum; }
+  function atLen(pts, cum, s) {
+    let i = 1; while (i < pts.length - 1 && cum[i] < s) i++;
+    const a = pts[i - 1], b = pts[i], u = (s - cum[i - 1]) / Math.max(1e-9, cum[i] - cum[i - 1]);
+    return { p: G.add(a, G.mul(G.sub(b, a), G.clamp(u, 0, 1))), t: G.norm(G.sub(b, a)) };
+  }
+  function drawBikeSurface(ctx, el, ppm, P) {
+    if (!el.surface) return;
+    const band = R.bikeBand(el, ppm); if (!band) return;
+    ctx.fillStyle = P.colors.bike; path(ctx, band, true); ctx.fill();
+  }
+  function drawBikeLane(ctx, el, ppm, P) {
+    const pts = R.basePts(el, ppm); if (pts.length < 2) return;
+    const w = el.width, white = P.colors.white;
+    const solid = { color: white, width: 0.10, pattern: 'solid' };
+    const dbl = { color: white, width: 0.10, sep: 0.10, pattern: 'double' };
+    const sideOff = (sgn, st) => sgn * (w / 2 - ((st.sep || 0) + st.width * (st.sep != null ? 2 : 1)) / 2);
+    if (el.kind === 'priority') {
+      for (const sg of [-1, 1]) R.drawStyled(ctx, G.offset(pts, sideOff(sg, solid) * ppm), solid, ppm);
+    } else {
+      const sides = el.sep === 'both' ? [-1, 1] : el.sep === 'right' ? [1] : el.sep === 'none' ? [] : [-1];
+      for (const sg of sides) R.drawStyled(ctx, G.offset(pts, sideOff(sg, dbl) * ppm), dbl, ppm);
+    }
+    if (el.twoWay) R.drawStyled(ctx, pts, { color: white, width: 0.10, pattern: 'dashed', dash: [1, 1] }, ppm); // ≈ centre line
+    // symbols along the lane
+    const cum = along(pts), total = cum[cum.length - 1] / ppm, sp = G.clamp(el.spacing || 40, 10, 100);
+    const icon = (s, off, flip) => {
+      const q = atLen(pts, cum, s * ppm), dirv = flip ? G.mul(q.t, -1) : q.t, p = G.add(q.p, G.mul(G.rightN(q.t), off * ppm));
+      drawIcon(ctx, { kind: 'bike', small: (el.twoWay ? w / 2 : w) < 1.5, p, dir: G.angle(dirv) }, ppm, P);
+    };
+    for (let s = Math.min(6, total / 2); s < total - 2; s += sp) {
+      if (el.icons !== false) {
+        if (el.twoWay) { icon(s, w / 4, false); icon(s, -w / 4, true); } else icon(s, 0, false);
+      }
+      if (el.kind !== 'priority' && el.diamonds !== false && s + sp / 2 < total - 2) { // diamond between icons
+        const q = atLen(pts, cum, (s + sp / 2) * ppm), n = G.rightN(q.t), L = 1.25 * ppm, Wd = Math.min(0.5, w / 2 - 0.2) * ppm;
+        ctx.save(); ctx.strokeStyle = white; ctx.lineWidth = 0.15 * ppm; ctx.lineJoin = 'miter'; ctx.setLineDash([]);
+        path(ctx, [G.add(q.p, G.mul(q.t, L)), G.add(q.p, G.mul(n, Wd)), G.sub(q.p, G.mul(q.t, L)), G.sub(q.p, G.mul(n, Wd))], true); ctx.stroke();
+        ctx.restore();
+      }
+    }
+  }
+
+  // ---------- scene ----------
+  const MARK = new Set(['bikelane', 'roundabout', 'yield', 'symbol', 'line', 'section', 'crosswalk', 'stopline', 'scooterbox', 'arrow', 'text', 'chevron', 'yellowbox']);
+
+  const ppm_ = (o) => o.ppm;
   R.drawScene = function (ctx, o) {
+    const crossCutsEarly = (o.preview ? o.els.concat([o.preview]) : o.els).filter((e) => e.type === 'crosswalk' && e.a && e.b && e.dir != null)
+      .map((e) => R.crosswalkPad(e, ppm_(o), 0.3));
+    const bikeMasks = (o.preview ? o.els.concat([o.preview]) : o.els).filter((e) => e.type === 'bikelane').map((e) => R.bikeBand(e, ppm_(o), -0.3)).filter(Boolean);
     R._els = o.preview ? o.els.concat([o.preview]) : o.els;
     const clipOutside = (pts) => {
       if (!pts || pts.length < 3) return;
@@ -672,7 +814,7 @@ window.Render = (function () {
     const addTo = (list, poly) => { if (poly && poly.length >= 3) list.push(G.area(poly) < 0 ? poly.slice().reverse() : poly); };
     const toneList = (c) => { if (!byTone.has(c)) byTone.set(c, []); return byTone.get(c); };
     for (const el of els) {
-      if (el.type === 'road') addTo(toneList(tones[el.tone] || P.colors.asphalt), el.pts);
+      if (el.type === 'road') addTo(toneList(tones[el.tone] || P.colors.asphalt), R.areaPts(el));
       if (el.type === 'section' && el.pave) addTo(toneList(P.colors.asphalt), R.sectionPoly(el, ppm));
       if (el.type === 'roundabout') { addTo(rbPave, R.rbOutline(el, ppm)); for (const pv of R.cornerPaving(el, ppm)) addTo(rbPave, pv); }
     }
@@ -699,7 +841,7 @@ window.Render = (function () {
     if (o.clip) {
       const polys = [];
       for (const el of els) {
-        if (el.type === 'road' && el.pts.length >= 3) polys.push(el.pts);
+        if (el.type === 'road' && el.pts.length >= 3) polys.push(R.areaPts(el));
         if (el.type === 'section') { const p = R.sectionPoly(el, ppm); if (p) polys.push(p); } // a road section always counts as road surface
         if (el.type === 'roundabout') { polys.push(R.rbOutline(el, ppm)); polys.push(...R.cornerPaving(el, ppm)); }
       }
@@ -715,6 +857,7 @@ window.Render = (function () {
     // Layer 1: coloured surfaces
     for (const el of els) {
       if (el.type === 'surface') { ctx.save(); yieldToRoundabouts(el); drawSurface(ctx, el, ppm, P); ctx.restore(); }
+      if (el.type === 'bikelane') { ctx.save(); yieldToRoundabouts(el); for (const c of crossCutsEarly) clipOutside(c); drawBikeSurface(ctx, el, ppm, P); ctx.restore(); }
       if (el.type === 'section') {
         const pts = R.basePts(el, ppm);
         if (pts.length < 2) continue;
@@ -732,15 +875,18 @@ window.Render = (function () {
       // one clip per area, so overlapping areas can't cancel each other out
       for (const j of junctions) clipOutside(j.pts);
     };
-    const crossCutsEarly = els.filter((e) => e.type === 'crosswalk' && e.a && e.b && e.dir != null)
-      .map((e) => R.frame(e, ppm, e.width + 0.6, false).corners);
+
     for (const el of els) {
       if (!MARK.has(el.type)) continue;
       ctx.save();
-      if (el.type === 'line' || el.type === 'section') { cutJunctions(); for (const c of crossCutsEarly) clipOutside(c); } // crosswalks take priority
+      if (el.type === 'line' || el.type === 'section') {
+        cutJunctions(); for (const c of crossCutsEarly) clipOutside(c); // crosswalks take priority
+        for (const b of bikeMasks) clipOutside(b); // road lane lines give way to bike lanes drawn over them
+      } else if (el.type === 'bikelane') { for (const c of crossCutsEarly) clipOutside(c); }
       else yieldToRoundabouts(el);
       switch (el.type) {
         case 'line': R.drawStyled(ctx, R.basePts(el, ppm), P.lineStyles[el.style], ppm); break;
+        case 'bikelane': drawBikeLane(ctx, el, ppm, P); break;
         case 'section': {
           const pts = R.basePts(el, ppm);
           if (pts.length < 2) break;
@@ -769,7 +915,7 @@ window.Render = (function () {
       .concat(els.filter((e) => e.type === 'roundabout').map((e) => R.rbOutline(e, ppm, 0.6)))
       .concat(els.filter((e) => e.type === 'roundabout').flatMap((e) => e.splits || [])); // splitter replaces the median there
     const crossCuts = els.filter((e) => e.type === 'crosswalk' && e.a && e.b && e.dir != null)
-      .map((e) => R.frame(e, ppm, e.width + 0.6, false).corners);
+      .map((e) => R.crosswalkPad(e, ppm, 0.3));
     for (const el of els) {
       if (el.type === 'sidewalk') { ctx.save(); yieldToRoundabouts(el); drawSidewalk(ctx, el, ppm, P); ctx.restore(); }
       if (el.type === 'roundabout') {
@@ -804,10 +950,11 @@ window.Render = (function () {
   // ---------- shapes for hit-testing & selection outline ----------
   R.shape = function (el, ppm, P) {
     switch (el.type) {
-      case 'road': case 'sidewalk': case 'surface': case 'chevron': case 'yellowbox': case 'junction': return { poly: el.pts };
+      case 'road': case 'sidewalk': case 'surface': case 'chevron': case 'yellowbox': case 'junction': return { poly: R.areaPts(el) };
+      case 'bikelane': { const b = R.bikeBand(el, ppm); return b ? { poly: b } : { line: el.pts, w: 4 }; }
       case 'line': { const st = P.lineStyles[el.style]; return { line: R.basePts(el, ppm), w: ((st ? st.width + (st.sep || 0) * 2 : 0.2) * ppm) }; }
       case 'section': { const p = R.sectionPoly(el, ppm); return p ? { poly: p } : { line: el.pts, w: 4 }; }
-      case 'crosswalk': return { poly: R.frame(el, ppm, el.width, false).corners };
+      case 'crosswalk': return { poly: R.crosswalkQuad(el, ppm) };
       case 'scooterbox': return { poly: R.frame(el, ppm, el.depth, true).corners };
       case 'roundabout': return { poly: R.circlePts(el.p, el.R * ppm, 48) };
       case 'yield': { const t = G.mul(G.fromAngle(el.dir), -R.YIELD_DEPTH * ppm); return { poly: [el.a, el.b, G.add(el.b, t), G.add(el.a, t)] }; }

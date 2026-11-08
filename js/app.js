@@ -131,15 +131,21 @@
     if (el.pts) {
       // vertices, plus a "+" handle in the middle of every segment: drag it to add a point there
       const hs = el.pts.map((p, i) => ({ key: 'pts', i, p }));
-      const open = ['line', 'section'].includes(el.type);
+      const open = ['line', 'section', 'bikelane'].includes(el.type);
       const n = el.pts.length, segs = open ? n - 1 : n;
       for (let i = 0; i < segs; i++) {
-        const mid = el.smooth && open && n > 2 ? catmullMid(el.pts, i) : G.mid(el.pts[i], el.pts[(i + 1) % n]);
-        hs.push({ key: 'ins', i, p: mid });
+        // open lines: ⊕ adds a point; areas: ◆ bends that edge into a curve (double-click an edge to add a point)
+        if (open) hs.push({ key: 'ins', i, p: el.smooth && n > 2 ? catmullMid(el.pts, i) : G.mid(el.pts[i], el.pts[(i + 1) % n]) });
+        else hs.push({ key: 'bend', i, p: R.bendMid(el, i) });
       }
       return hs;
     }
     if (el.type === 'roundabout') return [{ key: 'p', p: el.p }, { key: 'rad', p: { x: el.p.x + el.R * ppm(), y: el.p.y } }];
+    if (el.type === 'crosswalk' && el.quad) { // trapezoid: four free corners + rotate handle
+      const c = G.centroid(el.quad), d = G.norm(G.sub(G.mid(el.quad[3], el.quad[2]), G.mid(el.quad[0], el.quad[1])));
+      let r = 0; for (const q of el.quad) r = Math.max(r, G.dot(G.sub(q, c), d));
+      return el.quad.map((p, i) => ({ key: 'q', i, p })).concat([{ key: 'rot2', p: G.add(c, G.mul(d, r + 1.5 * ppm())) }]);
+    }
     if (el.a) {
       const m = G.mid(el.a, el.b), t = G.fromAngle(el.dir || 0);
       const ext = (el.type === 'crosswalk' ? el.width / 2 : el.type === 'scooterbox' ? el.depth : el.type === 'yield' ? 0 : el.width / 2) + 1.5;
@@ -166,7 +172,16 @@
     if (orig.pts) el.pts = orig.pts.map((p) => G.add(p, d));
     if (orig.a) { el.a = G.add(orig.a, d); el.b = G.add(orig.b, d); }
     if (orig.p) el.p = G.add(orig.p, d);
+    if (orig.quad) el.quad = orig.quad.map((p) => G.add(p, d));
   }
+  // keep a trapezoid crosswalk's centre line (a, b), direction and mean width in step with its corners
+  function syncQuad(el) {
+    const [c0, c1, c2, c3] = el.quad;
+    el.a = G.mid(c0, c3); el.b = G.mid(c1, c2);
+    el.dir = G.angle(G.sub(G.mid(c3, c2), G.mid(c0, c1)));
+    el.width = Math.round(((G.dist(c0, c3) + G.dist(c1, c2)) / 2 / ppm()) * 100) / 100;
+  }
+  function rotateAbout(q, m, da) { const v = G.sub(q, m), c = Math.cos(da), sn = Math.sin(da); return { x: m.x + v.x * c - v.y * sn, y: m.y + v.x * sn + v.y * c }; }
 
   // ---------------- snapping ----------------
   // Angle magnet: snap an angle to horizontal/vertical, or parallel/perpendicular to the nearest lane, when close.
@@ -230,7 +245,7 @@
     let h = '';
     if (S.align && !S.align.tgtId) h = '📐 點選要對齊的目標物件 (停止線、行人穿越道、車道、箭頭…)，<kbd>Esc</kbd> 取消';
     else if (S.align) h = '📐 已對齊 — 可在右側調整間距 / 端點，按「完成」結束';
-    else if (S.tool === 'select') h = '點選物件編輯，拖曳控制點修改；拖曳邊上的 ⊕ 新增節點，Alt+點節點刪除。<kbd>Del</kbd> 刪除 <kbd>⌘D</kbd> 複製 <kbd>[ ]</kbd> 旋轉';
+    else if (S.tool === 'select') h = '點選物件編輯，拖曳控制點修改；區域：拖曳邊上的 ◆ 彎曲邊線 (Alt+點 ◆ 恢復直線，雙擊邊新增節點)；線：拖曳 ⊕ 新增節點；Alt+點節點刪除。<kbd>Del</kbd> 刪除 <kbd>⌘D</kbd> 複製 <kbd>[ ]</kbd> 旋轉';
     else if (S.tool === 'pan') h = '拖曳平移；⌘/Ctrl+滾輪或觸控板捏合縮放';
     else if (S.tool === 'calibrate') h = '在圖上點兩點 (例如 Google 地圖比例尺兩端)，再輸入實際距離 (公尺)';
     else if (S.tool === 'measure') h = '點兩點量測距離';
@@ -324,10 +339,16 @@
     if (sel) {
       const sh = R.shape(sel, ppm(), P());
       if (sh) strokeShape(sh, '#3fb6ff', 1.5);
-      if (sel.type === 'section' || sel.type === 'line') { ctx.setLineDash([4, 4]); strokeShape({ line: sel.pts }, '#ffffffaa', 1, true); ctx.setLineDash([]); }
+      if (sel.type === 'section' || sel.type === 'line' || sel.type === 'bikelane') { ctx.setLineDash([4, 4]); strokeShape({ line: sel.pts }, '#ffffffaa', 1, true); ctx.setLineDash([]); }
       for (const h of handlesOf(sel)) {
         const s = toScreen(h.p);
         const isRot = h.key === 'rot' || h.key === 'rot2' || h.key === 'rad';
+        if (h.key === 'bend') { // ◆ diamond: drag to bend the edge
+          const curved = sel.bend && sel.bend[h.i];
+          ctx.fillStyle = curved ? '#f0b429' : '#1e6fa8cc'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.2;
+          ctx.beginPath(); ctx.moveTo(s.x, s.y - 6); ctx.lineTo(s.x + 6, s.y); ctx.lineTo(s.x, s.y + 6); ctx.lineTo(s.x - 6, s.y); ctx.closePath(); ctx.fill(); ctx.stroke();
+          continue;
+        }
         if (h.key === 'ins') {
           ctx.fillStyle = '#1e6fa8cc'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.2;
           ctx.beginPath(); ctx.arc(s.x, s.y, 5.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
@@ -410,8 +431,16 @@
       const h = hitHandle(s.x, s.y);
       const sel = findEl(S.sel);
       if (h && e.altKey && h.key === 'pts') {
-        const min = ['line', 'section'].includes(sel.type) ? 2 : 3;
-        if (sel.pts.length > min) { sel.pts.splice(h.i, 1); commit(); }
+        const min = ['line', 'section', 'bikelane'].includes(sel.type) ? 2 : 3;
+        if (sel.pts.length > min) {
+          sel.pts.splice(h.i, 1);
+          if (sel.bend) { sel.bend.splice(h.i, 1); const pi = (h.i - 1 + sel.pts.length) % sel.pts.length; sel.bend[pi] = null; }
+          commit();
+        }
+        return;
+      }
+      if (h && h.key === 'bend' && e.altKey) { // Alt+click the ◆: straighten that edge again
+        if (sel.bend) { sel.bend[h.i] = null; commit(); }
         return;
       }
       if (h && h.key === 'ins') {
@@ -495,7 +524,15 @@
         const el = findEl(S.sel), h = d.h;
         const o = d.orig;
         const rotSnap = (a, near) => (e.shiftKey ? Math.round(a / (Math.PI / 12)) * (Math.PI / 12) : e.altKey ? a : magnetAngle(a, near, el.id));
-        if (h.key === 'pts') {
+        if (h.key === 'bend') {
+          // bend the edge so its curve passes through the cursor (relative to the chord, so it keeps its shape
+          // when the corners move); snaps back to straight when dragged onto the chord
+          const n = el.pts.length, A = el.pts[h.i], B = el.pts[(h.i + 1) % n], d = G.norm(G.sub(B, A));
+          const rel = G.sub(w, G.mid(A, B)), bn = G.dot(rel, G.rightN(d)), bt = G.dot(rel, d);
+          el.bend = el.bend || new Array(n).fill(null);
+          while (el.bend.length < n) el.bend.push(null);
+          el.bend[h.i] = Math.abs(bn) < 5 / S.view.s ? null : { n: bn, t: e.shiftKey ? 0 : bt };
+        } else if (h.key === 'pts') {
           const nb = o.pts[h.i - 1] || o.pts[h.i + 1];
           el.pts[h.i] = snapW(w, nb, e, el.id);
         } else if (h.key === 'p') el.p = snapW(w, null, e, el.id);
@@ -508,6 +545,12 @@
           el[h.key] = p;
         } else if (h.key === 'rot') {
           el.dir = rotSnap(G.angle(G.sub(w, el.p)), el.p);
+        } else if (h.key === 'q') {
+          el.quad[h.i] = snapW(w, null, e, el.id); syncQuad(el);
+        } else if (h.key === 'rot2' && o.quad) {
+          const m = G.centroid(o.quad), d0 = G.angle(G.sub(G.mid(o.quad[3], o.quad[2]), G.mid(o.quad[0], o.quad[1])));
+          const nd = rotSnap(G.angle(G.sub(w, m)), m), da = nd - d0;
+          el.quad = o.quad.map((q) => rotateAbout(q, m, da)); syncQuad(el);
         } else if (h.key === 'rot2') {
           // rotate the whole crosswalk / stop line / box about its centre
           const m = G.mid(o.a, o.b);
@@ -552,9 +595,13 @@
     if (S.tool === 'select') {
       const el = findEl(S.sel);
       if (el && el.pts) {
-        const closed = !['line', 'section'].includes(el.type);
+        const closed = !['line', 'section', 'bikelane'].includes(el.type);
         const r = G.nearestOnPolyline(w, el.pts, closed);
-        if (r && r.d < 10 / S.view.s) { el.pts.splice(r.i + 1, 0, r.proj); commit(); }
+        if (r && r.d < 10 / S.view.s) {
+          el.pts.splice(r.i + 1, 0, r.proj);
+          if (el.bend) { el.bend[r.i] = null; el.bend.splice(r.i + 1, 0, null); } // splitting a curved edge straightens its halves
+          commit();
+        }
       }
     }
   });
@@ -643,10 +690,17 @@
     if (!el) return;
     if (a === 'flip') {
       if (el.dir != null) el.dir += Math.PI;
-      if (el.type === 'line' || el.type === 'section') el.pts.reverse();
+      if (el.type === 'line' || el.type === 'section' || el.type === 'bikelane') el.pts.reverse();
     }
     if (a === 'realign') { if (el.a) alignTwo(el, false); else if (!alignPoint(el)) alert('附近找不到車道 — 請先畫路段或車道線。No lane found nearby.'); }
     if (a === 'square') alignTwo(el, true);
+    if (a === 'addStop' && el.type === 'crosswalk' && el.quad) {
+      const [c0, c1, c2, c3] = el.quad, spec = P().stopLine, sw = spec.width.max;
+      let nn = G.rightN(G.norm(G.sub(c1, c0))); if (G.dot(G.sub(c3, c0), nn) > 0) nn = G.mul(nn, -1); // away from the crosswalk
+      const off = G.mul(nn, (spec.toCrosswalk.min + sw / 2) * ppm());
+      const s = { id: newId(), type: 'stopline', width: sw, a: G.add(c0, off), b: G.add(c1, off), dir: G.angle(G.mul(nn, -1)) };
+      S.els.push(s); S.sel = s.id; commit(); return;
+    }
     if (a === 'addStop' && el.type === 'crosswalk') {
       const f = R.frame(el, ppm(), el.width, false);
       const spec = P().stopLine, sw = spec.width.max;
@@ -669,7 +723,7 @@
   function dirOf(el, near) {
     if (el.a || el.p) return el.dir || 0;
     const pts = R.basePts(el, ppm());
-    const r = G.nearestOnPolyline(near || G.centroid(pts), pts, !['line', 'section'].includes(el.type));
+    const r = G.nearestOnPolyline(near || G.centroid(pts), pts, !['line', 'section', 'bikelane'].includes(el.type));
     if (!r) return 0;
     let t = r.tangent;
     if (el.type === 'section' && el.lanesB > 0 && near && G.dot(G.sub(near, r.proj), G.rightN(t)) < 0) t = G.mul(t, -1);
@@ -742,6 +796,11 @@
         src.p = G.add(c, G.mul(t, G.dot(G.sub(src.p, c), t)));
       }
     }
+    if (src.quad && A.orig.quad && A.orig.a && src.a) { // carry the trapezoid along with its centre line
+      const m0 = G.mid(A.orig.a, A.orig.b), m1 = G.mid(src.a, src.b);
+      const da = G.angle(G.sub(src.b, src.a)) - G.angle(G.sub(A.orig.b, A.orig.a));
+      src.quad = A.orig.quad.map((q) => G.add(rotateAbout(q, m0, da), G.sub(m1, m0)));
+    }
     applyEdgeAlign(src, tgt);
   }
   function alignAxes(tgt, src) {
@@ -777,7 +836,7 @@
     const src = findEl(A.srcId);
     A.opts.gap = defaultGap(src, el);
     A.opts.parallel = BAND.has(src.type) || POINT.has(src.type);
-    A.opts.frame = (el.a || el.p || ['line', 'section'].includes(el.type)) ? 'target' : 'screen';
+    A.opts.frame = (el.a || el.p || ['line', 'section', 'bikelane'].includes(el.type)) ? 'target' : 'screen';
     applyAlign(); commit(); updateHint();
   }
 
@@ -1408,7 +1467,7 @@
     } else if (f.kind === 'sel') {
       inp = document.createElement('select');
       f.options.forEach(([v, l]) => { const o = document.createElement('option'); o.value = v; o.textContent = l; inp.appendChild(o); });
-      inp.value = target[f.key];
+      inp.value = f.value != null ? f.value : target[f.key];
       inp.onchange = () => onChange(f.key, inp.value);
     } else if (f.kind === 'chk') {
       inp = document.createElement('input'); inp.type = 'checkbox'; inp.checked = !!target[f.key];
@@ -1479,6 +1538,18 @@
       if (el && S.align && S.align.srcId === el.id) box.appendChild(alignPanel(el));
       if (!el && S.item) { const i = document.createElement('div'); i.className = 'info'; i.textContent = S.item.label + ' — ' + S.item.en + '（以下設定套用於接下來放置的物件）'; box.appendChild(i); }
       const onChange = (key, v, live) => {
+        if (key === 'shape' && el && el.type === 'crosswalk') {
+          if (v === 'trap' && !el.quad) {
+            el.quad = R.frame(el, ppm(), el.width, false).corners.map(G.copy);
+            if (el.owner) { // a free shape can't follow its roundabout any more: make it independent
+              const o = findEl(el.owner);
+              if (o && o.type === 'roundabout' && el.legKey) (o.removed = o.removed || []).push('crosswalk:' + el.legKey);
+              delete el.owner; delete el.legKey; delete el.anchor;
+            }
+            syncQuad(el);
+          } else if (v === 'rect' && el.quad) { syncQuad(el); delete el.quad; }
+          commit(); return;
+        }
         target[key] = v;
         if (target.type === 'surface' && key === 'kind' && P().colors[v]) target.color = P().colors[v];
         clampAll(target);

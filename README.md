@@ -35,7 +35,15 @@ The 讓路線 is also available on its own in ④ 路口 for T-junctions and min
 Crosswalks, stop lines and yield lines made by the intersection or roundabout tools belong to it: deleting the intersection/roundabout deletes them too (⌘Z brings everything back). Select one and click **解除連動 Detach** to make it independent. A deleted roundabout piece is not re-created. Lane and edge lines are never drawn through a crosswalk, and medians are opened automatically wherever any crosswalk crosses them, so the opening follows the crosswalk's width and position.
 
 ## Editing shapes
-Select a road area, sidewalk, road section or line: every segment shows a ⊕ handle at its middle. Drag it to add a new point there (it follows the curve on smooth sections). Alt+click a point to delete it.
+- **Areas** (road area, sidewalk, island, coloured surface, 槽化線, 網狀線): every edge has a ◆ handle at its middle. Drag it to bend that edge into a curve, like reshaping a path in Inkscape (Shift keeps the bulge centred; Alt+click the ◆ to straighten it again). Double-click an edge to add a corner point.
+- **Lines and road sections**: drag the ⊕ handle in the middle of a segment to add a point there (it follows the curve on smooth sections).
+- Alt+click a point to delete it.
+
+## Trapezoid crosswalks
+Set a crosswalk's 形狀 Shape to 梯形 Trapezoid, then drag its four corners to fit odd-shaped junctions. 枕木紋 bars fan out across it and stay 40 cm wide at the legal gap; 斑馬紋 edge lines follow the slanted edges. The green base, median openings, lane-line cut-outs, ＋停止線 and alignment all follow the shape. (A roundabout's crosswalk becomes independent when made a trapezoid.)
+
+## Bike lanes
+Pick 🚲 自行車專用車道, 雙向自行車道 or 自行車優先車道 and draw along the lane's centre line (straight or curved). The lane builds itself: brick-red surface and 雙白實線 separator (§174), 2.5 × 1.0 m diamonds every 30–60 m, bike icons (§183-1); priority lanes get two white solid lines (§174-4). Road lane lines underneath give way, and the markings break at crosswalks. Widths follow the design manual (≈ one-way ≥ 1.2 m, two-way ≥ 2.5 m).
 
 ## Aligning and the magnet
 - **Align (A)**: select a crosswalk, stop line, scooter box, arrow, text or icon, press **A** (or click 📐 對齊至…), then click the object to line it up with. A stop line aligned to a crosswalk becomes parallel and sits the §170 2.0 m edge-to-edge gap away. The panel then offers left / centre / right and top / middle / bottom alignment, measured either in the target's frame (up = direction of travel, left/right = the driver's left/right) or in screen directions. Any object can be aligned this way; crosswalks, stop lines, boxes, arrows, text and icons can also take the target's direction.
