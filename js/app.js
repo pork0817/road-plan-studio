@@ -709,6 +709,12 @@
       S.els.push(s); S.sel = s.id;
     }
     if (a === 'regen' && el.type === 'roundabout') { regenerateRoundabout(el); return; }
+    if (a === 'regenJunction' && el.type === 'junction' && el.genClick) {
+      const made = buildJunction(el.genClick, el.genPrm || {});
+      if (!made) return;
+      S.els = S.els.filter((e) => e.id !== el.id && e.owner !== el.id).concat(made);
+      S.sel = made[0].id; commit(); return;
+    }
     if (a === 'rotL') el.dir -= Math.PI / 12;
     if (a === 'rotR') el.dir += Math.PI / 12;
     commit();
@@ -1349,7 +1355,7 @@
       for (const sgn of [1, -1]) {
         if ((sgn > 0 ? len.f : len.b) < 6 * m) continue; // road ends here (T-junction)
         const v = G.mul(rd.t, sgn), nv = G.rightN(v);
-        legs.push({ rd, v, nv, sgn, rightExt: sgn > 0 ? rd.L.right : rd.L.left, leftExt: sgn > 0 ? rd.L.left : rd.L.right });
+        legs.push({ rd, v, nv, sgn, len: sgn > 0 ? len.f : len.b, rightExt: sgn > 0 ? rd.L.right : rd.L.left, leftExt: sgn > 0 ? rd.L.left : rd.L.right });
       }
     }
     // distance along each leg from C to the crossing roads' pavement edge (checked at both leg edges, so skewed crossings work)
@@ -1386,11 +1392,19 @@
       // incoming lanes: traffic heading toward C keeps right, i.e. the left side of v
       const oneWay = el.lanesB === 0;
       const incoming = oneWay ? lg.sgn < 0 : true;
-      const ds = cwOut + (prm.crosswalks ? prm.stopGap * m : 0) + (stopW * m) / 2;
+      const front = cwOut + (prm.crosswalks ? prm.stopGap * m : 0);                // first line before the crosswalk
+      const boxD = 3, withBox = !!el.autoBox && incoming && prm.stops;
+      const ds = front + (withBox ? boxD * m : 0) + (stopW * m) / 2;              // car stop line (behind the box)
+      const inner = oneWay ? lg.rightExt - 0.3 : -((el.centerType === 'median' ? el.medianWidth / 2 + 0.2 : 0.15));
       if (prm.stops && incoming) {
-        const inner = oneWay ? lg.rightExt - 0.3 : -((el.centerType === 'median' ? el.medianWidth / 2 + 0.2 : 0.15));
         out.push({ id: newId(), owner: jid, type: 'stopline', width: stopW, a: at(ds, inner), b: at(ds, -lg.leftExt + 0.3), dir: G.angle(G.mul(lg.v, -1)) });
       }
+      if (withBox) { // §174-2 機慢車停等區: between the car stop line and the crosswalk, across the entering lanes
+        const sb = ds - (stopW * m) / 2;
+        out.push({ id: newId(), owner: jid, type: 'scooterbox', depth: boxD, side: '0.15', icon: true, text: '', a: at(sb, inner), b: at(sb, -lg.leftExt + 0.3), dir: G.angle(G.mul(lg.v, -1)) });
+      }
+      if (incoming) lg.entry = { ds, inner, oneWay, el };
+      lg.cwIn = cwIn;
       const dIn = prm.stops && incoming ? ds + (stopW * m) / 2 : cwOut;
       const dOut = oneWay && incoming && prm.stops ? dIn : cwOut;
       // Outline steps from the stop line (incoming half) to the crosswalk edge (outgoing half).
@@ -1401,7 +1415,56 @@
       if (oneWay || Math.abs(dIn - dOut) < 1e-6) poly.push(at(dIn, -lg.leftExt - 1), at(dOut, lg.rightExt + 1));
       else poly.push(at(dIn, -lg.leftExt - 1), at(dIn, step), at(dOut, step), at(dOut, lg.rightExt + 1));
     }
-    out.unshift({ id: jid, type: 'junction', pts: poly });
+    // which turns each entry can make (other legs to its left / straight on / right)
+    const turnsFrom = (lg) => {
+      const tr = G.mul(lg.v, -1), res = { L: null, S: null, R: null };
+      for (const o of legs) {
+        if (o === lg) continue;
+        const ang = Math.atan2(G.dot(o.v, G.rightN(tr)), G.dot(o.v, tr)) * 180 / Math.PI;
+        const key = Math.abs(ang) < 35 ? 'S' : ang > 0 ? 'R' : 'L';
+        if (!res[key] || (key === 'L' && ang < res.L.ang) || (key === 'R' && ang > res.R.ang)) res[key] = { o, ang };
+      }
+      return res;
+    };
+    for (const lg of legs) {
+      if (!lg.entry) continue;
+      const el = lg.rd.el, lw = el.laneWidth, tr = G.mul(lg.v, -1), t = turnsFrom(lg);
+      const atL = (L, d, off) => G.add(G.add(C, G.mul(L.v, d)), G.mul(L.nv, off * m));
+      const n = lg.entry.oneWay ? el.lanesF : (lg.sgn > 0 ? el.lanesB : el.lanesF);
+      const start = lg.entry.oneWay ? 0 : (el.centerType === 'median' ? el.medianWidth / 2 + 0.3 : 0);
+      // lane centres in the leg frame, from the driver's left (k = 0) to right
+      const W1 = n * lw + (el.slowLane || 0) + (el.bikeLane || 0);           // one-way: lanes start at the road's left edge
+      const laneOff = (k) => (lg.entry.oneWay ? W1 / 2 - (k + 0.5) * lw : -(start + (k + 0.5) * lw));
+      // §188 指向線, repeated every 30 m (§176), chosen from the turns this entry allows
+      if (el.autoArrows !== false && n > 0) {
+        const pick = (k) => {
+          const L = !!t.L, Sx = !!t.S, Rx = !!t.R;
+          const combo = (l, s, r) => (l && s && r ? 'SLR' : l && s ? 'SL' : s && r ? 'SR' : l && r ? 'LR' : l ? 'L' : r ? 'R' : 'S');
+          if (n === 1) return combo(L, Sx, Rx);
+          if (k === 0) return L ? (n >= 3 && Sx ? 'L' : combo(true, Sx, false)) : combo(false, Sx, !Sx && Rx);
+          if (k === n - 1) return Rx ? combo(false, Sx, true) : combo(!Sx && L, Sx, false);
+          return Sx ? 'S' : combo(L, false, Rx);
+        };
+        for (let g = 0; g < 2; g++) {
+          const sA = lg.entry.ds + (0.2 + 3 + 2.5 + g * 30) * m;
+          if (sA + 3 * m > lg.len) break;
+          for (let k = 0; k < n; k++) out.push({ id: newId(), owner: jid, type: 'arrow', kind: pick(k), length: 5, p: atL(lg, sA, laneOff(k)), dir: G.angle(tr) });
+        }
+      }
+      // 左轉導引線: from the left-turn lane at the stop line, through the junction, into the road on the left
+      if (el.leftGuide && t.L && !lg.entry.oneWay) {
+        const T = t.L.o, elT = T.rd.el, lwT = elT.laneWidth;
+        const startT = elT.lanesB === 0 ? -(T.leftExt - 0.3) : (elT.centerType === 'median' ? elT.medianWidth / 2 + 0.3 : 0);
+        const sIn = lg.entry.ds - (stopW * m) / 2, sOut = T.cwIn;
+        for (const [oi, ot] of [[-start, startT], [-(start + lw), startT + lwT]]) {
+          const P0 = atL(lg, sIn, oi), P1 = atL(T, sOut, ot);
+          const X = lineIntersect(P0, tr, P1, T.v), ctl = X && G.dot(G.sub(X, P0), tr) > 0 ? X : G.mid(P0, P1);
+          const pts = []; for (let i = 0; i <= 24; i++) { const u = i / 24, a1 = (1 - u) * (1 - u), b1 = 2 * (1 - u) * u, c1 = u * u; pts.push({ x: a1 * P0.x + b1 * ctl.x + c1 * P1.x, y: a1 * P0.y + b1 * ctl.y + c1 * P1.y }); }
+          out.push({ id: newId(), owner: jid, type: 'line', style: 'guide', smooth: false, pts });
+        }
+      }
+    }
+    out.unshift({ id: jid, type: 'junction', pts: poly, genClick: G.copy(click), genPrm: clone(prm) });
     return out;
   }
 

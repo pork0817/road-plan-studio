@@ -23,6 +23,7 @@ window.RoadPresets = window.RoadPresets || {};
     edge:         { name: '路面邊線', en: 'Edge line', color: C.white, width: 0.15, pattern: 'solid', ref: '§183 白實線 線寬15cm' },
     slowSep:      { name: '快慢車道分隔線', en: 'Fast/slow divider', color: C.white, width: 0.10, pattern: 'solid', ref: '§183-1 白實線 線寬10cm' },
     bikeSep:      { name: '自行車專用車道線', en: 'Bike lane divider', color: C.white, width: 0.10, sep: 0.10, pattern: 'double', ref: '§174 以雙白實線分隔 (線寬/間隔同§167: 10cm)' },
+    guide:        { name: '路口導引線', en: 'Junction guide line', color: C.white, width: 0.15, pattern: 'dashed', dash: [1, 1], ref: '≈ 白虛線 引導轉彎車流 (§189-2 附圖)' },
     noParking:    { name: '禁止停車線', en: 'No parking (curb)', color: C.yellow, width: 0.10, pattern: 'solid', curb: true, ref: '§168 黃實線 線寬10cm；無緣石時距路面邊緣30cm' },
     noStopping:   { name: '禁止臨時停車線', en: 'No stopping (curb)', color: C.red, width: 0.10, pattern: 'solid', curb: true, ref: '§169 紅實線 線寬10cm；無緣石時距路面邊緣30cm' },
   };
@@ -52,7 +53,7 @@ window.RoadPresets = window.RoadPresets || {};
   };
 
   const sec = (label, en, o) => ({ id: 'sec_' + label, label, en, mode: 'polyline', icon: { glyph: '═' },
-    defaults: Object.assign({ type: 'section', lanesF: 1, lanesB: 1, laneWidth: 3.25, centerType: 'centerDouble', medianWidth: 2, slowLane: 0, bikeLane: 0, edge: true, pave: false, smooth: true }, o) });
+    defaults: Object.assign({ type: 'section', lanesF: 1, lanesB: 1, laneWidth: 3.25, centerType: 'centerDouble', medianWidth: 2, slowLane: 0, bikeLane: 0, edge: true, pave: false, smooth: true, autoArrows: true, autoBox: false, leftGuide: false }, o) });
   const arrow = (k, g) => ({ id: 'arrow_' + k, label: arrowKinds.find((a) => a[0] === k)[1].split(' ')[0], en: '指向線', mode: 'point', icon: { glyph: g }, defaults: { type: 'arrow', kind: k, length: 5, dir: -Math.PI / 2 } });
   const text = (t, o) => ({ id: 'text_' + t, label: t, en: (o && o.en) || '路面文字', mode: 'point', icon: { glyph: t.slice(0, 2) }, defaults: Object.assign({ type: 'text', text: t, charLen: 2.5, charWid: 1.0, charGap: 1.0, color: 'white', order: 'far', dir: -Math.PI / 2 }, o, { en: undefined }) });
   const icon = (k, label, en, o) => ({ id: 'icon_' + k + (o && o.small ? '_s' : ''), label, en, mode: 'point', icon: { glyph: k === 'bike' ? '🚲' : '🛵' }, defaults: Object.assign({ type: 'symbol', kind: k, small: false, dir: -Math.PI / 2 }, o) });
@@ -126,6 +127,10 @@ window.RoadPresets = window.RoadPresets || {};
         if (el.lanesB > 0 && el.centerType === 'median') f.push(num('medianWidth', '分隔島寬 Median', 0.5, 10, 0.1));
         f.push(num('slowLane', '機慢車道寬 Slow lane (0=無)', 0, 4, 0.1), num('bikeLane', '自行車道寬 Bike lane (0=無)', 0, 3, 0.1),
           { kind: 'chk', key: 'edge', label: '路面邊線 Edge lines' }, { kind: 'chk', key: 'pave', label: '自動鋪路面 Pave band' }, { kind: 'chk', key: 'smooth', label: '平滑曲線 Smooth curve' },
+          { kind: 'info', text: '路口自動標線 (由「路口」工具套用；改設定後按路口的「重新產生」)：' },
+          { kind: 'chk', key: 'autoArrows', label: '自動指向線 Lane arrows (§188)' },
+          { kind: 'chk', key: 'autoBox', label: '機慢車停等區 Scooter box (§174-2)' },
+          { kind: 'chk', key: 'leftGuide', label: '左轉導引線 Left-turn guide lines' },
           { kind: 'info', text: '台灣靠右行駛：畫線方向的右側為順向車道。Right-hand traffic: lanes on the right of your drawing direction flow forward.' });
         return f;
       }
@@ -208,7 +213,7 @@ window.RoadPresets = window.RoadPresets || {};
         { kind: 'chk', key: 'triangles', label: '倒三角形 Triangles' }].concat(el.arcC ? [{ kind: 'chk', key: 'curved', label: '沿圓環弧線 Follow roundabout curve' }] : []).concat([
         { kind: 'law', text: '§172 讓路線：白色雙虛線＋倒三角形 (寬1.2m 長3.0m 線寬15cm 頂部60cm)，三角形距虛線2.0–2.5m。虛線尺寸量自附圖 (≈)。' },
         { kind: 'btn', action: 'realign', label: '對齊車道 Align to lanes' }, { kind: 'btn', action: 'flip', label: '反轉方向 Flip' }]);
-      case 'junction': return [{ kind: 'info', text: '路口範圍：範圍內的車道線、路段標線會被中斷 (行人穿越道、箭頭等不受影響)。拖曳節點可調整範圍；此框只在編輯時顯示，不會匯出。' }];
+      case 'junction': return [{ kind: 'btn', action: 'regenJunction', label: '↻ 重新產生 Regenerate' }, { kind: 'info', text: '路口範圍：範圍內的車道線、路段標線會被中斷 (行人穿越道、箭頭等不受影響)。拖曳節點可調整範圍；此框只在編輯時顯示，不會匯出。' }];
       case 'bikelane': {
         const minW = el.kind === 'priority' ? 1.2 : el.twoWay ? 2.5 : 1.2;
         const f = [{ kind: 'sel', key: 'kind', label: '種類 Type', options: [['exclusive', '專用車道 Exclusive (§174)'], ['priority', '優先車道 Priority (§174-4)']] },

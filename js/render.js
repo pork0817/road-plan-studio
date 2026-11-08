@@ -870,7 +870,7 @@ window.Render = (function () {
     // Layer 1: coloured surfaces
     for (const el of els) {
       if (el.type === 'surface') { ctx.save(); yieldToRoundabouts(el); drawSurface(ctx, el, ppm, P); ctx.restore(); }
-      if (el.type === 'bikelane' || el.type === 'buslane') { ctx.save(); yieldToRoundabouts(el); for (const c of crossCutsEarly) clipOutside(c); drawBikeSurface(ctx, el, ppm, P); ctx.restore(); }
+      if (el.type === 'buslane') { ctx.save(); yieldToRoundabouts(el); for (const c of crossCutsEarly) clipOutside(c); drawBikeSurface(ctx, el, ppm, P); ctx.restore(); }
       if (el.type === 'section') {
         const pts = R.basePts(el, ppm);
         if (pts.length < 2) continue;
@@ -890,9 +890,9 @@ window.Render = (function () {
     };
 
     for (const el of els) {
-      if (!MARK.has(el.type)) continue;
+      if (!MARK.has(el.type) || el.type === 'bikelane') continue; // bike lanes are drawn later, on any surface
       ctx.save();
-      if (el.type === 'line' || el.type === 'section') {
+      if ((el.type === 'line' && el.style !== 'guide') || el.type === 'section') { // guide lines run through junctions
         cutJunctions(); for (const c of crossCutsEarly) clipOutside(c); // crosswalks take priority
         for (const b of bikeMasks) clipOutside(b); // road lane lines give way to bike lanes drawn over them
       } else if (el.type === 'bikelane' || el.type === 'buslane') { for (const c of crossCutsEarly) clipOutside(c); }
@@ -957,6 +957,13 @@ window.Render = (function () {
           ctx.restore();
         }
       }
+    }
+    // Bike lanes go on any surface — road, sidewalk or bare image — so they are drawn last and not clipped
+    for (const el of els) {
+      if (el.type !== 'bikelane') continue;
+      ctx.save(); yieldToRoundabouts(el); for (const c of crossCutsEarly) clipOutside(c);
+      drawBikeSurface(ctx, el, ppm, P); drawBikeLane(ctx, el, ppm, P);
+      ctx.restore();
     }
   };
 
