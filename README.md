@@ -14,6 +14,16 @@ Browser tool for drawing road redesigns over satellite images. Open `index.html`
 
 Sidewalks always draw on top of markings, so a crosswalk that runs into a sidewalk is hidden under it. Markings are clipped to the road area; you can turn that off in the top bar.
 
+## Lane cards
+Select a road section to edit its lanes as cards, one row per traffic direction, in the order a driver sees them.
+- Click a lane card to choose its arrow: 直行, 左轉, 右轉, 直左, 直右, 左右, 直左右 or 迴轉. Choosing one fixes that road's lane use; **自動 Auto** hands it back to the intersection.
+- **－ / ＋** change the number of lanes.
+- **＋ 附加左轉 / 附加右轉** add turn pocket lanes (up to three on each side); × removes one.
+  - Left pockets are cut from the median on a two-way road (about 2.75 m of median per lane), or widen a one-way road on the driver's left.
+  - Right pockets widen the road on the kerb side. They can't be added where a bike or slow lane runs along the kerb.
+- Several left- or right-turn lanes are fine (for example `L,L,S,SR`, or two left pockets). 左轉導引線 / 右轉導引線 draw guide lines from every turning lane into the matching lane of the road turned into.
+- The panel is grouped into 車道 Lanes, 左轉 Left turn, 道路 Road and a folded 更多 More.
+
 ## Intersections
 1. Draw a **road section** (② 路段) along the centre line of each road, running straight through the junction.
 2. Pick **路口 (自動) Intersection** and click where the roads cross.

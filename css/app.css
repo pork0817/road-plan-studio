@@ -112,3 +112,32 @@ body.lib-hidden #libShow { display: block; }
 .layers li .ey:hover { color: var(--text); }
 .layers li .ey.off { color: #6b7280; }
 .layers li.hiddenrow span { color: #6b7280; text-decoration: line-through; }
+
+/* ---- property panel sections ---- */
+.fsec { margin: 4px 0 10px; }
+.fhead { font-size: 11.5px; font-weight: 600; color: var(--muted); letter-spacing: .3px; padding: 8px 0 4px; border-top: 1px solid var(--line); }
+.fsec:first-of-type .fhead { border-top: none; }
+.fsec.fold .fhead { cursor: pointer; user-select: none; }
+.fsec.fold .fhead::before { content: "▸ "; }
+.fsec.fold.open .fhead::before { content: "▾ "; }
+.fsec.fold:not(.open) .fbody { display: none; }
+/* ---- lane cards ---- */
+.laneed { margin: 2px 0 6px; }
+.ledhead { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #c9ced5; margin: 8px 0 6px; }
+.linkbtn { background: none; border: none; color: var(--accent); padding: 0 2px; font-size: 11.5px; }
+.ledrow { display: flex; gap: 3px; padding-bottom: 4px; align-items: stretch; }
+.lcard { position: relative; flex: 1 1 0; min-width: 24px; max-width: 48px; background: #8f8f8f; border-radius: 9px; display: flex; flex-direction: column; align-items: center; padding: 3px 0 6px; cursor: pointer; border: 2px solid transparent; }
+.lcard:hover { border-color: #c9ced5; }
+.lcard.auto { background: #7a7a7a; }
+.lcard.picked, .lcard.cur { border-color: var(--accent); }
+.lcard.pocket { background: #6f8a9c; cursor: default; }
+.lclabel { font-size: 10.5px; color: #fff; margin-bottom: 1px; white-space: nowrap; overflow: hidden; max-width: 100%; text-align: center; }
+.lcard canvas { width: 100% !important; max-width: 30px; height: auto !important; }
+.lcx { position: absolute; top: -6px; right: -6px; width: 16px; height: 16px; border-radius: 8px; padding: 0; font-size: 11px; line-height: 14px; background: #3a3f46; color: #fff; border: 1px solid #555; }
+.lcadd { flex: 0 0 30px; border: 1px dashed #59606a; background: none; color: var(--muted); border-radius: 9px; font-size: 15px; line-height: 1.1; padding: 4px 0; }
+.lcadd small { font-size: 9px; writing-mode: vertical-rl; letter-spacing: 1px; }
+.lcadd:disabled { opacity: .35; }
+.ledmenu { display: flex; flex-wrap: wrap; gap: 4px; background: #15171a; border: 1px solid var(--line); border-radius: 8px; padding: 6px; margin: 4px 0; }
+.ledmenu .lcard { flex: 0 0 44px; }
+.ledcount { display: flex; align-items: center; gap: 8px; margin: 4px 0 2px; font-size: 12px; color: var(--muted); }
+.ledcount button { width: 26px; height: 24px; padding: 0; }

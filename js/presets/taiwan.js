@@ -134,28 +134,31 @@ window.RoadPresets = window.RoadPresets || {};
       case 'surface': return [{ kind: 'sel', key: 'kind', label: '種類 Kind', options: surfaceKinds }, { kind: 'color', key: 'color', label: '顏色 Colour' }, { kind: 'chk', key: 'edge', label: '白色邊線 15cm edge' }];
       case 'section': {
         const f = [
-          { kind: 'num', key: 'lanesF', label: '順向車道數 Lanes →', min: 0, max: 6, step: 1 },
-          { kind: 'num', key: 'lanesB', label: '對向車道數 Lanes ← (0=單行)', min: 0, max: 6, step: 1 },
-          { kind: 'num', key: 'lanesF2', label: '後段順向車道數 Lanes → after change', min: 0, max: 6, step: 1, dflt: el.lanesF },
-          ...(el.lanesB > 0 ? [{ kind: 'num', key: 'lanesB2', label: '後段對向車道數 Lanes ← after change', min: 0, max: 6, step: 1, dflt: el.lanesB }] : []),
-          ...((el.lanesF2 != null && +el.lanesF2 !== +el.lanesF) || (el.lanesB > 0 && el.lanesB2 != null && +el.lanesB2 !== +el.lanesB) ? [num('changeAt', '變化起點 Change starts at', 0, 2000, 1, '≈ 距路段起點 (第一個點) 的距離'),
-            Object.assign(num('taper', '漸變段長 Taper length', 5, 200, 1, '≈ 增減車道漸變段，常用 30–60 m'), { dflt: 30 })] : []),
-          num('laneWidth', '車道寬 Lane width', 2.5, 4.0, 0.05, '≈ 市區常用 3.0–3.5m'),
+          { kind: 'head', label: '車道 Lanes' },
+          { kind: 'laneEditor' },
+          { kind: 'head', label: '左轉 Left turn' },
+          { kind: 'sel', key: 'leftTurn', label: '左轉方式', options: [['shared', '依車道箭頭 By lane arrows'], ['dedicated', '最內側車道專用 Inner lane only'], ['twoStage', '機車兩段式 Two-stage (scooters)'], ['banned', '禁止左轉 No left turn']] },
+          { kind: 'chk', key: 'leftGuide', label: '左轉導引線 Left-turn guide lines' },
+          { kind: 'chk', key: 'rightGuide', label: '右轉導引線 Right-turn guide lines' },
         ];
+        const anyPocket = ['pocketLF', 'pocketLB', 'pocketRF', 'pocketRB'].some((k) => +el[k] > 0) || el.leftTurn === 'pocket';
+        if (anyPocket) f.push(num('pocketLen', '附加車道長度 Pocket length', 10, 120, 1), num('pocketTaper', '漸變段長度 Taper', 5, 80, 1));
+        f.push({ kind: 'head', label: '道路 Road' },
+          num('laneWidth', '車道寬 Lane width', 2.5, 4.0, 0.05),
+          { kind: 'num', key: 'lanesB', label: '對向車道數 (0 = 單行道)', min: 0, max: 6, step: 1 });
         if (el.lanesB > 0) f.push({ kind: 'sel', key: 'centerType', label: '中央 Centre', options: centerTypes });
         if (el.lanesB > 0 && el.centerType === 'median') f.push(num('medianWidth', '分隔島寬 Median', 0.5, 10, 0.1));
-        f.push(num('slowLane', '機慢車道寬 Slow lane (0=無)', 0, 4, 0.1), num('bikeLane', '自行車道寬 Bike lane (0=無)', 0, 3, 0.1),
-          { kind: 'chk', key: 'edge', label: '路面邊線 Edge lines' }, { kind: 'chk', key: 'pave', label: '自動鋪路面 Pave band' }, { kind: 'chk', key: 'smooth', label: '平滑曲線 Smooth curve' },
-          { kind: 'info', text: '路口自動標線 (由「路口」工具套用；改設定後按路口的「重新產生」)：' },
-          { kind: 'chk', key: 'autoArrows', label: '自動指向線 Lane arrows (§188)' },
-          { kind: 'txt', key: 'laneUse', label: '車道用途 Lane use (由左至右 L,S,R,SL,SR…；空白=自動)' },
-          { kind: 'chk', key: 'autoBox', label: '機慢車停等區 Scooter box (§174-2)' }, num('boxDepth', '停等區縱深 Box depth', 2.5, 6, 0.1, '法規 2.5–6 m'),
-          num('solidLen', '近路口實線 Solid lane lines before stop line', 0, 60, 1, '≈ 禁止變換車道線，0 = 不設'),
-          { kind: 'sel', key: 'leftTurn', label: '左轉設計 Left-turn design', options: [['shared', '共用車道 Shared (直左)'], ['dedicated', '左轉專用車道 Dedicated lane'], ['pocket', '左轉附加車道 Pocket from median'], ['twoStage', '機慢車兩段式左轉 Two-stage (待轉區)'], ['banned', '禁止左轉 No left turn']] },
-          ...(el.leftTurn === 'pocket' ? [num('pocketLen', '附加車道長 Pocket length', 10, 120, 1, '≈ 依左轉需求，常用 30 m'), num('pocketTaper', '漸變段長 Taper length', 5, 80, 1, '≈'),
-            { kind: 'info', text: el.lanesB === 0 ? '單行道 (例如快慢分隔的快車道)：路面在駕駛人左側加寬一條左轉車道，並切開該側的分隔島。One-way road: the pocket widens the road on the driver\'s left, opening any island there.' : el.centerType === 'median' ? '從中央分隔島切出一條左轉車道 (寬 ≤ 分隔島寬 − 0.5 m，需 ≥ 1.5 m)。Cut from the median.' : '雙向道路無分隔島時，請用「左轉專用車道」，或用「後段車道數」在路口前增加車道。Two-way without a median: use a dedicated lane, or add a lane before the junction (Lanes after change).' }] : []),
-          { kind: 'chk', key: 'leftGuide', label: '左轉導引線 Left-turn guide lines' },
-          { kind: 'info', text: '台灣靠右行駛：畫線方向的右側為順向車道。Right-hand traffic: lanes on the right of your drawing direction flow forward.' });
+        f.push(num('bikeLane', '自行車道寬 Bike lane (0 = 無)', 0, 3, 0.1), num('slowLane', '機慢車道寬 Slow lane (0 = 無)', 0, 4, 0.1),
+          { kind: 'chk', key: 'pave', label: '鋪路面 Pave' }, { kind: 'chk', key: 'edge', label: '路面邊線 Edge lines' }, { kind: 'chk', key: 'smooth', label: '平滑曲線 Smooth curve' },
+          { kind: 'head', label: '更多 More', fold: true },
+          { kind: 'chk', key: 'autoArrows', label: '自動指向線 Lane arrows' },
+          { kind: 'chk', key: 'autoBox', label: '機車停等區 Scooter box' });
+        if (el.autoBox) f.push(num('boxDepth', '停等區深度 Box depth', 2.5, 6, 0.1));
+        f.push(num('solidLen', '路口前實線 Solid lines before stop line', 0, 60, 1),
+          { kind: 'num', key: 'lanesF2', label: '後段車道數 → Lanes after change', min: 0, max: 6, step: 1, dflt: el.lanesF },
+          ...(el.lanesB > 0 ? [{ kind: 'num', key: 'lanesB2', label: '後段對向車道數 ← after change', min: 0, max: 6, step: 1, dflt: el.lanesB }] : []),
+          ...((el.lanesF2 != null && +el.lanesF2 !== +el.lanesF) || (el.lanesB > 0 && el.lanesB2 != null && +el.lanesB2 !== +el.lanesB) ? [num('changeAt', '變化起點 Change starts at (m)', 0, 2000, 1),
+            Object.assign(num('taper', '漸變段長 Taper length', 5, 200, 1), { dflt: 30 })] : []));
         return f;
       }
       case 'line': {

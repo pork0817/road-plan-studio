@@ -55,7 +55,9 @@
   }
   const resetKnown = () => { known = new Set(S.els.map((e) => e.id)); };
   // projects saved before drawing order existed: sort once into the default levels (stable), so they look the same
-  const migrateOrder = (d) => { if (!d || !(d.v >= 2)) S.els = S.els.map((e, i) => [e, i]).sort((a, b) => R.rankOf(a[0]) - R.rankOf(b[0]) || a[1] - b[1]).map((x) => x[0]); };
+  // roads saved with the old single 'pocket' left-turn setting: one added left-turn lane in each direction
+  const migrateSections = () => { for (const e of S.els) if (e.type === 'section' && e.leftTurn === 'pocket') { if (e.pocketLF == null) e.pocketLF = 1; if (e.lanesB > 0 && e.pocketLB == null) e.pocketLB = 1; e.leftTurn = 'shared'; } };
+  const migrateOrder = (d) => { migrateSections(); if (!d || !(d.v >= 2)) S.els = S.els.map((e, i) => [e, i]).sort((a, b) => R.rankOf(a[0]) - R.rankOf(b[0]) || a[1] - b[1]).map((x) => x[0]); };
   // swap a generator's pieces for freshly built ones, keeping the drawing order: each new piece takes the list
   // slot of an old piece of the same kind; extras are filed by level (placeNew), surplus old slots disappear
   function replaceOwned(isOld, fresh) {
@@ -1377,7 +1379,7 @@
   }
   // An intersection keeps the click and settings it was made with; whenever one of the roads it is built from
   // changes (shape, lanes, lane use, arrow / box / guide options …) its markings are rebuilt straight away.
-  const SEC_KEYS = ['pts', 'smooth', 'lanesF', 'lanesB', 'laneWidth', 'centerType', 'medianWidth', 'slowLane', 'bikeLane', 'edge', 'autoArrows', 'autoBox', 'boxDepth', 'solidLen', 'laneUse', 'leftGuide', 'leftTurn', 'pocketLen', 'pocketTaper', 'lanesF2', 'lanesB2', 'changeAt', 'taper'];
+  const SEC_KEYS = ['pts', 'smooth', 'lanesF', 'lanesB', 'laneWidth', 'centerType', 'medianWidth', 'slowLane', 'bikeLane', 'edge', 'autoArrows', 'autoBox', 'boxDepth', 'solidLen', 'laneUse', 'leftGuide', 'leftTurn', 'pocketLen', 'pocketTaper', 'lanesF2', 'lanesB2', 'changeAt', 'taper', 'laneUseF', 'laneUseB', 'pocketLF', 'pocketLB', 'pocketRF', 'pocketRB', 'rightGuide'];
   const J_KEYS = ['crosswalks', 'cwKind', 'cwWidth', 'setback', 'stops', 'stopGap', 'cornerR', 'sidewalks', 'swWidth', 'bikeCross'];
   const junctionPrm = (j) => { const o = Object.assign({}, j.genPrm || {}); for (const k of J_KEYS) if (j[k] !== undefined) o[k] = j[k]; return o; };
   function junctionSig(j, core) { // core: the signature as it was before bus lanes were part of it
@@ -1426,7 +1428,7 @@
     for (const o of free) { o.jkey = 'legacy|' + o.id; o.edited = true; } // anything else of the user's is kept as it is
   }
   const piecePos = (e) => (e.a && e.b ? G.mid(e.a, e.b) : e.p ? e.p : e.pts && e.pts.length ? e.pts[Math.floor(e.pts.length / 2)] : null);
-  const LANE_KEYS = ['leftTurn', 'laneUse', 'lanesF', 'lanesB', 'lanesF2', 'lanesB2', 'changeAt', 'taper', 'pocketLen', 'pocketTaper', 'autoArrows', 'autoBox', 'boxDepth', 'solidLen', 'leftGuide', 'laneWidth', 'medianWidth', 'centerType'];
+  const LANE_KEYS = ['leftTurn', 'laneUse', 'laneUseF', 'laneUseB', 'pocketLF', 'pocketLB', 'pocketRF', 'pocketRB', 'rightGuide', 'lanesF', 'lanesB', 'lanesF2', 'lanesB2', 'changeAt', 'taper', 'pocketLen', 'pocketTaper', 'autoArrows', 'autoBox', 'boxDepth', 'solidLen', 'leftGuide', 'laneWidth', 'medianWidth', 'centerType'];
   function laneSigNow() { const o = {}; for (const e of S.els) if (e.type === 'section') o[e.id] = JSON.stringify(LANE_KEYS.map((k) => e[k])); return o; }
   function syncJunction(j) {
     if (!j.genClick) return;
@@ -1453,7 +1455,7 @@
       const now = JSON.parse(nowSig[id]), lt = LANE_KEYS.indexOf('leftTurn');
       const changed = LANE_KEYS.filter((k, i) => JSON.stringify(before[i]) !== JSON.stringify(now[i]));
       // only the left-turn settings changed: just the left lane (and the pocket) follow
-      const leftOnly = changed.every((k) => ['leftTurn', 'pocketLen', 'pocketTaper', 'leftGuide'].includes(k));
+      const leftOnly = changed.every((k) => ['leftTurn', 'pocketLen', 'pocketTaper', 'leftGuide', 'pocketLF', 'pocketLB'].includes(k));
       redesigned.set(id, { pocket: (before[lt] === 'pocket') !== (now[lt] === 'pocket'), leftOnly });
     }
     j.laneSig = nowSig;
@@ -1666,23 +1668,33 @@
       // incoming lanes: traffic heading toward C keeps right, i.e. the left side of v
       const oneWay = el.lanesB === 0;
       const incoming = oneWay ? lg.sgn < 0 : true;
+      // per traffic direction: F = the lanes flowing the drawing way, B = the other way
+      lg.dirKey = oneWay || lg.sgn < 0 ? 'F' : 'B';
+      const pick = (k, legacy) => (el[k + lg.dirKey] != null && el[k + lg.dirKey] !== '' ? +el[k + lg.dirKey] : legacy);
+      const nPL = incoming ? G.clamp(pick('pocketL', el.leftTurn === 'pocket' ? 1 : 0), 0, 3) : 0;   // added left-turn lanes
+      const nPR = incoming ? G.clamp(pick('pocketR', 0), 0, 3) : 0;                                  // added right-turn lanes
+      lg.nPL = nPL;
       // 左轉附加車道 on a one-way road (no median to cut into): the road widens on the driver's left (+ side here)
-      lg.pocketOne = oneWay && incoming && el.leftTurn === 'pocket' ? el.laneWidth : 0;
+      lg.pocketOne = oneWay && nPL > 0 ? nPL * el.laneWidth : 0;
+      // 右轉附加車道: the road widens on the kerb side (not where a bike / slow lane runs along the kerb)
+      lg.pocketRt = nPR > 0 && !(el.bikeLane > 0) && !(el.slowLane > 0) ? nPR * el.laneWidth : 0;
+      lg.nPR = lg.pocketRt ? nPR : 0;
       if (prm.crosswalks) {
         const w = G.clamp(prm.cwWidth, P().crosswalk[prm.cwKind].width.min, P().crosswalk[prm.cwKind].width.max);
         const d = cwIn + (w * m) / 2;
         out.push({ id: newId(), owner: jid, type: 'crosswalk', kind: prm.cwKind, width: w, gap: 0.4, green: false,
-          a: legPt(lg, d, -lg.leftExt + 0.05), b: legPt(lg, d, lg.rightExt - 0.05 + lg.pocketOne), dir: G.angle(onLeg(lg, d, 0).t) });
+          a: legPt(lg, d, -lg.leftExt + 0.05 - lg.pocketRt), b: legPt(lg, d, lg.rightExt - 0.05 + lg.pocketOne), dir: G.angle(onLeg(lg, d, 0).t) });
       }
       // stop line across every entering lane, 2–3 m before the crosswalk (§170)
       const ds = cwOut + (hasCw ? prm.stopGap * m : 0) + (stopW * m) / 2;
       // 左轉附加車道 (pocket): an extra left-turn lane carved out of the median next to the incoming lanes
       const mhalf = el.centerType === 'median' && el.lanesB > 0 ? el.medianWidth / 2 : 0;
-      const pocketW = el.leftTurn === 'pocket' && mhalf > 0 ? Math.min(el.laneWidth, 2 * mhalf - 0.5) : 0;
-      lg.pocketW = pocketW > 1.5 ? pocketW : 0;
+      const fitN = mhalf > 0 ? Math.min(nPL, Math.floor((2 * mhalf - 0.5) / 2.75)) : 0; // pocket lanes the median can give
+      lg.pocketW = fitN > 0 ? Math.min(fitN * el.laneWidth, 2 * mhalf - 0.5) : 0;
+      lg.pocketN = fitN > 0 ? fitN : 0;
       const inner = oneWay ? lg.rightExt - 0.3 + lg.pocketOne : lg.pocketW ? -(mhalf - lg.pocketW) - 0.2 : -((el.centerType === 'median' ? el.medianWidth / 2 + 0.2 : 0.15));
       if (prm.stops && incoming) {
-        out.push({ id: newId(), owner: jid, type: 'stopline', width: stopW, a: legPt(lg, ds, inner), b: legPt(lg, ds, -lg.leftExt + 0.3), dir: G.angle(G.mul(onLeg(lg, ds, 0).t, -1)) });
+        out.push({ id: newId(), owner: jid, type: 'stopline', width: stopW, a: legPt(lg, ds, inner), b: legPt(lg, ds, -lg.leftExt + 0.3 - lg.pocketRt), dir: G.angle(G.mul(onLeg(lg, ds, 0).t, -1)) });
       }
       if (incoming) lg.entry = { ds, inner, oneWay, el };
       lg.cwIn = cwIn;
@@ -1693,8 +1705,8 @@
       // otherwise just past the centre line, so the centre line ends at the stop line.
       const median = el.lanesB > 0 && el.centerType === 'median';
       const step = median ? -(el.medianWidth / 2) : 0.3;
-      if (oneWay || Math.abs(dIn - dOut) < 1e-6) poly.push(at(dIn, -lg.leftExt - 1), at(dOut, lg.rightExt + 1 + lg.pocketOne));
-      else poly.push(at(dIn, -lg.leftExt - 1), at(dIn, step), at(dOut, step), at(dOut, lg.rightExt + 1));
+      if (oneWay || Math.abs(dIn - dOut) < 1e-6) poly.push(at(dIn, -lg.leftExt - 1 - lg.pocketRt), at(dOut, lg.rightExt + 1 + lg.pocketOne));
+      else poly.push(at(dIn, -lg.leftExt - 1 - lg.pocketRt), at(dIn, step), at(dOut, step), at(dOut, lg.rightExt + 1));
     }
     // ---- corners: rounded kerb returns (paved), optional corner sidewalks, §186-1 自行車穿越道線 ----
     const corners = [], walks = [], cornerCuts = [], pocketCuts = [];
@@ -1849,6 +1861,7 @@
     };
     for (const lg of legs) {
       if (!lg.entry) continue;
+      const outStart = out.length; // pieces made for this approach get tagged with it (below)
       const el = lg.rd.el, lw = el.laneWidth, tr = G.mul(lg.v, -1), t = turnsFrom(lg);
       const atL = (L, d, off) => legPt(L, d, off); // along the road's own curve
       const dirAt = (d) => G.angle(G.mul(onLeg(lg, d, 0).t, -1));                // travel direction there
@@ -1870,7 +1883,8 @@
       };
       // what each lane is for, from the driver's left: the road's 車道用途 setting (e.g. "L,L,S,S,R"), else automatic
       const KINDS = new Set(['L', 'S', 'R', 'SL', 'SR', 'LR', 'SLR', 'U']);
-      const given = String(el.laneUse || '').toUpperCase().split(/[\s,，、]+/).filter((x) => KINDS.has(x));
+      const useStr = el['laneUse' + lg.dirKey] != null && el['laneUse' + lg.dirKey] !== '' ? el['laneUse' + lg.dirKey] : el.laneUse;
+      const given = String(useStr || '').toUpperCase().split(/[\s,，、]+/).filter((x) => KINDS.has(x));
       const design = el.leftTurn || 'shared';
       // Side-by-side carriageways going the same way (快慢分隔): right turns are made from the outer (slow) road and
       // left turns from the inner (main) road, so an inner carriageway gets no right turn and an outer one no left
@@ -1880,7 +1894,7 @@
       const hasRightCw = sameWay.some((o) => G.dot(G.sub(posOf(o), posOf(lg)), drvRight) > 0);
       const hasLeftCw = sameWay.some((o) => G.dot(G.sub(posOf(o), posOf(lg)), drvRight) < 0);
       const autoPick = (k) => {
-          const Rx = !!t.R && !hasRightCw, Sx = !!t.S;
+          const Rx = !!t.R && !hasRightCw && !lg.pocketRt, Sx = !!t.S;
           // the left turn is made from the pocket, the two-stage box, or not at all → not from these lanes
           const L = !!t.L && !lg.pocketW && !lg.pocketOne && design !== 'twoStage' && design !== 'banned' && !(hasLeftCw && design === 'shared');
           if (design === 'dedicated' && L && n >= 2 && k === 0) return 'L';
@@ -1930,45 +1944,59 @@
         for (let k = 0; k < n; k++) put(k, tip2);
       }
       // 左轉導引線: from the left-turn lane at the stop line, through the junction, into the road on the left
-      // ---- 左轉附加車道: median cut with a taper, solid line beside it, new median edge line, 左轉 arrows ----
-      if (lg.pocketW && t.L) {
-        const pw = lg.pocketW, mh = el.medianWidth / 2, pIn = -(mh - pw);
-        const sP = stopRear + G.clamp(el.pocketLen || 30, 10, 120) * m, sT = sP + G.clamp(el.pocketTaper || 20, 5, 80) * m;
-        const offAt = (sv) => (sv <= sP ? pIn : pIn + (-mh - pIn) * Math.min(1, (sv - sP) / (sT - sP))); // pocket's inner boundary
-        const N = Math.max(8, Math.ceil((sT - 0) / m));
-        const inner = [], edge = [];
+      // ---- 附加車道 (turn pockets): extra left-turn lanes cut from the median (two-way) or widening the road on the
+      // driver's left (one-way), and extra right-turn lanes widening the road on the kerb side. Each has a taper, a
+      // solid line beside the through lanes, solid lines between pocket lanes, a new edge line and turn arrows. ----
+      const sP = stopRear + G.clamp(el.pocketLen || 30, 10, 120) * m, sT = sP + G.clamp(el.pocketTaper || 20, 5, 80) * m;
+      const ease = (u) => { u = G.clamp(u, 0, 1); return u * u * (3 - 2 * u); };
+      const grow = (sv) => (sv <= sP ? 1 : 1 - ease((sv - sP) / (sT - sP)));   // 1 along the pocket, → 0 over the taper
+      const pocketArrows = (kind, offs, laneTag) => {
+        if (el.autoArrows === false) return;
+        for (const off of offs) for (const tip of [stopRear + 1 * m, Math.min(sP - 5 * m, stopRear + 20 * m)]) {
+          if (tip > stopRear) out.push({ id: newId(), owner: jid, type: 'arrow', lane: laneTag, kind, length: 5, p: atL(lg, tip + 2.5 * m, off), dir: dirAt(tip + 2.5 * m) });
+        }
+      };
+      const solid = (off, s0, s1) => out.push({ id: newId(), owner: jid, type: 'line', style: 'laneSolid', smooth: false, jline: true, pts: legLine(lg, s0, s1, off) });
+      lg.leftEdges = null; lg.rightEdges = null; // lane boundaries the turning traffic leaves from (for guide lines)
+      if (lg.pocketW && t.L) { // two-way: cut from the median
+        const pw = lg.pocketW, mh = el.medianWidth / 2, pIn = -(mh - pw), nP = lg.pocketN, wl = (pw - 0.35) / nP;
+        const offAt = (sv) => -mh + (pIn - -mh) * grow(sv); // pocket's inner boundary
+        const N = Math.max(8, Math.ceil(sT / m)), inner = [], edge = [];
         for (let i = 0; i <= N; i++) { const sv = (sT * i) / N; inner.push(legPt(lg, sv, offAt(sv))); if (sv >= stopRear) edge.push(legPt(lg, sv, offAt(sv) - 0.2)); }
         out.push({ id: newId(), owner: jid, type: 'mediancut', pts: legLine(lg, 0, sT, -mh - 0.15).concat(inner.reverse()) });
-        // the road's own inner edge line gives way along the pocket and taper; redraw the edges
         out.push({ id: newId(), owner: jid, type: 'lanemask', pts: legLine(lg, stopRear - 0.1 * m, sT, -(mh + 0.45)).concat(legLine(lg, stopRear - 0.1 * m, sT, -(mh - 0.05)).reverse()) });
         if (edge.length > 1) out.push({ id: newId(), owner: jid, type: 'line', style: 'edge', smooth: false, jline: true, pts: edge });
-        out.push({ id: newId(), owner: jid, type: 'line', style: 'laneSolid', smooth: false, jline: true, pts: legLine(lg, stopRear, sP, -(mh + 0.15)) });
-        if (el.autoArrows !== false) {
-          const cOff = (pIn - 0.2 + -(mh + 0.15)) / 2;
-          for (const tip of [stopRear + 1 * m, Math.min(sP - 5 * m, stopRear + 20 * m)]) {
-            if (tip > stopRear) out.push({ id: newId(), owner: jid, type: 'arrow', lane: -1, kind: 'L', length: 5, p: atL(lg, tip + 2.5 * m, cOff), dir: dirAt(tip + 2.5 * m) });
-          }
-        }
+        solid(-(mh + 0.15), stopRear, sP);
+        const b0 = pIn - 0.2; // driver's-left edge of the pocket
+        for (let k = 1; k < nP; k++) solid(b0 - k * wl, stopRear, sP);
+        pocketArrows('L', Array.from({ length: nP }, (_, k) => b0 - (k + 0.5) * wl), -1);
+        lg.leftEdges = Array.from({ length: nP + 1 }, (_, k) => b0 - k * wl);
       }
-      // ---- 左轉附加車道 on a one-way road: the pavement widens on the driver's left with a taper, opening any island
-      // drawn there; solid line between the pocket and the through lanes, new edge line, 左轉 arrows ----
-      if (lg.pocketOne && t.L) {
-        const pw = lg.pocketOne, L0 = lg.rightExt - 0.3;
-        const sP = stopRear + G.clamp(el.pocketLen || 30, 10, 120) * m, sT = sP + G.clamp(el.pocketTaper || 20, 5, 80) * m;
-        const ease = (u) => { u = G.clamp(u, 0, 1); return u * u * (3 - 2 * u); };
-        const offAt = (sv) => L0 + pw * (sv <= sP ? 1 : 1 - ease((sv - sP) / (sT - sP))); // pocket's outer lane edge
+      if (lg.pocketOne && t.L) { // one-way: widen on the driver's left (+ side), opening any island there
+        const pw = lg.pocketOne, L0 = lg.rightExt - 0.3, nP = Math.round(pw / lw);
+        const offAt = (sv) => L0 + pw * grow(sv); // pocket's outer lane edge
         const N = Math.max(8, Math.ceil(sT / m)), outer = [], edge = [];
         for (let i = 0; i <= N; i++) { const sv = (sT * i) / N; outer.push(legPt(lg, sv, offAt(sv) + 0.3)); if (sv >= stopRear) edge.push(legPt(lg, sv, offAt(sv) + 0.075)); }
         const pave = legLine(lg, 0, sT, L0 - 0.05).concat(outer.slice().reverse());
         corners.push(pave); pocketCuts.push(pave); // paved, counts as road, and islands open over it
         out.push({ id: newId(), owner: jid, type: 'lanemask', pts: legLine(lg, stopRear - 0.1 * m, sT, L0 - 0.15).concat(legLine(lg, stopRear - 0.1 * m, sT, L0 + 0.45).reverse()) });
         if (edge.length > 1) out.push({ id: newId(), owner: jid, type: 'line', style: 'edge', smooth: false, jline: true, pts: edge });
-        out.push({ id: newId(), owner: jid, type: 'line', style: 'laneSolid', smooth: false, jline: true, pts: legLine(lg, stopRear, sP, L0) });
-        if (el.autoArrows !== false) {
-          for (const tip of [stopRear + 1 * m, Math.min(sP - 5 * m, stopRear + 20 * m)]) {
-            if (tip > stopRear) out.push({ id: newId(), owner: jid, type: 'arrow', lane: -1, kind: 'L', length: 5, p: atL(lg, tip + 2.5 * m, L0 + pw / 2), dir: dirAt(tip + 2.5 * m) });
-          }
-        }
+        for (let k = 0; k < nP; k++) solid(L0 + k * lw, stopRear, sP);
+        pocketArrows('L', Array.from({ length: nP }, (_, k) => L0 + pw - (k + 0.5) * lw), -1);
+        lg.leftEdges = Array.from({ length: nP + 1 }, (_, k) => L0 + pw - k * lw);
+      }
+      if (lg.pocketRt && t.R) { // widen on the kerb side (driver's right = − side)
+        const pw = lg.pocketRt, R0 = -lg.leftExt + 0.3, nP = lg.nPR;
+        const offAt = (sv) => R0 - pw * grow(sv); // pocket's outer lane edge
+        const s0 = Math.max(0, lg.E), N = Math.max(8, Math.ceil((sT - s0) / m)), outer = [], edge = [];
+        for (let i = 0; i <= N; i++) { const sv = s0 + ((sT - s0) * i) / N; outer.push(legPt(lg, sv, offAt(sv) - 0.3)); if (sv >= stopRear) edge.push(legPt(lg, sv, offAt(sv) - 0.075)); }
+        const pave = legLine(lg, s0, sT, R0 + 0.05).concat(outer.slice().reverse());
+        corners.push(pave); pocketCuts.push(pave);
+        out.push({ id: newId(), owner: jid, type: 'lanemask', pts: legLine(lg, stopRear - 0.1 * m, sT, R0 - 0.45).concat(legLine(lg, stopRear - 0.1 * m, sT, R0 + 0.15).reverse()) });
+        if (edge.length > 1) out.push({ id: newId(), owner: jid, type: 'line', style: 'edge', smooth: false, jline: true, pts: edge });
+        for (let k = 0; k < nP; k++) solid(R0 - k * lw, stopRear, sP);
+        pocketArrows('R', Array.from({ length: nP }, (_, k) => R0 - pw + (k + 0.5) * lw), n + 1);
+        lg.rightEdges = Array.from({ length: nP + 1 }, (_, k) => R0 - pw + k * lw); // outermost first
       }
       // ---- 機慢車兩段式左轉: 待轉區 at the far-right corner, in front of the crosswalk of the road on the right ----
       if (design === 'twoStage' && t.L && t.R) {
@@ -1981,21 +2009,29 @@
             a: legPt(Rg, sBack, o0), b: legPt(Rg, sBack, o1), dir: G.angle(G.mul(onLeg(Rg, sBack, 0).t, -1)) });
         }
       }
+      // ---- 導引線: guide lines from every turning lane into the matching lane of the road turned into ----
+      const guide = (P0, P1, T) => {
+        const X = lineIntersect(P0, tr, P1, T.v), ctl = X && G.dot(G.sub(X, P0), tr) > 0 ? X : G.mid(P0, P1);
+        const pts = []; for (let i = 0; i <= 24; i++) { const u = i / 24, a1 = (1 - u) * (1 - u), b1 = 2 * (1 - u) * u, c1 = u * u; pts.push({ x: a1 * P0.x + b1 * ctl.x + c1 * P1.x, y: a1 * P0.y + b1 * ctl.y + c1 * P1.y }); }
+        out.push({ id: newId(), owner: jid, type: 'line', style: 'guide', smooth: false, pts });
+      };
+      const sIn = lg.entry.ds - (stopW * m) / 2;
       if (el.leftGuide && t.L && design !== 'banned' && design !== 'twoStage') {
         const T = t.L.o, elT = T.rd.el, lwT = elT.laneWidth;
         const startT = elT.lanesB === 0 ? -(T.leftExt - 0.3) : (elT.centerType === 'median' ? elT.medianWidth / 2 + 0.3 : 0);
-        const sIn = lg.entry.ds - (stopW * m) / 2, sOut = T.cwIn;
-        // the left turn starts from the pocket when there is one, otherwise from the inner lane
-        const pocketEdges = lg.pocketW ? [-(el.medianWidth / 2 - lg.pocketW), -(el.medianWidth / 2 + 0.15)] : null;
-        const L1 = lg.rightExt - 0.3; // one-way: the lanes' left edge (driver's left = + side)
-        const fromEdges = pocketEdges || (lg.entry.oneWay ? (lg.pocketOne ? [L1 + lg.pocketOne, L1] : [L1, L1 - lw]) : [-start, -(start + lw)]);
-        for (const [oi, ot] of [[fromEdges[0], startT], [fromEdges[1], startT + lwT]]) {
-          const P0 = atL(lg, sIn, oi), P1 = atL(T, sOut, ot);
-          const X = lineIntersect(P0, tr, P1, T.v), ctl = X && G.dot(G.sub(X, P0), tr) > 0 ? X : G.mid(P0, P1);
-          const pts = []; for (let i = 0; i <= 24; i++) { const u = i / 24, a1 = (1 - u) * (1 - u), b1 = 2 * (1 - u) * u, c1 = u * u; pts.push({ x: a1 * P0.x + b1 * ctl.x + c1 * P1.x, y: a1 * P0.y + b1 * ctl.y + c1 * P1.y }); }
-          out.push({ id: newId(), owner: jid, type: 'line', style: 'guide', smooth: false, pts });
-        }
+        // from the pocket lanes, else from the left-turning lanes counted from the driver's left
+        let edges = lg.leftEdges;
+        if (!edges) { let c = 0; while (c < n && uses[c].includes('L')) c++; edges = c ? Array.from({ length: c + 1 }, (_, k) => edgeOff(k)) : null; }
+        if (edges) edges.forEach((oi, k) => guide(atL(lg, sIn, oi), atL(T, T.cwIn, startT + k * lwT), T));
       }
+      if (el.rightGuide && t.R) {
+        const T = t.R.o, elT = T.rd.el, lwT = elT.laneWidth;
+        const kerbT = T.rightExt - 0.3 - (elT.bikeLane || 0) - (elT.slowLane || 0); // the kerb-side edge of its outgoing lanes
+        let edges = lg.rightEdges; // outermost first
+        if (!edges) { let c = 0; while (c < n && uses[n - 1 - c].includes('R')) c++; edges = c ? Array.from({ length: c + 1 }, (_, k) => edgeOff(n - k)) : null; }
+        if (edges) edges.forEach((oi, k) => guide(atL(lg, sIn, oi), atL(T, T.cwIn, kerbT - k * lwT), T));
+      }
+      for (let i = outStart; i < out.length; i++) if (!out[i].legHint) out[i].legHint = lg.rd.src.id + ':' + lg.sgn;
     }
     // stable keys: which approach a piece belongs to, what it is, and its place there (so a rebuild can keep
     // the pieces the user deleted or edited)
@@ -2012,7 +2048,7 @@
         }
         if (!best) continue;
         // keyed by approach, kind of piece and position (not arrow / crosswalk type, which a design change alters)
-        const g = best.lg.rd.src.id + ':' + best.lg.sgn + '|' + e.type + '|' + (e.type === 'line' ? e.style : '');
+        const g = (e.legHint || best.lg.rd.src.id + ':' + best.lg.sgn) + '|' + e.type + '|' + (e.type === 'line' ? e.style : '');
         if (!groups.has(g)) groups.set(g, []);
         groups.get(g).push({ e, sQ: best.sQ, lat: best.lat });
       }
@@ -2093,6 +2129,86 @@
     for (const f of P().fields(target)) {
       if (f.kind === 'num' && typeof target[f.key] === 'number') target[f.key] = G.clamp(target[f.key], f.min, f.max);
     }
+  }
+
+  // ---------------- lane cards (路段 → 車道) ----------------
+  const foldOpen = new Set();
+  const USE_LABEL = { S: '直行', L: '左轉', R: '右轉', SL: '直左', SR: '直右', LR: '左右', SLR: '直左右', U: '迴轉' };
+  const USE_ORDER = ['S', 'L', 'R', 'SL', 'SR', 'LR', 'SLR', 'U'];
+  let lanePick = null; // { dir, k } of the card whose arrow menu is open
+  function arrowIcon(kind, w = 30, h = 52) {
+    const c = document.createElement('canvas'), dpr = window.devicePixelRatio || 1;
+    c.width = w * dpr; c.height = h * dpr; c.style.width = w + 'px'; c.style.height = h + 'px';
+    const g = c.getContext('2d'); g.scale(dpr, dpr);
+    try { R.drawArrow(g, { kind, length: 5, p: { x: w / 2, y: h / 2 }, dir: -Math.PI / 2 }, (h - 6) / 5, P()); } catch (e) { /* unknown kind */ }
+    return c;
+  }
+  function laneEditor(t, el, onChange) {
+    const wrap = document.createElement('div'); wrap.className = 'laneed';
+    const dirs = t.lanesB > 0 ? [['F', '順向 (畫線方向)'], ['B', '對向']] : [['F', '行車方向']];
+    const parse = (str) => String(str || '').toUpperCase().split(/[\s,，、]+/).filter((x) => USE_LABEL[x]);
+    for (const [dir, title] of dirs) {
+      const nKey = dir === 'F' ? 'lanesF' : 'lanesB', n = t[nKey] | 0;
+      // what the lanes are now: set by the user, else what the intersection worked out, else a sensible default
+      const own = parse(t['laneUse' + dir] != null && t['laneUse' + dir] !== '' ? t['laneUse' + dir] : t.laneUse);
+      const gen = {};
+      if (el) for (const a of S.els) if (a.type === 'arrow' && a.owner && a.lane != null && a.lane >= 0 && String(a.jkey).startsWith(el.id + ':' + (dir === 'F' ? -1 : 1) + '|')) if (!(a.lane in gen)) gen[a.lane] = a.kind;
+      const auto = (k) => gen[k] || (n === 1 ? 'SLR' : k === 0 ? 'SL' : k === n - 1 ? 'SR' : 'S');
+      const uses = Array.from({ length: n }, (_, k) => own[k] || auto(k));
+      const custom = own.length > 0;
+      const nPL = t['pocketL' + dir] != null && t['pocketL' + dir] !== '' ? +t['pocketL' + dir] : (t.leftTurn === 'pocket' ? 1 : 0);
+      const nPR = +(t['pocketR' + dir] || 0);
+      const maxMedianPL = t.centerType === 'median' ? Math.floor((t.medianWidth - 0.5) / 2.75) : 0; // pocket lanes the median can give
+      const canPL = t.lanesB === 0 || nPL < maxMedianPL, canPR = !(t.bikeLane > 0) && !(t.slowLane > 0);
+      const whyPL = t.lanesB === 0 ? '' : t.centerType !== 'median' ? '雙向道路需有中央分隔島 Needs a median' : `分隔島太窄 (每條約需 2.75 m，目前 ${t.medianWidth} m) Median too narrow`;
+      const setUses = (arr) => onChange('laneUse' + dir, arr.join(','));
+      const head = document.createElement('div'); head.className = 'ledhead';
+      head.innerHTML = `<span>${title}</span>`;
+      if (custom) { const rs = document.createElement('button'); rs.className = 'linkbtn'; rs.textContent = '自動 Auto'; rs.title = '由路口自動決定 Let the intersection decide'; rs.onclick = () => { lanePick = null; onChange('laneUse' + dir, ''); if (t.laneUse) onChange('laneUse', ''); }; head.appendChild(rs); }
+      wrap.appendChild(head);
+      const row = document.createElement('div'); row.className = 'ledrow';
+      const card = (kind, label, cls, onClick, onRemove) => {
+        const c = document.createElement('div'); c.className = 'lcard ' + (cls || '');
+        const lb = document.createElement('div'); lb.className = 'lclabel'; lb.textContent = label;
+        c.append(lb, arrowIcon(kind));
+        if (onClick) c.onclick = onClick;
+        if (onRemove) { const x = document.createElement('button'); x.className = 'lcx'; x.textContent = '×'; x.title = '移除 Remove'; x.onclick = (ev) => { ev.stopPropagation(); onRemove(); }; c.appendChild(x); }
+        return c;
+      };
+      const addBtn = (side, enabled, why) => {
+        const b = document.createElement('button'); b.className = 'lcadd'; b.innerHTML = `＋<br><small>附加${side === 'L' ? '左轉' : '右轉'}</small>`;
+        b.disabled = !enabled; b.title = enabled ? `加一條${side === 'L' ? '左' : '右'}轉附加車道 Add a ${side === 'L' ? 'left' : 'right'}-turn pocket lane` : why;
+        b.onclick = () => onChange('pocket' + side + dir, (side === 'L' ? nPL : nPR) + 1);
+        return b;
+      };
+      if (nPL < 3) row.appendChild(addBtn('L', canPL, whyPL));
+      for (let k = 0; k < nPL; k++) row.appendChild(card('L', '附加', 'pocket', null, () => onChange('pocketL' + dir, nPL - 1)));
+      uses.forEach((u, k) => row.appendChild(card(u, USE_LABEL[u] || u, (custom ? '' : 'auto') + (lanePick && lanePick.dir === dir && lanePick.k === k ? ' picked' : ''), () => {
+        lanePick = lanePick && lanePick.dir === dir && lanePick.k === k ? null : { dir, k }; renderProps();
+      })));
+      for (let k = 0; k < nPR; k++) row.appendChild(card('R', '附加', 'pocket', null, () => onChange('pocketR' + dir, nPR - 1)));
+      if (nPR < 3) row.appendChild(addBtn('R', canPR, '路邊有自行車道/慢車道時無法加右轉附加車道 Not with a kerbside bike / slow lane'));
+      wrap.appendChild(row);
+      // arrow menu for the chosen lane
+      if (lanePick && lanePick.dir === dir && lanePick.k < n) {
+        const menu = document.createElement('div'); menu.className = 'ledmenu';
+        for (const u of USE_ORDER) {
+          const o = card(u, USE_LABEL[u], 'opt' + (uses[lanePick.k] === u ? ' cur' : ''), () => { const arr = uses.slice(); arr[lanePick.k] = u; lanePick = null; setUses(arr); });
+          menu.appendChild(o);
+        }
+        wrap.appendChild(menu);
+      }
+      // lane count
+      const cnt = document.createElement('div'); cnt.className = 'ledcount';
+      const minus = document.createElement('button'); minus.textContent = '－'; minus.disabled = n <= (dir === 'F' ? 1 : 1);
+      const plus = document.createElement('button'); plus.textContent = '＋'; plus.disabled = n >= 6;
+      const lab = document.createElement('span'); lab.textContent = `${n} 車道 lanes`;
+      const setN = (v) => { lanePick = null; if (custom) { const arr = uses.slice(0, v); while (arr.length < v) arr.push('S'); onChange('laneUse' + dir, arr.join(',')); } onChange(nKey, v); };
+      minus.onclick = () => setN(n - 1); plus.onclick = () => setN(n + 1);
+      cnt.append(minus, lab, plus);
+      wrap.appendChild(cnt);
+    }
+    return wrap;
   }
 
   function fieldRow(f, target, onChange) {
@@ -2209,11 +2325,23 @@
         if (el) { if (live) redraw(); else commit(); } else { renderProps(); redraw(); }
       };
       const btns = document.createElement('div'); btns.className = 'btnrow';
+      let cur = box; // fields go into titled (optionally folded) sections
       for (const f of P().fields(target)) {
         if (f.kind === 'btn') {
           if (!el) continue;
           const b = document.createElement('button'); b.textContent = f.label; b.onclick = () => doAction(f.action); btns.appendChild(b);
-        } else box.appendChild(fieldRow(f, target, onChange));
+        } else if (f.kind === 'head') {
+          const sec = document.createElement('div'); sec.className = 'fsec' + (f.fold ? ' fold' : '');
+          const h = document.createElement('div'); h.className = 'fhead'; h.textContent = f.label;
+          const body = document.createElement('div'); body.className = 'fbody';
+          if (f.fold) {
+            const key = target.type + ':' + f.label;
+            sec.classList.toggle('open', foldOpen.has(key));
+            h.onclick = () => { foldOpen.has(key) ? foldOpen.delete(key) : foldOpen.add(key); sec.classList.toggle('open', foldOpen.has(key)); };
+          }
+          sec.append(h, body); box.appendChild(sec); cur = body;
+        } else if (f.kind === 'laneEditor') cur.appendChild(laneEditor(target, el, onChange));
+        else cur.appendChild(fieldRow(f, target, onChange));
       }
       if (el && el.owner) {
         const info = document.createElement('div'); info.className = 'info';

@@ -1355,5 +1355,6 @@ window.Render = (function () {
     return null;
   };
 
+  R.drawArrow = drawArrow; // for the lane cards in the side panel
   return R;
 })();
