@@ -105,4 +105,23 @@ The 圖層 Layers list is the drawing order: items higher in the list are drawn 
 V select · H pan (or hold Space) · M measure · ⌘/Ctrl+scroll or pinch to zoom · Enter finish · Esc cancel · ⌫ remove the last point or delete · ⌘Z / ⇧⌘Z · ⌘D duplicate · [ ] rotate · F flip · A align to another object · Shift snaps to 15° angles · Alt turns off point snapping · double-click an edge to add a vertex · Alt+click a vertex to delete it
 
 ## Country presets
-Each country's rules live in `js/presets/<country>.js`, which holds line styles, law ranges, the library, and the property fields. Taiwan (`taiwan.js`) follows 道路交通標誌標線號誌設置規則 (全國法規資料庫 version amended 2026-03-11 / 民國115年3月11日). Every value with a § article reference was checked against the regulation text. Values marked ≈ are ones the regulation does not specify (arrow length, size of most road text), so they are typical defaults. To add a country, copy `taiwan.js`, change the values, and register it under a new id.
+Pick the country at the top (國家). Switching restyles every marking and rebuilds the automatic intersection and roundabout markings with that country's rules; pieces you edited, locked or deleted stay as you left them. Each country lives in `js/presets/<country>.js`; Taiwan keeps its own property panels, the Netherlands and Japan build theirs with `js/presets/common.js` and their own wording and law notes. Values with a reference were read from the regulation; values marked ≈ are typical, not specified.
+
+**台灣 Taiwan** (`taiwan.js`) — 道路交通標誌標線號誌設置規則 (amended 2026-03-11). Every § value was checked against the text.
+
+**Nederland Netherlands** (`netherlands.js`) — RVV 1990 / BABW and the CROW guideline *Richtlijnen voor de bebakening en markering van wegen* (Rijkswaterstaat 1991 text, CROW 2015/2024 updates where public). All markings are white; yellow only for kerb parking rules.
+- Lines 0.10 m (motorway 0.15/0.20); dash patterns 1-3 (urban) and 3-9 (rural), warning lines 3-1 / 9-3, 1-1 for bike lanes, block marking 1-3 at 0.30/0.45 m, two-way cycle-path centre 0.30-2.70.
+- Zebra: bars 0.50 m (gap 0.40–0.60), at least 4 m wide; signalised crossings use kanalisatiestrepen (0.10 m, 0.50/0.50).
+- Stop line 0.30 m urban / 0.50 m rural (min. 0.20 m). Haaientanden: base 0.50 m, height 0.50 (urban)–0.70 m, gap = base — also at roundabout entries.
+- Arrows (fig. 2.3.2): 5.00 m urban, 7.50 m above 50 km/h, 2.50 m on cycle paths; straight head 2.05 × 0.75 m, turn arrows with a 45° arm and a sideways head, shaft 0.30 m off the lane centre.
+- Text (BUS, STOP, TAXI, speeds) in one line across the lane, letters 1.60 m (or 4.00 m) long.
+- OFOS bike box 4–5 m (red, bike symbols, two 0.15 m car stop lines behind); cycle crossings with 0.50 m blocks; fietsstrook with 1-1 line and red surface; busstrook with BUS; turbo roundabouts.
+
+**日本 Japan** (`japan.js`) — 道路標識、区画線及び道路標示に関する命令 (別表第4・第6, figures as reprinted by NILIM). **Left-hand traffic:** a road's drawing-direction lanes sit on the left of its centre line; intersections, turn pockets, guide lines, bus stops and roundabouts (clockwise) are all built for driving on the left.
+- 車線境界線 0.10–0.15 m dashed (3–10 m, gap 1–2 × the dash; 5 m / 5 m used), 中央線 0.12–0.15 m (white dashed / solid / double), はみ出し禁止 yellow 0.15–0.20 m, 進路変更禁止 yellow 0.10–0.15 m, 車道外側線 0.15–0.20 m.
+- 横断歩道: bars and gaps 0.45–0.50 m, 4 m standard. 停止線 0.30–0.45 m, at least 1 m (2 m standard) before the crosswalk. 自転車横断帯 lines 0.15–0.30 m with bike symbols.
+- Arrows (204): 5 m, 0.15 m shaft, straight head 2.5 × 0.45 m, turn heads leaning toward the turn.
+- 二段停止線 (二輪 / 四輪, 2–5 m apart) instead of a scooter box; 導流帯 (0.45 m stripes every 1.0–1.5 m), 立入り禁止部分 (yellow), 停止禁止部分; ◇ 横断歩道あり (1.5 × 5.0 m), ▽ 前方優先道路, blue 矢羽根; Japanese text stacked along the lane, numbers across it (最高速度 yellow, 5.0 × 1.2 m).
+- The lane cards follow the driver: ＋附加右轉 cuts the median (needs about 2.75 m a lane), ＋附加左轉 widens the kerb side.
+
+How left-hand traffic works: the intersection and roundabout builders reason in right-hand traffic. For Japan the whole drawing is reflected (y → −y, angles negated — exact, so reflecting twice restores every number), lane order and left/right turns are swapped, the builder runs, and everything is reflected back.

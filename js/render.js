@@ -4,6 +4,13 @@ window.Render = (function () {
   const G = window.G;
   const R = {};
   const patternCache = new Map();
+  // The country preset in force (set by the app). R.LHT: left-hand traffic (Japan) — a road's drawing-direction
+  // lanes then sit on the LEFT of its centre line. The junction / roundabout builders work in a mirrored world
+  // with R.LHT switched off, so they only ever reason about right-hand traffic.
+  R.preset = null;
+  R.LHT = false;
+  R.setPreset = (P) => { R.preset = P; R.LHT = P && P.driveSide === 'left'; };
+  R.edgeW = () => (R.preset && R.preset.lineStyles.edge ? R.preset.lineStyles.edge.width : 0.15);
 
   function path(ctx, pts, closed) {
     ctx.beginPath();
@@ -86,14 +93,14 @@ window.Render = (function () {
   // where the narrower layout had it, so added lanes appear on the right.
   R.sectionLayout = function (el, anchorW) {
     const lines = [], bands = [];
-    const lw = el.laneWidth, nF = el.lanesF | 0, nB = el.lanesB | 0;
+    const lw = el.laneWidth, nF = el.lanesF | 0, nB = el.lanesB | 0, ew = R.edgeW();
     const stack = (start, side, n) => {
       let o = start;
       const sd = side > 0 ? 'R' : 'L';
       for (let i = 0; i < n; i++) { o += lw; if (i < n - 1) lines.push({ off: side * o, style: 'lane', key: sd + 'lane' + i }); }
       if (el.slowLane > 0) { lines.push({ off: side * o, style: 'slowSep', key: sd + 'slow' }); o += el.slowLane; }
       if (el.bikeLane > 0) { lines.push({ off: side * o, style: 'bikeSep', key: sd + 'bikeSep' }); bands.push({ off: side * (o + el.bikeLane / 2), width: el.bikeLane, kind: 'bike', key: sd + 'bike' }); o += el.bikeLane; }
-      if (el.edge) { lines.push({ off: side * (o + 0.075), style: 'edge', key: sd + 'edge' }); o += 0.3; }
+      if (el.edge) { lines.push({ off: side * (o + ew / 2), style: 'edge', key: sd + 'edge' }); o += 0.3; }
       return o;
     };
     let left = 0, right = 0;
@@ -101,7 +108,7 @@ window.Render = (function () {
       const W = nF * lw + (el.slowLane || 0) + (el.bikeLane || 0);
       const s0 = -(anchorW != null ? anchorW : W) / 2;
       right = stack(s0, 1, nF);
-      if (el.edge) { lines.push({ off: s0 - 0.075, style: 'edge', key: 'Ledge' }); left = -s0 + 0.3; } else left = -s0;
+      if (el.edge) { lines.push({ off: s0 - ew / 2, style: 'edge', key: 'Ledge' }); left = -s0 + 0.3; } else left = -s0;
     } else {
       const median = el.centerType === 'median';
       const mh = median ? el.medianWidth / 2 : 0;
@@ -112,6 +119,11 @@ window.Render = (function () {
       const start = median ? mh + 0.3 : 0;
       right = nF > 0 ? stack(start, 1, nF) : start;
       left = stack(start, -1, nB);
+    }
+    if (R.LHT) { // left-hand traffic: the whole cross-section mirrored about the centre line
+      for (const l of lines) l.off = -l.off;
+      for (const b of bands) b.off = -b.off;
+      return { lines, bands, left: right, right: left };
     }
     return { lines, bands, left, right };
   };
@@ -144,7 +156,7 @@ window.Render = (function () {
   // Full geometry of a section: offset polylines for every line and band, and the two pavement edges.
   const geomCache = new WeakMap();
   R.sectionGeom = function (el, ppm) { // cached per element: called many times per frame
-    const sig = JSON.stringify([ppm, el.pts, el.smooth, el.lanesF, el.lanesB, el.lanesF2, el.lanesB2, el.changeAt, el.taper, el.laneWidth, el.centerType, el.medianWidth, el.slowLane, el.bikeLane, el.edge]);
+    const sig = JSON.stringify([R.LHT, R.edgeW(), ppm, el.pts, el.smooth, el.lanesF, el.lanesB, el.lanesF2, el.lanesB2, el.changeAt, el.taper, el.laneWidth, el.centerType, el.medianWidth, el.slowLane, el.bikeLane, el.edge]);
     const c = geomCache.get(el);
     if (c && c.sig === sig) return c.g;
     const g = sectionGeomRaw(el, ppm);
@@ -266,7 +278,7 @@ window.Render = (function () {
     ctx.clip();
     ctx.strokeStyle = ctx.fillStyle = P.colors.white; ctx.lineCap = 'butt'; ctx.setLineDash([]);
     const ext = (a, b, m) => { const d = G.mul(G.norm(G.sub(b, a)), m); return [G.sub(a, d), G.add(b, d)]; };
-    if (el.kind === 'ties') {
+    if (el.kind === 'ties' || spec.style === 'bars') {
       // Bars stay parallel to traffic, 40 cm wide with the same gap between every pair (as in Japan's
       // trapezoid crossings); only their length changes, ending on the slanted edges of the shape.
       const bar = spec.bar * ppm, gap = el.gap * ppm, pitch = bar + gap;
@@ -295,6 +307,11 @@ window.Render = (function () {
         path(ctx, [G.add(a0, G.mul(d, -far)), G.add(a1, G.mul(d, -far)), G.add(a1, G.mul(d, far)), G.add(a0, G.mul(d, far))], true);
         ctx.fill();
       }
+    } else if (spec.style === 'lines') {
+      const inward = (a, b, other) => { let nn = G.rightN(G.norm(G.sub(b, a))); if (G.dot(G.sub(other, a), nn) < 0) nn = G.mul(nn, -1); return nn; };
+      const e = spec.edge * ppm; ctx.lineWidth = e; ctx.setLineDash(spec.dash.map((d) => d * ppm));
+      for (const [a, b, o] of [[c0, c1, c3], [c3, c2, c0]]) { const nn = inward(a, b, o); path(ctx, [G.add(a, G.mul(nn, e / 2)), G.add(b, G.mul(nn, e / 2))]); ctx.stroke(); }
+      ctx.setLineDash([]);
     } else {
       // edge lines (10 cm) along both edges, inside the shape; 45° stripes between them
       const inward = (a, b, other) => { let nn = G.rightN(G.norm(G.sub(b, a))); if (G.dot(G.sub(other, a), nn) < 0) nn = G.mul(nn, -1); return nn; };
@@ -318,7 +335,7 @@ window.Render = (function () {
     const f = R.frame(el, ppm, el.width, false);
     ctx.fillStyle = P.colors.white;
     if (el.green) { ctx.fillStyle = P.colors.crossGreen; path(ctx, f.corners, true); ctx.fill(); ctx.fillStyle = P.colors.white; }
-    if (el.kind === 'ties') {
+    if (el.kind === 'ties' || spec.style === 'bars') {
       const bar = (spec.bar * ppm) / f.sin, gap = (el.gap * ppm) / f.sin, step = bar + gap;
       const n = Math.max(0, Math.floor((f.L + gap) / step));
       const start = (f.L - (n * step - gap)) / 2;
@@ -328,6 +345,11 @@ window.Render = (function () {
         path(ctx, [G.add(p0, G.mul(f.t, -f.back)), G.add(p1, G.mul(f.t, -f.back)), G.add(p1, G.mul(f.t, f.fwd)), G.add(p0, G.mul(f.t, f.fwd))], true);
         ctx.fill();
       }
+    } else if (spec.style === 'lines') {
+      // two dashed edge lines only (e.g. NL kanalisatiestrepen 0.10 m, 0.50 m dash / 0.50 m gap)
+      ctx.strokeStyle = P.colors.white; ctx.lineWidth = spec.edge * ppm; ctx.lineCap = 'butt'; ctx.setLineDash(spec.dash.map((d) => d * ppm));
+      for (const o of [-f.back + (spec.edge * ppm) / 2 / f.sin, f.fwd - (spec.edge * ppm) / 2 / f.sin]) { path(ctx, [G.add(el.a, G.mul(f.t, o)), G.add(el.b, G.mul(f.t, o))]); ctx.stroke(); }
+      ctx.setLineDash([]);
     } else {
       const e = (spec.edge * ppm) / f.sin;
       const strip = (o0, o1) => { path(ctx, [G.add(el.a, G.mul(f.t, o0)), G.add(el.b, G.mul(f.t, o0)), G.add(el.b, G.mul(f.t, o1)), G.add(el.a, G.mul(f.t, o1))], true); ctx.fill(); };
@@ -369,14 +391,22 @@ window.Render = (function () {
     }
   }
 
+  // Latin words and numbers (BUS, STOP, 50) are written as one line across the lane, letters stretched along
+  // the road; CJK text is stacked along the lane, one character per cell.
+  R.isRowText = (str) => /^[A-Za-z0-9 .\-/]+$/.test(str || '');
   function drawText(ctx, P, p, dir, str, charLen, charWid, color, order, gapPx) {
     const chars = Array.from(str || '');
     if (!chars.length) return;
     const n = chars.length, gap = gapPx != null ? gapPx : charLen * 0.4, total = n * charLen + (n - 1) * gap;
-    const gl = shapes().glyphs;
+    const gl = P.tracedGlyphs ? shapes().glyphs : {};
     ctx.save();
     ctx.translate(p.x, p.y); ctx.rotate(dir + Math.PI / 2);
     ctx.fillStyle = color;
+    if (R.isRowText(str)) {
+      const wAll = n * charWid + (n - 1) * gap;
+      for (let i = 0; i < n; i++) { ctx.save(); ctx.translate(-wAll / 2 + i * (charWid + gap) + charWid / 2, 0); drawCell(ctx, P, chars[i], charWid, charLen, null); ctx.restore(); }
+      ctx.restore(); return;
+    }
     for (let i = 0; i < n; i++) {
       const ch = chars[order === 'far' ? n - 1 - i : i];
       const y = total / 2 - (i * (charLen + gap) + charLen / 2); // i=0 is nearest the approaching driver
@@ -385,15 +415,35 @@ window.Render = (function () {
     ctx.restore();
   }
   const charGap = (el) => (el.charGap != null ? el.charGap : el.charLen * 0.4);
-  R.textLength = (el) => { const n = Array.from(el.text || '').length; return n * el.charLen + Math.max(0, n - 1) * charGap(el); };
+  R.textLength = (el) => { const n = Array.from(el.text || '').length; return R.isRowText(el.text) ? el.charLen : n * el.charLen + Math.max(0, n - 1) * charGap(el); };
 
   // §174-1 / §183-1 icons
   R.iconSize = (el) => {
     const k = el.small ? 0.7 : 1;
-    const s = { scooter: [0.9, 2.5], bike: [1.0, 1.8], scooterSmall: [0.65, 1.8] }[el.kind] || [1, 2];
+    const sizes = Object.assign({ scooter: [0.9, 2.5], bike: [1.0, 1.8], scooterSmall: [0.65, 1.8], navi: [0.75, 1.5], xdiamond: [1.5, 5.0], prioTri: [1.5, 4.5] }, (R.preset && R.preset.iconSizes) || {});
+    const s = sizes[el.kind] || [1, 2];
     return [s[0] * k, s[1] * k];
   };
   function drawIcon(ctx, el, ppm, P) {
+    if (el.kind === 'navi') { // JP 矢羽根型路面表示 (自転車ナビライン): blue chevron 0.75 × 1.5 m pointing along the road (≈ guideline)
+      const [w, h] = R.iconSize(el), t = G.fromAngle(el.dir), u = G.rightN(t), Q = (sv, wv) => G.add(G.add(el.p, G.mul(t, sv * ppm)), G.mul(u, wv * ppm));
+      const th = 0.45, pts = [Q(h / 2, 0), Q(h / 2 - th, w / 2), Q(-h / 2, w / 2), Q(-h / 2 + th, 0), Q(-h / 2, -w / 2), Q(h / 2 - th, -w / 2)];
+      ctx.fillStyle = P.colors.navi || '#2a6fd6'; path(ctx, pts, true); ctx.fill(); return;
+    }
+    if (el.kind === 'xdiamond') { // JP 210 横断歩道又は自転車横断帯あり: white outline diamond 1.5 × 5.0 m, line 0.20–0.30 m
+      const t = G.fromAngle(el.dir), u = G.rightN(t), k = el.small ? 0.7 : 1, Q = (sv, wv) => G.add(G.add(el.p, G.mul(t, sv * k * ppm)), G.mul(u, wv * k * ppm));
+      const L = 2.5, W = 0.75, lw = 0.25, f = 1 - (lw * Math.hypot(L, W)) / (L * W);
+      ctx.fillStyle = P.colors.white; ctx.beginPath();
+      [[L, 0], [0, W], [-L, 0], [0, -W]].forEach(([sv, wv], i) => { const q = Q(sv, wv); i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y); }); ctx.closePath();
+      [[L * f, 0], [0, W * f], [-L * f, 0], [0, -W * f]].forEach(([sv, wv], i) => { const q = Q(sv, wv); i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y); }); ctx.closePath();
+      ctx.fill('evenodd'); return;
+    }
+    if (el.kind === 'warnTri') { // NL voorwaarschuwingsdriehoek (RBBV fig. 2.3.23): base 1.00 × 4.00 m bibeko (2.00 × 8.00 bubeko), outline 0.25 ≈
+      const t = G.fromAngle(el.dir), k = el.small ? 1 : 1; ctx.fillStyle = P.colors.white; jpTriangle(ctx, G.add(el.p, G.mul(t, 2.0 * ppm)), t, G.rightN(t), ppm, 1.0 * k, 4.0 * k, 0.25); return;
+    }
+    if (el.kind === 'prioTri') { // JP 211 前方優先道路 ▽: base 1.5 m, length 4.5 m, apex toward the junction
+      const t = G.fromAngle(el.dir); ctx.fillStyle = P.colors.white; jpTriangle(ctx, G.add(el.p, G.mul(t, 2.25 * ppm)), t, G.rightN(t), ppm); return;
+    }
     const d = shapes().icons[el.kind];
     if (!d) return;
     const [w, h] = R.iconSize(el);
@@ -403,22 +453,40 @@ window.Render = (function () {
     ctx.restore();
   }
 
+  // Stop box behind the stop line. Taiwan §174-2 機車停等區 (20 cm front/back lines, 10/15 cm sides, scooter icon);
+  // other countries describe theirs in P.box: front / back line widths (back may be doubled), side lines, a fill
+  // colour, the icon, and labels (JP 二段停止線: 二輪 in the box, 四輪 behind it).
   function drawScooterBox(ctx, el, ppm, P) {
+    const B = Object.assign({ front: 0.20, back: 0.20, backDouble: false, sides: true, fill: null, icon: 'scooter', labels: null }, P.box || {});
     const f = R.frame(el, ppm, el.depth, true);
-    const b = (0.20 * ppm) / f.sin; // §174-2 front/back lines 20 cm
+    const sx = 1 / f.sin;
+    const quad = (o0, o1) => [G.add(el.a, G.mul(f.t, o0)), G.add(el.b, G.mul(f.t, o0)), G.add(el.b, G.mul(f.t, o1)), G.add(el.a, G.mul(f.t, o1))];
+    if (B.fill && el.fill !== false) { ctx.fillStyle = B.fill; path(ctx, quad(0, f.Wt - 0.05 * ppm * sx), true); ctx.fill(); } // stops short of the stop line
     ctx.fillStyle = P.colors.white;
-    const strip = (o0, o1) => { path(ctx, [G.add(el.a, G.mul(f.t, o0)), G.add(el.b, G.mul(f.t, o0)), G.add(el.b, G.mul(f.t, o1)), G.add(el.a, G.mul(f.t, o1))], true); ctx.fill(); };
-    strip(0, b); strip(f.Wt - b, f.Wt);
-    const bu = (parseFloat(el.side) || 0.15) * ppm; // side lines 10 or 15 cm
-    const side = (p, s) => { path(ctx, [p, G.add(p, G.mul(f.u, s * bu)), G.add(G.add(p, G.mul(f.u, s * bu)), G.mul(f.t, f.Wt)), G.add(p, G.mul(f.t, f.Wt))], true); ctx.fill(); };
-    side(el.a, 1); side(el.b, -1);
+    const strip = (o0, o1) => { path(ctx, quad(o0, o1), true); ctx.fill(); };
+    const bk = B.back * ppm * sx, fr = B.front * ppm * sx;
+    if (bk > 0) { strip(0, bk); if (B.backDouble) strip(-2 * bk, -bk); } // rear edge: where cars stop
+    if (fr > 0) strip(f.Wt - fr, f.Wt);
+    if (B.sides) {
+      const bu = (parseFloat(el.side) || 0.15) * ppm; // side lines 10 or 15 cm
+      const side = (p, s) => { path(ctx, [p, G.add(p, G.mul(f.u, s * bu)), G.add(G.add(p, G.mul(f.u, s * bu)), G.mul(f.t, f.Wt)), G.add(p, G.mul(f.t, f.Wt))], true); ctx.fill(); };
+      side(el.a, 1); side(el.b, -1);
+    }
     const c = G.add(G.mid(el.a, el.b), G.mul(f.t, f.Wt / 2));
-    if (el.icon) {
-      // §174-2 figure: 機車 icon inside the box (縮小型 when the box is shallow)
-      const [w, h] = R.iconSize({ kind: 'scooter', small: el.depth < 3.2 });
-      ctx.save(); ctx.translate(c.x, c.y); ctx.rotate(el.dir + Math.PI / 2);
+    if (B.labels) { // e.g. 二輪 inside, 四輪 behind
+      const cl = 1.0 * ppm;
+      drawText(ctx, P, c, el.dir, B.labels[0], cl, cl, P.colors.white, 'far', cl * 0.1);
+      if (B.labels[1]) drawText(ctx, P, G.add(G.mid(el.a, el.b), G.mul(f.t, -1.6 * ppm)), el.dir, B.labels[1], cl, cl, P.colors.white, 'far', cl * 0.1);
+    } else if (el.icon) {
+      const kind = B.icon === 'bike' ? 'bike' : 'scooter';
+      const [w, h] = R.iconSize({ kind, small: el.depth < 3.2 });
       const k = Math.min(1, (el.depth - 0.6) / h);
-      drawCell(ctx, P, '', w * k * ppm, h * k * ppm, shapes().icons.scooter); ctx.restore();
+      const nIc = kind === 'bike' ? Math.max(1, Math.floor(f.L / ppm / 2.5)) : 1; // bike boxes: a symbol every ~2.5 m across
+      for (let i = 0; i < nIc; i++) {
+        const q = G.add(G.add(el.a, G.mul(G.sub(el.b, el.a), (i + 0.5) / nIc)), G.mul(f.t, f.Wt / 2));
+        ctx.save(); ctx.translate(q.x, q.y); ctx.rotate(el.dir + Math.PI / 2);
+        drawCell(ctx, P, '', w * k * ppm, h * k * ppm, shapes().icons[kind]); ctx.restore();
+      }
     } else if (el.text) {
       const n = Array.from(el.text).length;
       const cl = Math.min(1.6, (el.depth * 0.75) / (n + (n - 1) * 0.3)) * ppm;
@@ -473,19 +541,51 @@ window.Render = (function () {
   };
   R.arrowKinds = Object.keys(ARROWS);
 
+  // ---- Netherlands: RBBV 1991 fig. 2.3.2 (5.00 m, bibeko; the 7.50 m version is the same shape scaled ≈) ----
+  // Straight: 0.15 m shaft, head 2.05 m × 0.75 m. Turn: a 45° bar (0.71 m thick) from the shaft to a tall head
+  // (2.40 m) whose tip points sideways 0.30 m beyond its back edge, 0.60 m from the shaft. The shaft of a turn or
+  // combination arrow sits 0.30 m off the lane centre, away from the turn.
+  const NL_ARROWS = (() => {
+    const shaft = (y1) => rect(-0.075, 0, 0.075, y1);
+    const head = [[0, 5.0], [-0.375, 2.95], [0.375, 2.95]];
+    const arm = (yLo) => { // right-turn arm whose lower edge leaves the shaft's right side at yLo
+      const xb = 0.675, lo0 = yLo - 0.15, lo1 = yLo + 0.60, mid = (lo1 + lo1 + 1.0) / 2;
+      return [[[-0.075, lo0], [xb, lo1], [xb, lo1 + 1.0], [-0.075, lo0 + 1.0]], [[xb, mid + 1.2], [xb, mid - 1.2], [xb + 0.30, mid]]];
+    };
+    const R1 = [shaft(2.55)].concat(arm(2.55)), SR1 = [shaft(2.95), head].concat(arm(0.35));
+    return { S: [shaft(2.95), head], R: R1, L: R1.map(mirror), SR: SR1, SL: SR1.map(mirror),
+      LR: [shaft(2.55)].concat(arm(2.55), arm(2.55).map(mirror)), SLR: [shaft(2.95), head].concat(arm(0.35), arm(0.35).map(mirror)), U: ARROWS.U };
+  })();
+  // ---- Japan: 標識令 別表第6 「進行方向」(204) — 5 m long, 0.15 m shaft; straight head 2.5 m × 0.45 m; a turn
+  // arrow's 2.2 m head leans toward the turn (tip 0.30 m to the side, outer corner 0.6 m out), joined by R 1.0/0.5. ----
+  const JP_ARROWS = (() => {
+    const TURN = [[-0.075, 0], [0.075, 0], [0.075, 3.55], [-0.225, 5.0], [-0.64, 3.95], [-0.25, 2.81], [-0.12, 3.25], [-0.075, 2.9]]; // left
+    const S = [[[-0.075, 0], [0.075, 0], [0.075, 2.5], [0.225, 2.5], [0, 5.0], [-0.225, 2.5], [-0.075, 2.5]]];
+    const SHEAD = [[-0.075, 0], [0.075, 0], [0.075, 2.8], [0.225, 2.8], [0, 5.0], [-0.225, 2.8], [-0.075, 2.8]];   // straight with a 2.2 m head
+    const SIDE = [[-0.075, 2.0], [-0.225, 2.5], [-0.64, 1.45], [-0.25, 0.31], [-0.12, 0.75], [-0.075, 0.4]];     // left side head, 0.3 m below the top head
+    return { S, L: [TURN], R: [mirror(TURN)], SL: [SHEAD, SIDE], SR: [mirror(SHEAD), mirror(SIDE)],
+      LR: [TURN, mirror(TURN)], SLR: [SHEAD, SIDE, mirror(SIDE)], U: ARROWS.U };
+  })();
+  const ARROW_SETS = { TW: ARROWS, NL: NL_ARROWS, JP: JP_ARROWS };
+  const ARROW_ANCHOR = { NL: { R: 0.30, SR: 0.30, L: -0.30, SL: -0.30 } }; // lane centre relative to the shaft (else: outline centre)
+  const setOf = (P) => (P && P.arrowSet) || (R.preset && R.preset.arrowSet) || 'TW';
+
   // Each arrow is centred on p by its whole outline (not its shaft), so turn and combined arrows — whose arm
   // sticks out to one side — sit visually in the middle of the lane like a straight arrow does.
   const arrowBox = {};
-  R.arrowBox = (kind) => {
-    if (!arrowBox[kind]) {
+  R.arrowBox = (kind, set = setOf()) => {
+    const key = set + '|' + kind, A = ARROW_SETS[set] || ARROWS;
+    if (!arrowBox[key]) {
       let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
-      for (const poly of ARROWS[kind] || ARROWS.S) for (const [x, y] of poly) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
-      arrowBox[kind] = { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, w: x1 - x0, h: y1 - y0 };
+      for (const poly of A[kind] || A.S) for (const [x, y] of poly) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+      const an = (ARROW_ANCHOR[set] || {})[kind];
+      arrowBox[key] = { cx: an != null ? an : (x0 + x1) / 2, cy: (y0 + y1) / 2, w: x1 - x0, h: y1 - y0 };
     }
-    return arrowBox[kind];
+    return arrowBox[key];
   };
   function drawArrow(ctx, el, ppm, P) {
-    const polys = ARROWS[el.kind] || ARROWS.S, bx = R.arrowBox(el.kind);
+    const set = setOf(P), A = ARROW_SETS[set] || ARROWS;
+    const polys = A[el.kind] || A.S, bx = R.arrowBox(el.kind, set), fx = el.flipX ? -1 : 1;
     const k = (el.length / 5) * ppm;
     ctx.save();
     ctx.translate(el.p.x, el.p.y); ctx.rotate(el.dir);
@@ -493,7 +593,7 @@ window.Render = (function () {
     ctx.fillStyle = P.colors.white;
     for (const poly of polys) {
       ctx.beginPath();
-      poly.forEach(([x, y], i) => { const X = (y - bx.cy) * k, Y = (x - bx.cx) * k; i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); });
+      poly.forEach(([x, y], i) => { const X = (y - bx.cy) * k, Y = fx * (x - bx.cx) * k; i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); });
       ctx.closePath(); ctx.fill();
     }
     ctx.restore();
@@ -847,7 +947,53 @@ window.Render = (function () {
       yieldTriangle(ctx, (sv, wv) => G.add(G.add(cpt, G.mul(t, sv * ppm)), G.mul(u, wv * ppm)));
     }
   }
+  // ---- give-way markings of other countries ----
+  // NL haaientanden (RBBV 2.2.1 / BABW): a row of triangles, base 0.50 m, height 0.50 m (bibeko) – 0.70 m,
+  // gap = base, apex toward approaching traffic. JP: a broken white line with the ▽ 前方優先道路 mark (211:
+  // base 1.0–2.0 m, length = 3 × base, 0.20–0.30 m outline) upstream — a Japanese give-way is signed, not marked (≈).
+  R.yieldStyle = (P) => ((P && P.yield) || { style: 'tw' });
+  function teethAlong(ctx, pts, outward, Y, ppm) { // pts: the base line (px); outward(i): unit vector toward approaching traffic
+    const cum = along(pts), L = cum[cum.length - 1], b = Y.base * ppm, pitch = 2 * b, n = Math.max(1, Math.floor((L + b) / pitch));
+    const s0 = (L - (n * pitch - b)) / 2;
+    for (let i = 0; i < n; i++) {
+      const sa = s0 + i * pitch, q0 = atLen(pts, cum, sa), q1 = atLen(pts, cum, sa + b), qm = atLen(pts, cum, sa + b / 2);
+      const o = outward(qm), apex = G.add(qm.p, G.mul(o, Y.height * ppm));
+      path(ctx, [q0.p, q1.p, apex], true); ctx.fill();
+    }
+  }
+  function jpTriangle(ctx, cpt, t, u, ppm, base = 1.5, h = 4.5, w = 0.2) { // ▽ outline, apex at cpt pointing along t
+    const Q = (sv, wv) => G.add(G.add(cpt, G.mul(t, sv * ppm)), G.mul(u, wv * ppm)), b = base / 2;
+    ctx.beginPath(); [[-h, -b], [-h, b], [0, 0]].forEach(([sv, wv], i) => { const q = Q(sv, wv); i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y); }); ctx.closePath();
+    const k = 1 - (w * 3.2) / h; [[-h + w, -b * k], [-h + w, b * k], [-w * 3.2, 0]].forEach(([sv, wv], i) => { const q = Q(sv, wv); i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y); });
+    ctx.closePath(); ctx.fill('evenodd');
+  }
+  function drawYieldOther(ctx, el, ppm, P, Y) {
+    const t = G.fromAngle(el.dir), u0 = G.rightN(t);
+    let base;
+    if (el.curved && el.arcC) { // follow the roundabout's edge between the two lane edges
+      const C = el.arcC, rr = el.arcR * ppm + 0.15 * ppm;
+      const hit = (p) => { const f = G.sub(p, C), b = G.dot(f, t), c = G.dot(f, f) - rr * rr, disc = b * b - c; if (disc < 0) return p; const s1 = -b - Math.sqrt(disc), s2 = -b + Math.sqrt(disc); return G.add(p, G.mul(t, Math.abs(s1) < Math.abs(s2) ? s1 : s2)); };
+      const ea = hit(el.a), eb = hit(el.b), a0 = Math.atan2(ea.y - C.y, ea.x - C.x), a1 = Math.atan2(eb.y - C.y, eb.x - C.x), d = Math.atan2(Math.sin(a1 - a0), Math.cos(a1 - a0));
+      base = []; for (let i = 0; i <= 24; i++) { const a = a0 + (d * i) / 24; base.push({ x: C.x + rr * Math.cos(a), y: C.y + rr * Math.sin(a) }); }
+    } else base = [G.sub(el.a, G.mul(t, 0.1 * ppm)), G.sub(el.b, G.mul(t, 0.1 * ppm))];
+    ctx.save(); ctx.fillStyle = ctx.strokeStyle = P.colors.white;
+    const back = () => G.mul(t, -1);
+    if (Y.style === 'teeth') teethAlong(ctx, base, back, Y, ppm);
+    else { // JP: broken line 0.30 m (0.5 / 0.5 m ≈), ▽ per lane
+      ctx.lineWidth = 0.30 * ppm; ctx.lineCap = 'butt'; ctx.setLineDash([0.5 * ppm, 0.5 * ppm]);
+      path(ctx, base.map((q) => G.sub(q, G.mul(t, 0.15 * ppm)))); ctx.stroke(); ctx.setLineDash([]);
+      if (el.triangles) {
+        const n = Math.max(1, el.lanes | 0), L = G.dist(el.a, el.b), ab = G.norm(G.sub(el.b, el.a));
+        const tris = el.tris && el.tris.length ? el.tris.map((tr) => ({ p: tr, t: G.mul(G.fromAngle(tr.dir), -1) })) // tr.dir points upstream
+          : Array.from({ length: n }, (_, k) => ({ p: G.add(el.a, G.mul(ab, (L * (k + 0.5)) / n)), t }));
+        for (const tr of tris) jpTriangle(ctx, G.sub(tr.p, G.mul(tr.t, 3 * ppm)), tr.t, G.rightN(tr.t), ppm);
+      }
+    }
+    ctx.restore();
+  }
   function drawYield(ctx, el, ppm, P) {
+    const Y = R.yieldStyle(P);
+    if (Y.style !== 'tw') { drawYieldOther(ctx, el, ppm, P, Y); return; }
     if (el.curved && el.arcC) { drawYieldCurved(ctx, el, ppm, P); return; }
     const u = G.norm(G.sub(el.b, el.a)), L = G.dist(el.a, el.b), t = G.fromAngle(el.dir);
     ctx.save(); ctx.strokeStyle = ctx.fillStyle = P.colors.white; ctx.lineCap = 'butt';
@@ -904,7 +1050,7 @@ window.Render = (function () {
       // traffic side, dashed on the lane side, 10 cm lines 10 cm apart)
       const mixed = { color: white, width: 0.10, sep: 0.10, pattern: 'solid-dashed', dash: [4, 6] };
       for (const sg of sides) {
-        const st = el.sepStyle === 'mixed' ? mixed : el.sepStyle === 'single' ? solid : dbl, line = G.offset(pts, sideOff(sg, st) * ppm);
+        const st = el.sepStyle === 'mixed' ? mixed : el.sepStyle === 'single' ? solid : el.sepStyle && P.lineStyles[el.sepStyle] ? P.lineStyles[el.sepStyle] : dbl, line = G.offset(pts, sideOff(sg, st) * ppm);
         R.drawStyled(ctx, sg > 0 && st === mixed ? line.slice().reverse() : line, st, ppm);
       }
     }
@@ -925,7 +1071,9 @@ window.Render = (function () {
     const hasDiamonds = el.kind !== 'priority' && el.diamonds !== false;
     // §175 bus-lane wording, written along the lane: always whole. A diamond starts each run (after every
     // intersection, §174); the wording follows it, repeats between diamonds, and is repeated just before the end.
-    const txt = el.text || '公車專用', nTxt = Array.from(txt).length, tLen = nTxt * 2.5 + (nTxt - 1) * 1.0;
+    const txt = el.text || (P.busLaneText || '公車專用'), nTxt = Array.from(txt).length;
+    const T = P.roadText || { len: 2.5, wid: 1.0, gap: 1.0 }, row = R.isRowText(txt);   // CJK cells / Latin letters (row)
+    const tLen = row ? T.rowLen || 1.6 : nTxt * T.len + (nTxt - 1) * T.gap;
     const words = [];
     const putWords = (mid) => { if (mid - tLen / 2 > 0.5 && mid + tLen / 2 < total - 0.5 && words.every((w) => Math.abs(w - mid) > tLen + 2)) words.push(mid); };
     for (let sd = Math.min(2, total / 4); sd < total - 1.3; sd += sp) {
@@ -940,7 +1088,7 @@ window.Render = (function () {
     }
     if (el.type === 'buslane') {
       putWords(total - 2 - tLen / 2); // whole wording just before the lane ends (e.g. before the next intersection)
-      for (const mid of words) { const q = atLen(pts, cum, mid * ppm); drawText(ctx, P, q.p, G.angle(q.t), txt, 2.5 * ppm, 1.0 * ppm, white, 'far', 1.0 * ppm); }
+      for (const mid of words) { const q = atLen(pts, cum, mid * ppm); drawText(ctx, P, q.p, G.angle(q.t), txt, (row ? T.rowLen || 1.6 : T.len) * ppm, (row ? T.rowWid || 0.45 : T.wid) * ppm, white, 'far', (row ? T.rowGap || 0.1 : T.gap) * ppm); }
     }
   }
 
@@ -965,7 +1113,7 @@ window.Render = (function () {
     const stationOf = (p) => { const r = G.nearestOnPolyline(p, pts); return { s: cum[r.i] + G.dist(pts[r.i], r.proj) / ppm, r }; };
     const A = stationOf(el.a), B = stationOf(el.b), rm = G.nearestOnPolyline(mid, pts);
     const side = G.dot(G.sub(mid, rm.proj), G.rightN(rm.tangent)) >= 0 ? 1 : -1; // which kerb
-    const dir = host.lanesB === 0 ? 1 : side;                                       // travel along increasing station?
+    const dir = host.lanesB === 0 ? 1 : R.LHT ? -side : side;                      // travel along increasing station? (LHT: the left kerb)
     const s0 = Math.min(A.s, B.s), s1 = Math.max(A.s, B.s), total = cum[cum.length - 1];
     const bay = el.kind === 'bay';
     const Lin = bay ? Math.max(0, +el.Lin || 0) : 0, Lout = bay ? Math.max(0, +el.Lout || 0) : 0;
@@ -1076,9 +1224,11 @@ window.Render = (function () {
     if (!skipBike) drawStopBikePath(ctx, g, ppm, P, bikeStyle);
     if (g.mouth) R.drawStyled(ctx, g.mouth, P.lineStyles.lane, ppm);                         // buses cross into the bay
     for (const tp of g.tapers) if (tp.length > 1) R.drawStyled(ctx, tp, P.lineStyles.edge, ppm);
-    R.drawStyled(ctx, g.kerb, { color: P.colors.red, width: 0.15, pattern: 'solid' }, ppm);   // §169 禁止臨時停車
-    ctx.save(); ctx.strokeStyle = white; ctx.lineWidth = 0.10 * ppm; ctx.setLineDash([]); path(ctx, g.box, true); ctx.stroke(); ctx.restore(); // §190
-    const txt = el.text || '公車停靠區', n = Array.from(txt).length, len = (g.s1 - g.s0);
+    const BS = Object.assign({ kerb: 'red', box: true, text: '公車停靠區' }, P.busStop || {});
+    if (BS.kerb) R.drawStyled(ctx, g.kerb, { color: P.colors[BS.kerb] || BS.kerb, width: 0.15, pattern: 'solid' }, ppm);   // TW §169 禁止臨時停車
+    if (BS.box) { ctx.save(); ctx.strokeStyle = white; ctx.lineWidth = 0.10 * ppm; ctx.setLineDash([]); path(ctx, g.box, true); ctx.stroke(); ctx.restore(); } // §190
+    const txt = el.text || BS.text, n = Array.from(txt).length, len = (g.s1 - g.s0);
+    if (R.isRowText(txt)) { const T = P.roadText || {}; drawText(ctx, P, g.boxMid, g.travelDir, txt, (T.rowLen || 1.6) * ppm, (T.rowWid || 0.45) * ppm, white, 'far', (T.rowGap || 0.1) * ppm); return; }
     const cl = Math.min(2.5, (len - 2) / (n + (n - 1) * 0.4)); // fit the wording inside the box
     if (cl > 0.5) drawText(ctx, P, g.boxMid, g.travelDir, txt, cl * ppm, Math.min(1.0, g.lw * 0.35) * ppm, white, 'far', cl * 0.4 * ppm);
   }

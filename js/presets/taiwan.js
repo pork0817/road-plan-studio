@@ -32,7 +32,7 @@ window.RoadPresets = window.RoadPresets || {};
     ties:  { name: '枕木紋行人穿越道線', bar: 0.40, gap: { min: 0.40, max: 0.80 }, width: { min: 2, max: 8 }, ref: '§185 線段平行車流 長2–8m 寬40cm 間隔40–80cm (同組一致)；距橫交路口路面邊緣3–5m；得塗綠底' },
     zebra: { name: '斑馬紋行人穿越道線', edge: 0.10, stripe: 0.40, gap: 0.40, angle: 45, width: { min: 3, max: 8 }, ref: '§186 兩平行實線間距3–8m 線寬10cm；斜紋45° 寬與間隔40cm；距最近行人穿越設施≥200m' },
   };
-  const stopLine = { width: { min: 0.30, max: 0.40 }, toCrosswalk: { min: 2, max: 3 }, ref: '§170 白實線 寬30–40cm；與行人穿越道淨距2–3m (受限時不小於1m)' };
+  const stopLine = { width: { min: 0.30, max: 0.40 }, dflt: 0.40, toCrosswalk: { min: 2, max: 3 }, ref: '§170 白實線 寬30–40cm；與行人穿越道淨距2–3m (受限時不小於1m)' };
 
   const sidewalkStyles = [
     ['pavers', '灰色連鎖磚 Grey pavers'], ['redbrick', '紅磚 Red brick'], ['concrete', '混凝土 Concrete'],
@@ -293,5 +293,6 @@ window.RoadPresets = window.RoadPresets || {};
     law: '道路交通標誌標線號誌設置規則 (115.03.11 修正)',
     colors: C, lineStyles, crosswalk, stopLine, typeNames, library, fields,
     fontFamily: '"PingFang TC","Noto Sans TC","Microsoft JhengHei","Heiti TC",sans-serif',
+    arrowSet: 'TW', arrowLen: 5, tracedGlyphs: true, boxRange: [2.5, 6],
   };
 })();

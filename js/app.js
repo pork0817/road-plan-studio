@@ -13,7 +13,46 @@
     imgOpacity: 1, roadOpacity: 1, clip: true, magnet: true, align: null,
     hist: [], fut: [], cur: '[]', drag: null, space: false, measure: null,
   };
-  const P = () => window.RoadPresets[S.country];
+  const P = () => { const p = window.RoadPresets[S.country] || window.RoadPresets.TW; if (R.preset !== p) R.setPreset(p); return p; };
+  // ---- left-hand traffic (Japan) ----
+  // The intersection / roundabout builders reason in right-hand traffic. For a left-hand-traffic country the whole
+  // drawing is reflected (y → −y, angles negated — both exact, so reflecting twice restores every number bit for bit)
+  // and the lane semantics swapped (lane order, left/right pockets and guides, L/R arrows); the builder runs in that
+  // mirrored world, and everything — including what it added — is reflected back afterwards.
+  let inMirror = false;
+  const ANG_KEYS = new Set(['dir', 'ang', 'turboAxis']);
+  // seen: objects already reflected in this pass — builders share point objects between polygons and elements,
+  // and a shared point must be reflected once, not once per reference
+  const reflectDeep = (v, seen) => {
+    if (seen.has(v)) return; seen.add(v);
+    if (Array.isArray(v)) { for (const x of v) if (x && typeof x === 'object') reflectDeep(x, seen); return; }
+    if (typeof v.x === 'number' && typeof v.y === 'number') v.y = -v.y;
+    for (const k of Object.keys(v)) {
+      const x = v[k];
+      if (typeof x === 'number') { if (ANG_KEYS.has(k)) v[k] = -x; }
+      else if (x && typeof x === 'object') reflectDeep(x, seen);
+    }
+  };
+  const SWAP_KIND = { L: 'R', R: 'L', SL: 'SR', SR: 'SL' };
+  const swapKeys = (o, a, b) => { const va = o[a], vb = o[b]; if (vb === undefined) delete o[a]; else o[a] = vb; if (va === undefined) delete o[b]; else o[b] = va; };
+  const swapUses = (str) => String(str).toUpperCase().split(/[\s,，、]+/).filter(Boolean).reverse().map((u) => SWAP_KIND[u] || u).join(',');
+  function reflectEl(e, seen) {
+    if (seen.has(e)) return;
+    reflectDeep(e, seen);
+    if (e.type === 'arrow') { if (SWAP_KIND[e.kind]) e.kind = SWAP_KIND[e.kind]; else if (e.kind === 'U') { if (e.flipX) delete e.flipX; else e.flipX = true; } }
+    if (e.type === 'section') {
+      for (const k of ['laneUse', 'laneUseF', 'laneUseB']) if (typeof e[k] === 'string' && e[k] !== '') e[k] = swapUses(e[k]);
+      swapKeys(e, 'pocketLF', 'pocketRF'); swapKeys(e, 'pocketLB', 'pocketRB'); swapKeys(e, 'leftGuide', 'rightGuide');
+    }
+  }
+  function inRHT(fn) {
+    if (!inMirror) P(); // the preset (and so the traffic side) of the current country
+    if (!R.LHT || inMirror) return fn();
+    const s1 = new WeakSet(); for (const e of S.els) reflectEl(e, s1);
+    inMirror = true; R.LHT = false;
+    try { return fn(); } finally { R.LHT = true; inMirror = false; const s2 = new WeakSet(); for (const e of S.els) reflectEl(e, s2); }
+  }
+  const mp = (p) => (R.LHT && !inMirror ? { x: p.x, y: -p.y } : p); // a fresh point (mouse) into the mirrored world, called inside inRHT
   const ppm = () => S.ppm || 8;
   let uid = 1;
   const newId = () => 'e' + Date.now().toString(36) + (uid++);
@@ -121,7 +160,8 @@
       const pastStart = r.i === 0 && r.t <= 0, pastEnd = r.i === pts.length - 2 && r.t >= 1;
       if ((pastStart || pastEnd) && G.dot(G.sub(p, r.proj), r.tangent) * (pastStart ? -1 : 1) > 3 * ppm()) continue;
       let t = r.tangent;
-      if (el.type === 'section' && el.lanesB > 0 && G.dot(G.sub(p, r.proj), G.rightN(t)) < 0) t = G.mul(t, -1);
+      // two-way road: traffic on this side flows against the drawing direction (left side in RHT, right side in Japan)
+      if (el.type === 'section' && el.lanesB > 0 && (G.dot(G.sub(p, r.proj), G.rightN(t)) < 0) !== R.LHT) t = G.mul(t, -1);
       best = { d: r.d, t };
     }
     return best;
@@ -561,10 +601,11 @@
             rb.turboTaper = Math.round(G.clamp(half + 4, 12, 40));
           }
         }
-        S.els.push(rb); syncRoundabout(rb); S.sel = rb.id; commit(); setTool('select'); S.sel = rb.id; renderProps();
+        S.els.push(rb); inRHT(() => syncRoundabout(rb)); S.sel = rb.id; commit(); setTool('select'); S.sel = rb.id; renderProps();
       } else if (m === 'junction') {
-        const made = buildJunction(w, S.params);
-        if (made) { S.els.push(...made); S.sel = made[0].id; commit(); setTool('select'); S.sel = made[0].id; renderProps(); }
+        P(); const wq = R.LHT ? { x: w.x, y: -w.y } : w;
+        const made = inRHT(() => { const mm = buildJunction(wq, S.params); if (mm) S.els.push(...mm); return mm; });
+        if (made) { S.sel = made[0].id; commit(); setTool('select'); S.sel = made[0].id; renderProps(); }
       } else if (m === 'point') {
         const el = buildElement(S.item, { p: w });
         S.els.push(el); S.sel = el.id; commit();
@@ -579,7 +620,7 @@
     const d = S.drag;
     if (d) {
       if (d.kind === 'pan') { S.view.x = d.v0.x + (s.x - d.s0.x); S.view.y = d.v0.y + (s.y - d.s0.y); }
-      else if (d.kind === 'move') { const el = findEl(S.sel); moveEl(el, d.orig, G.sub(w, d.w0)); d.moved = true; if (el.type === 'roundabout') syncRoundabout(el); }
+      else if (d.kind === 'move') { const el = findEl(S.sel); moveEl(el, d.orig, G.sub(w, d.w0)); d.moved = true; if (el.type === 'roundabout') inRHT(() => syncRoundabout(el)); }
       else if (d.kind === 'handle') {
         const el = findEl(S.sel), h = d.h;
         const o = d.orig;
@@ -620,7 +661,7 @@
           el.a = rot(o.a); el.b = rot(o.b); el.dir = nd;
         }
         d.moved = true;
-        if (el.type === 'roundabout') syncRoundabout(el);
+        if (el.type === 'roundabout') inRHT(() => syncRoundabout(el));
       }
       redraw();
     } else {
@@ -778,14 +819,13 @@
       const s = { id: newId(), type: 'stopline', width: sw, a: G.add(el.a, off), b: G.add(el.b, off), dir: el.dir };
       S.els.push(s); S.sel = s.id;
     }
-    if (a === 'regen' && el.type === 'roundabout') { regenerateRoundabout(el); return; }
+    if (a === 'regen' && el.type === 'roundabout') { inRHT(() => regenerateRoundabout(el)); return; }
     if (a === 'restoreJunction' && el.type === 'junction') { // bring back deleted pieces, keep every other edit
       el.removed = []; el.removedAt = []; el.sig = ''; commit(); return;
     }
     if (a === 'regenJunction' && el.type === 'junction' && el.genClick) {
-      const made = buildJunction(el.genClick, el.genPrm || {});
+      const made = inRHT(() => { const mm = buildJunction(el.genClick, el.genPrm || {}); if (mm) replaceOwned((e) => e.id === el.id || e.owner === el.id, mm); return mm; });
       if (!made) return;
-      replaceOwned((e) => e.id === el.id || e.owner === el.id, made);
       S.sel = made[0].id; commit(); return;
     }
     if (a === 'rotL') el.dir -= Math.PI / 12;
@@ -805,7 +845,7 @@
     const r = G.nearestOnPolyline(near || G.centroid(pts), pts, !['line', 'section', 'bikelane', 'buslane'].includes(el.type));
     if (!r) return 0;
     let t = r.tangent;
-    if (el.type === 'section' && el.lanesB > 0 && near && G.dot(G.sub(near, r.proj), G.rightN(t)) < 0) t = G.mul(t, -1);
+    if (el.type === 'section' && el.lanesB > 0 && near && (G.dot(G.sub(near, r.proj), G.rightN(t)) < 0) !== R.LHT) t = G.mul(t, -1);
     return G.angle(t);
   }
   // how far (px) a band element reaches from its a→b line on the side of unit normal n
@@ -1333,7 +1373,7 @@
         // like an intersection approach: a stop line 2–3 m before the crosswalk on the entry side (§170)
         if (rb.stopLines !== false && lg.incoming && !removed.includes('stopline:' + lg.key)) {
           let sl = kids.find((k) => k.type === 'stopline' && k.legKey === lg.key);
-          if (!sl) { sl = { id: newId(), type: 'stopline', owner: rb.id, legKey: lg.key, width: 0.4 }; S.els.push(sl); }
+          if (!sl) { sl = { id: newId(), type: 'stopline', owner: rb.id, legKey: lg.key, width: P().stopLine.dflt || 0.4 }; S.els.push(sl); }
           const ds = RB_YD + 0.54 + c.setback + c.width + rbStopGap(rb) + sl.width / 2;
           const inner = lg.oneWay ? lg.rightExt - 0.3 : -(lg.median ? lg.el.medianWidth / 2 + 0.2 : 0.15);
           sl.a = at(ds, inner); sl.b = at(ds, -lg.leftExt + 0.3); sl.dir = G.angle(G.mul(lg.v, -1));
@@ -1384,7 +1424,7 @@
   const junctionPrm = (j) => { const o = Object.assign({}, j.genPrm || {}); for (const k of J_KEYS) if (j[k] !== undefined) o[k] = j[k]; return o; };
   // JGEN: bumped when the generator's output changes (e.g. stop lines now flush with the lane lines), so every
   // junction rebuilds once — edited, locked and deleted pieces are still kept as the user left them.
-  const JGEN = 2;
+  const JGEN = 3;
   function junctionSig(j, core) { // core: true = before bus lanes were part of it; 'v1' = before JGEN
     const m = ppm(), near = (40 + 60) * m;
     const secs = S.els.filter((e) => e.type === 'section' && e.pts.some((p, i) => {
@@ -1394,7 +1434,7 @@
     if (core === true) return JSON.stringify([m, junctionPrm(j), secs.map((e) => SEC_KEYS.map((k) => e[k])), others]);
     const buses = S.els.filter((e) => e.type === 'buslane' && e.pts && e.pts.length > 1 && G.nearestOnPolyline(j.genClick, e.pts).d < 100 * m).map((e) => [e.pts, e.width, e.smooth]);
     const base = [m, junctionPrm(j), secs.map((e) => SEC_KEYS.map((k) => e[k])), others, buses];
-    return JSON.stringify(core === 'v1' ? base : base.concat([JGEN]));
+    return JSON.stringify(core === 'v1' ? base : base.concat([JGEN, S.country]));
   }
   const sigSame = (j) => j.sig === junctionSig(j) || j.sig === junctionSig(j, 'v1') || j.sig === junctionSig(j, true); // roads unchanged
   // Junctions made before pieces had keys: while the roads are unchanged, match every existing piece to its rebuilt
@@ -1522,12 +1562,14 @@
     }
   }
   const syncAll = () => {
-    for (const e of S.els.slice()) if (e.type === 'roundabout') syncRoundabout(e);
+    inRHT(() => { for (const e of S.els.slice()) if (e.type === 'roundabout') syncRoundabout(e); });
     syncBikeJoins();
-    for (const e of S.els.slice()) if (e.type === 'junction' && e.genClick) {
-      for (const k of J_KEYS) if (e[k] === undefined && e.genPrm && e.genPrm[k] !== undefined) e[k] = e.genPrm[k]; // older junctions: settings onto the panel
-      syncJunction(e);
-    }
+    inRHT(() => {
+      for (const e of S.els.slice()) if (e.type === 'junction' && e.genClick) {
+        for (const k of J_KEYS) if (e[k] === undefined && e.genPrm && e.genPrm[k] !== undefined) e[k] = e.genPrm[k]; // older junctions: settings onto the panel
+        syncJunction(e);
+      }
+    });
   };
   function buildRoundabout(C, prm) {
     return { id: newId(), type: 'roundabout', p: G.copy(C), R: prm.R, lanes: prm.turbo ? 2 : prm.lanes, laneWidth: prm.laneWidth, apron: prm.turbo ? 0 : prm.apron,
@@ -1648,7 +1690,7 @@
     for (const lg of legs) for (const o of legs) if (o !== lg && G.dot(o.v, lg.v) > 0.95) lg.E = Math.max(lg.E, o.E0);
     const out = [];
     const jid = newId();
-    const stopW = 0.4;
+    const PR = P(), stopW = PR.stopLine.dflt || 0.4, AL = PR.arrowLen || 5; // stop line width, arrow length (m)
     const poly = [];
     // order the legs by where they are around the centre (not just their direction), so side-by-side carriageways
     // are in their real order and corners form between the outermost ones
@@ -1700,7 +1742,7 @@
       // The stop line ends flush with the outer side of the lines it meets: the edge line at the kerb (0.15 m wide,
       // drawn just outside the lane edge, which sits 0.3 m inside the pavement edge), and on the other end the
       // centre line's near side, the median's edge line, or (one-way) the far edge line.
-      const edgeW = el.edge ? 0.15 : 0;
+      const edgeW = el.edge ? R.edgeW() : 0;
       const ctrSt = P().lineStyles[el.centerType] || {};
       const ctrHalf = ctrSt.width ? (ctrSt.sep != null ? 2 * ctrSt.width + ctrSt.sep : ctrSt.width) / 2 : 0;
       const laneEdgeL = -lg.leftExt + (el.edge ? 0.3 : 0), laneEdgeR = lg.rightExt - (el.edge ? 0.3 : 0);
@@ -1806,19 +1848,21 @@
     }
     const legSecIds = [...new Set(legs.map((lg) => lg.rd.src.id))];
     for (const w of walks) out.push({ id: newId(), owner: jid, type: 'sidewalk', style: 'pavers', yieldTo: legSecIds, pts: w.filter((_, k) => k % 2 === 0 || k === w.length - 1) });
-    // §186-1 自行車穿越道線: where any road here carries bike lanes, a bike crossing runs beside each crosswalk
-    // (junction side): two 10 cm white solid lines ≥ 1.2 m apart, with a bike symbol at each entry and exit
+    // Bike crossing beside each crosswalk (junction side) where any road here carries bike lanes. Taiwan §186-1:
+    // two 10 cm white lines ≥ 1.2 m apart + bike symbols; NL: 0.50 m blocks with 0.50 m gaps (≥ 1.50 m wide,
+    // 0.50 m from the zebra); JP 201の3 自転車横断帯: two 0.15–0.30 m white lines + bike symbols. (P().bikeCross)
+    const BX = Object.assign({ line: 'laneSolid', lineW: 0.10, gap: 0.4, minW: 1.2, pad: 0.2, symbols: true }, PR.bikeCross || {});
     const bikeW = Math.max(0, ...roads.map((rd) => rd.el.bikeLane || 0));
     if (prm.bikeCross !== false && bikeW > 0 && prm.crosswalks) {
-      const W = Math.max(1.2, bikeW) + 0.2;
+      const W = Math.max(BX.minW, bikeW + BX.pad);
       for (const lg of legs) {
         if (!roads.some((rd) => rd !== lg.rd && (rd.el.bikeLane || 0) > 0)) continue;
-        const s1 = lg.cwIn - 0.4 * m, s0 = s1 - W * m;
+        const s1 = lg.cwIn - (BX.gap + BX.lineW / 2) * m, s0 = s1 - (W - BX.lineW) * m;
         if (s0 < lg.E * 0.6) continue;
         const l0 = -lg.leftExt + 0.3, l1 = lg.rightExt - 0.3;
-        for (const s of [s0, s1]) out.push({ id: newId(), owner: jid, type: 'line', style: 'laneSolid', smooth: false, jline: true, pts: [legPt(lg, s, l0), legPt(lg, s, l1)] });
+        for (const s of [s0, s1]) out.push({ id: newId(), owner: jid, type: 'line', style: BX.line, smooth: false, jline: true, pts: [legPt(lg, s, l0), legPt(lg, s, l1)] });
         const mid = (s0 + s1) / 2, across = G.norm(G.sub(legPt(lg, mid, l1), legPt(lg, mid, l0)));
-        for (const [off, d] of [[l0 + 1.3, across], [l1 - 1.3, G.mul(across, -1)]])
+        if (BX.symbols) for (const [off, d] of [[l0 + 1.3, across], [l1 - 1.3, G.mul(across, -1)]])
           out.push({ id: newId(), owner: jid, type: 'symbol', kind: 'bike', small: W < 1.6, p: legPt(lg, mid, off), dir: G.angle(d) });
       }
     }
@@ -1928,11 +1972,14 @@
       if (el.autoBox && prm.stops && n > 0) {
         uses.forEach((u, k) => { if (u.includes('S')) { if (kS < 0) kS = k; kE = k; } });
         if (kS >= 0) {
-          const D = G.clamp(el.boxDepth || 3, 2.5, 6);
+          const BR = PR.boxRange || [2.5, 6], D = G.clamp(el.boxDepth || 3, BR[0], BR[1]);
           boxRear = stopRear + D * m;
           const e0 = edgeOff(kS), e1 = edgeOff(kE + 1), inward = Math.sign(e0 - e1); // keep clear of the centre / edge lines
           out.push({ id: newId(), owner: jid, type: 'scooterbox', depth: D, side: '0.15', icon: true, text: '',
-            a: atL(lg, boxRear, e0 - inward * 0.15), b: atL(lg, boxRear, e1 + inward * 0.15), dir: dirAt(boxRear - (D * m) / 2) });
+            // built from its front edge, which lies exactly on the stop line's rear edge (also on a curve or a skew)
+            ...(() => { const fa = atL(lg, stopRear, e0 - inward * 0.15), fb = atL(lg, stopRear, e1 + inward * 0.15);
+              const tv = G.norm(G.sub(atL(lg, stopRear, (e0 + e1) / 2), atL(lg, boxRear, (e0 + e1) / 2))), back = G.mul(tv, -D * m);
+              return { a: G.add(fa, back), b: G.add(fb, back), dir: G.angle(tv) }; })() });
         }
       }
       // lane lines on the approach: hidden inside the box, then solid 禁止變換車道線 for solidLen before the stop line
@@ -1955,7 +2002,7 @@
         const inBox = (k) => kS >= 0 && k >= kS && k <= kE;
         const tip1 = (k) => (inBox(k) ? boxRear + 3 * m : stopRear + 1 * m);
         const tip2 = Math.max(boxRear + 33 * m, stopRear + (L0 + 3) * m);
-        const put = (k, tip) => { if (tip + 5 * m < lg.len && sameLanes(tip, tip + 5 * m)) out.push({ id: newId(), owner: jid, type: 'arrow', lane: k, kind: uses[k], length: 5, p: atL(lg, tip + 2.5 * m, laneOff(k)), dir: dirAt(tip + 2.5 * m) }); };
+        const put = (k, tip) => { if (tip + AL * m < lg.len && sameLanes(tip, tip + AL * m)) out.push({ id: newId(), owner: jid, type: 'arrow', lane: k, kind: uses[k], length: AL, p: atL(lg, tip + (AL / 2) * m, laneOff(k)), dir: dirAt(tip + (AL / 2) * m) }); };
         for (let k = 0; k < n; k++) put(k, tip1(k));
         for (let k = 0; k < n; k++) put(k, tip2);
       }
@@ -1969,7 +2016,7 @@
       const pocketArrows = (kind, offs, laneTag) => {
         if (el.autoArrows === false) return;
         for (const off of offs) for (const tip of [stopRear + 1 * m, Math.min(sP - 5 * m, stopRear + 20 * m)]) {
-          if (tip > stopRear) out.push({ id: newId(), owner: jid, type: 'arrow', lane: laneTag, kind, length: 5, p: atL(lg, tip + 2.5 * m, off), dir: dirAt(tip + 2.5 * m) });
+          if (tip > stopRear) out.push({ id: newId(), owner: jid, type: 'arrow', lane: laneTag, kind, length: AL, p: atL(lg, tip + (AL / 2) * m, off), dir: dirAt(tip + (AL / 2) * m) });
         }
       };
       const solid = (off, s0, s1) => out.push({ id: newId(), owner: jid, type: 'line', style: 'laneSolid', smooth: false, jline: true, pts: legLine(lg, s0, s1, off) });
@@ -2015,7 +2062,7 @@
         lg.rightEdges = Array.from({ length: nP + 1 }, (_, k) => R0 - pw + k * lw); // outermost first
       }
       // ---- 機慢車兩段式左轉: 待轉區 at the far-right corner, in front of the crosswalk of the road on the right ----
-      if (design === 'twoStage' && t.L && t.R) {
+      if (design === 'twoStage' && t.L && t.R && PR.twoStageBox !== false) {
         const Rg = t.R.o, elR = Rg.rd.el, lwR = elR.laneWidth;
         const nR = elR.lanesB === 0 ? (Rg.sgn < 0 ? elR.lanesF : 0) : (Rg.sgn > 0 ? elR.lanesB : elR.lanesF);
         if (nR > 0 && Rg.cwIn) {
@@ -2168,15 +2215,21 @@
       // what the lanes are now: set by the user, else what the intersection worked out, else a sensible default
       const own = parse(t['laneUse' + dir] != null && t['laneUse' + dir] !== '' ? t['laneUse' + dir] : t.laneUse);
       const gen = {};
-      if (el) for (const a of S.els) if (a.type === 'arrow' && a.owner && a.lane != null && a.lane >= 0 && String(a.jkey).startsWith(el.id + ':' + (dir === 'F' ? -1 : 1) + '|')) if (!(a.lane in gen)) gen[a.lane] = a.kind;
+      if (el) for (const a of S.els) if (a.type === 'arrow' && a.owner && a.lane != null && a.lane >= 0 && String(a.jkey).startsWith(el.id + ':' + (dir === 'F' ? -1 : 1) + '|')) { const kk = R.LHT ? n - 1 - a.lane : a.lane; if (!(kk in gen)) gen[kk] = a.kind; } // LHT: the builder counts lanes in its mirrored world
       const auto = (k) => gen[k] || (n === 1 ? 'SLR' : k === 0 ? 'SL' : k === n - 1 ? 'SR' : 'S');
       const uses = Array.from({ length: n }, (_, k) => own[k] || auto(k));
       const custom = own.length > 0;
       const nPL = t['pocketL' + dir] != null && t['pocketL' + dir] !== '' ? +t['pocketL' + dir] : (t.leftTurn === 'pocket' ? 1 : 0);
       const nPR = +(t['pocketR' + dir] || 0);
       const maxMedianPL = t.centerType === 'median' ? Math.floor((t.medianWidth - 0.5) / 2.75) : 0; // pocket lanes the median can give
-      const canPL = t.lanesB === 0 || nPL < maxMedianPL, canPR = !(t.bikeLane > 0) && !(t.slowLane > 0);
-      const whyPL = t.lanesB === 0 ? '' : t.centerType !== 'median' ? '雙向道路需有中央分隔島 Needs a median' : `分隔島太窄 (每條約需 2.75 m，目前 ${t.medianWidth} m) Median too narrow`;
+      // the turn across traffic takes its pocket from the median (left in right-hand traffic, right in Japan); the kerb-side
+      // turn widens the road at the kerb, which a kerbside bike / slow lane rules out
+      const midSide = R.LHT ? 'R' : 'L', nMid = midSide === 'L' ? nPL : nPR;
+      const canMid = t.lanesB === 0 || nMid < maxMedianPL, canKerb = !(t.bikeLane > 0) && !(t.slowLane > 0);
+      const whyMid = t.lanesB === 0 ? '' : t.centerType !== 'median' ? '雙向道路需有中央分隔島 Needs a median' : `分隔島太窄 (每條約需 2.75 m，目前 ${t.medianWidth} m) Median too narrow`;
+      const whyKerb = '路邊有自行車道/慢車道時無法加附加車道 Not with a kerbside bike / slow lane';
+      const canPL = midSide === 'L' ? canMid : canKerb, canPR = midSide === 'R' ? canMid : canKerb;
+      const whyPL = midSide === 'L' ? whyMid : whyKerb, whyPR = midSide === 'R' ? whyMid : whyKerb;
       const setUses = (arr) => onChange('laneUse' + dir, arr.join(','));
       const head = document.createElement('div'); head.className = 'ledhead';
       head.innerHTML = `<span>${title}</span>`;
@@ -2203,7 +2256,7 @@
         lanePick = lanePick && lanePick.dir === dir && lanePick.k === k ? null : { dir, k }; renderProps();
       })));
       for (let k = 0; k < nPR; k++) row.appendChild(card('R', '附加', 'pocket', null, () => onChange('pocketR' + dir, nPR - 1)));
-      if (nPR < 3) row.appendChild(addBtn('R', canPR, '路邊有自行車道/慢車道時無法加右轉附加車道 Not with a kerbside bike / slow lane'));
+      if (nPR < 3) row.appendChild(addBtn('R', canPR, whyPR));
       wrap.appendChild(row);
       // arrow menu for the chosen lane
       if (lanePick && lanePick.dir === dir && lanePick.k < n) {
@@ -2585,7 +2638,9 @@
   $('#chkMagnet').onchange = (e) => { S.magnet = e.target.checked; try { localStorage.setItem('roadplan:magnet', S.magnet ? '1' : '0'); } catch (er) { /* ignore */ } };
   const selC = $('#selCountry');
   Object.values(window.RoadPresets).forEach((p) => { const o = document.createElement('option'); o.value = p.id; o.textContent = p.name; selC.appendChild(o); });
-  selC.onchange = () => { S.country = selC.value; buildLibrary(); setTool('select'); };
+  // switching country restyles everything and rebuilds the automatic markings with that country's rules (and, for
+  // Japan, left-hand traffic); user edits to generated pieces are kept
+  selC.onchange = () => { S.country = selC.value; P(); buildLibrary(); setTool('select'); commit(); };
 
   window.addEventListener('resize', redraw);
   new ResizeObserver(redraw).observe(stage);
