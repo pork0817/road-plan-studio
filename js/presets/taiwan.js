@@ -153,7 +153,7 @@ window.RoadPresets = window.RoadPresets || {};
           num('solidLen', '近路口實線 Solid lane lines before stop line', 0, 60, 1, '≈ 禁止變換車道線，0 = 不設'),
           { kind: 'sel', key: 'leftTurn', label: '左轉設計 Left-turn design', options: [['shared', '共用車道 Shared (直左)'], ['dedicated', '左轉專用車道 Dedicated lane'], ['pocket', '左轉附加車道 Pocket from median'], ['twoStage', '機慢車兩段式左轉 Two-stage (待轉區)'], ['banned', '禁止左轉 No left turn']] },
           ...(el.leftTurn === 'pocket' ? [num('pocketLen', '附加車道長 Pocket length', 10, 120, 1, '≈ 依左轉需求，常用 30 m'), num('pocketTaper', '漸變段長 Taper length', 5, 80, 1, '≈'),
-            { kind: 'info', text: el.centerType === 'median' ? '從中央分隔島切出一條左轉車道 (寬 ≤ 分隔島寬 − 0.5 m，需 ≥ 1.5 m)。' : '附加車道需要中央分隔島 (中央 Centre → 中央分隔島)。' }] : []),
+            { kind: 'info', text: el.lanesB === 0 ? '單行道 (例如快慢分隔的快車道)：路面在駕駛人左側加寬一條左轉車道，並切開該側的分隔島。One-way road: the pocket widens the road on the driver\'s left, opening any island there.' : el.centerType === 'median' ? '從中央分隔島切出一條左轉車道 (寬 ≤ 分隔島寬 − 0.5 m，需 ≥ 1.5 m)。Cut from the median.' : '雙向道路無分隔島時，請用「左轉專用車道」，或用「後段車道數」在路口前增加車道。Two-way without a median: use a dedicated lane, or add a lane before the junction (Lanes after change).' }] : []),
           { kind: 'chk', key: 'leftGuide', label: '左轉導引線 Left-turn guide lines' },
           { kind: 'info', text: '台灣靠右行駛：畫線方向的右側為順向車道。Right-hand traffic: lanes on the right of your drawing direction flow forward.' });
         return f;

@@ -1404,12 +1404,15 @@
     for (const f of fresh) { const o = pick(f, 0.5); if (o) { o.jkey = f.jkey; free.delete(o); } else unmatched.push(f); }
     for (const f of unmatched) { // moved a little: edited; nothing of its kind nearby: deleted
       const o = pick(f, 6);
-      if (o) { o.jkey = f.jkey; o.edited = true; free.delete(o); } else (j.removed = j.removed || []).push(f.jkey);
+      if (o) { o.jkey = f.jkey; if (!['arrow', 'line', 'scooterbox'].includes(o.type)) o.edited = true; free.delete(o); } else (j.removed = j.removed || []).push(f.jkey);
     }
-    for (const o of free) { o.jkey = 'legacy|' + o.id; o.edited = true; } // anything else of theirs is kept as it is
+    for (const o of free) { o.jkey = 'legacy|' + o.id; if (!['arrow', 'line', 'scooterbox'].includes(o.type)) o.edited = true; } // other leftovers are kept; lane-design leftovers are rebuilt
   }
+  const LANE_KEYS = ['leftTurn', 'laneUse', 'lanesF', 'lanesB', 'lanesF2', 'lanesB2', 'changeAt', 'taper', 'pocketLen', 'pocketTaper', 'autoArrows', 'autoBox', 'boxDepth', 'solidLen', 'leftGuide', 'laneWidth', 'medianWidth', 'centerType'];
+  function laneSigNow() { const o = {}; for (const e of S.els) if (e.type === 'section') o[e.id] = JSON.stringify(LANE_KEYS.map((k) => e[k])); return o; }
   function syncJunction(j) {
     if (!j.genClick) return;
+    if (!j.laneSig && j.sig === junctionSig(j)) j.laneSig = laneSigNow(); // older junctions: remember the lane design as it stands
     keyLegacyPieces(j);
     const sig = junctionSig(j);
     if (j.sig === sig) return;
@@ -1418,13 +1421,20 @@
     if (!made) return;
     const fresh = made[0], oldId = j.id;
     for (const e of made) if (e.owner === fresh.id) e.owner = oldId;
+    // Arrows, lane lines and scooter boxes follow each road's lane design: when that changes (left-turn design,
+    // lane use, lane counts, pocket), the road's ones are rebuilt fresh, whatever was deleted or edited before.
+    const laneSig = laneSigNow();
+    const prevSig = j.laneSig || {}, changedSecs = new Set(Object.keys(laneSig).filter((id) => prevSig[id] !== undefined && prevSig[id] !== laneSig[id]));
+    j.laneSig = laneSig;
+    const designPiece = (k) => { const p = String(k || '').split('|'); return changedSecs.has(p[0].split(':')[0]) && ['arrow', 'line', 'scooterbox'].includes(p[1]); };
+    if (j.removed) j.removed = j.removed.filter((k) => !designPiece(k));
     // keep what the user did to this intersection's pieces: deleted ones stay deleted, edited ones stay as edited
-    const old = S.els.filter((e) => e.owner === oldId), oldByKey = new Map(old.filter((e) => e.jkey).map((e) => [e.jkey, e]));
+    const old = S.els.filter((e) => e.owner === oldId && !(e.edited && designPiece(e.jkey))), oldByKey = new Map(old.filter((e) => e.jkey).map((e) => [e.jkey, e]));
     const removed = new Set(j.removed || []);
     const pieces = made.slice(1).filter((e) => !removed.has(e.jkey)).map((e) => { const o = oldByKey.get(e.jkey); return o && o.edited ? o : e; });
     for (const o of old) if (o.edited && !pieces.includes(o)) pieces.push(o);
     made.length = 1; made.push(...pieces);
-    j.pts = fresh.pts; j.corners = fresh.corners; j.cornerCuts = fresh.cornerCuts; j.legSecIds = fresh.legSecIds;
+    j.pts = fresh.pts; j.corners = fresh.corners; j.cornerCuts = fresh.cornerCuts; j.pocketCuts = fresh.pocketCuts; j.legSecIds = fresh.legSecIds;
     replaceOwned((e) => e.owner === oldId, made.slice(1));
   }
   // Bike lanes whose end sits on an open end of a bus stop's bike lane are joined to it: the end follows the stop
@@ -1599,22 +1609,24 @@
         }
         if (best) { cwIn = best.sC - best.w / 2; cwOut = best.sC + best.w / 2; hasCw = true; }
       }
+      // incoming lanes: traffic heading toward C keeps right, i.e. the left side of v
+      const oneWay = el.lanesB === 0;
+      const incoming = oneWay ? lg.sgn < 0 : true;
+      // 左轉附加車道 on a one-way road (no median to cut into): the road widens on the driver's left (+ side here)
+      lg.pocketOne = oneWay && incoming && el.leftTurn === 'pocket' ? el.laneWidth : 0;
       if (prm.crosswalks) {
         const w = G.clamp(prm.cwWidth, P().crosswalk[prm.cwKind].width.min, P().crosswalk[prm.cwKind].width.max);
         const d = cwIn + (w * m) / 2;
         out.push({ id: newId(), owner: jid, type: 'crosswalk', kind: prm.cwKind, width: w, gap: 0.4, green: false,
-          a: legPt(lg, d, -lg.leftExt + 0.05), b: legPt(lg, d, lg.rightExt - 0.05), dir: G.angle(onLeg(lg, d, 0).t) });
+          a: legPt(lg, d, -lg.leftExt + 0.05), b: legPt(lg, d, lg.rightExt - 0.05 + lg.pocketOne), dir: G.angle(onLeg(lg, d, 0).t) });
       }
-      // incoming lanes: traffic heading toward C keeps right, i.e. the left side of v
-      const oneWay = el.lanesB === 0;
-      const incoming = oneWay ? lg.sgn < 0 : true;
       // stop line across every entering lane, 2–3 m before the crosswalk (§170)
       const ds = cwOut + (hasCw ? prm.stopGap * m : 0) + (stopW * m) / 2;
       // 左轉附加車道 (pocket): an extra left-turn lane carved out of the median next to the incoming lanes
       const mhalf = el.centerType === 'median' && el.lanesB > 0 ? el.medianWidth / 2 : 0;
       const pocketW = el.leftTurn === 'pocket' && mhalf > 0 ? Math.min(el.laneWidth, 2 * mhalf - 0.5) : 0;
       lg.pocketW = pocketW > 1.5 ? pocketW : 0;
-      const inner = oneWay ? lg.rightExt - 0.3 : lg.pocketW ? -(mhalf - lg.pocketW) - 0.2 : -((el.centerType === 'median' ? el.medianWidth / 2 + 0.2 : 0.15));
+      const inner = oneWay ? lg.rightExt - 0.3 + lg.pocketOne : lg.pocketW ? -(mhalf - lg.pocketW) - 0.2 : -((el.centerType === 'median' ? el.medianWidth / 2 + 0.2 : 0.15));
       if (prm.stops && incoming) {
         out.push({ id: newId(), owner: jid, type: 'stopline', width: stopW, a: legPt(lg, ds, inner), b: legPt(lg, ds, -lg.leftExt + 0.3), dir: G.angle(G.mul(onLeg(lg, ds, 0).t, -1)) });
       }
@@ -1627,11 +1639,11 @@
       // otherwise just past the centre line, so the centre line ends at the stop line.
       const median = el.lanesB > 0 && el.centerType === 'median';
       const step = median ? -(el.medianWidth / 2) : 0.3;
-      if (oneWay || Math.abs(dIn - dOut) < 1e-6) poly.push(at(dIn, -lg.leftExt - 1), at(dOut, lg.rightExt + 1));
+      if (oneWay || Math.abs(dIn - dOut) < 1e-6) poly.push(at(dIn, -lg.leftExt - 1), at(dOut, lg.rightExt + 1 + lg.pocketOne));
       else poly.push(at(dIn, -lg.leftExt - 1), at(dIn, step), at(dOut, step), at(dOut, lg.rightExt + 1));
     }
     // ---- corners: rounded kerb returns (paved), optional corner sidewalks, §186-1 自行車穿越道線 ----
-    const corners = [], walks = [], cornerCuts = [];
+    const corners = [], walks = [], cornerCuts = [], pocketCuts = [];
     const cR = G.clamp(prm.cornerR != null ? prm.cornerR : 8, 0, 30), swW = G.clamp(prm.swWidth || 4, 1.5, 10);
     const kerbOf = (lg, side, s) => { // + = right of outward; follows lane-change tapers along the road
       if (s == null || !R.hasLaneChange(lg.rd.src)) return side > 0 ? lg.rightExt : -lg.leftExt;
@@ -1768,7 +1780,7 @@
       const autoPick = (k) => {
           const Rx = !!t.R, Sx = !!t.S;
           // the left turn is made from the pocket, the two-stage box, or not at all → not from these lanes
-          const L = !!t.L && !lg.pocketW && design !== 'twoStage' && design !== 'banned';
+          const L = !!t.L && !lg.pocketW && !lg.pocketOne && design !== 'twoStage' && design !== 'banned';
           if (design === 'dedicated' && L && n >= 2 && k === 0) return 'L';
           const combo = (l, s, r) => (l && s && r ? 'SLR' : l && s ? 'SL' : s && r ? 'SR' : l && r ? 'LR' : l ? 'L' : r ? 'R' : 'S');
           if (n === 1) return combo(L, Sx, Rx);
@@ -1836,6 +1848,26 @@
           }
         }
       }
+      // ---- 左轉附加車道 on a one-way road: the pavement widens on the driver's left with a taper, opening any island
+      // drawn there; solid line between the pocket and the through lanes, new edge line, 左轉 arrows ----
+      if (lg.pocketOne && t.L) {
+        const pw = lg.pocketOne, L0 = lg.rightExt - 0.3;
+        const sP = stopRear + G.clamp(el.pocketLen || 30, 10, 120) * m, sT = sP + G.clamp(el.pocketTaper || 20, 5, 80) * m;
+        const ease = (u) => { u = G.clamp(u, 0, 1); return u * u * (3 - 2 * u); };
+        const offAt = (sv) => L0 + pw * (sv <= sP ? 1 : 1 - ease((sv - sP) / (sT - sP))); // pocket's outer lane edge
+        const N = Math.max(8, Math.ceil(sT / m)), outer = [], edge = [];
+        for (let i = 0; i <= N; i++) { const sv = (sT * i) / N; outer.push(legPt(lg, sv, offAt(sv) + 0.3)); if (sv >= stopRear) edge.push(legPt(lg, sv, offAt(sv) + 0.075)); }
+        const pave = legLine(lg, 0, sT, L0 - 0.05).concat(outer.slice().reverse());
+        corners.push(pave); pocketCuts.push(pave); // paved, counts as road, and islands open over it
+        out.push({ id: newId(), owner: jid, type: 'lanemask', pts: legLine(lg, stopRear - 0.1 * m, sT, L0 - 0.15).concat(legLine(lg, stopRear - 0.1 * m, sT, L0 + 0.45).reverse()) });
+        if (edge.length > 1) out.push({ id: newId(), owner: jid, type: 'line', style: 'edge', smooth: false, jline: true, pts: edge });
+        out.push({ id: newId(), owner: jid, type: 'line', style: 'laneSolid', smooth: false, jline: true, pts: legLine(lg, stopRear, sP, L0) });
+        if (el.autoArrows !== false) {
+          for (const tip of [stopRear + 1 * m, Math.min(sP - 5 * m, stopRear + 20 * m)]) {
+            if (tip > stopRear) out.push({ id: newId(), owner: jid, type: 'arrow', kind: 'L', length: 5, p: atL(lg, tip + 2.5 * m, L0 + pw / 2), dir: dirAt(tip + 2.5 * m) });
+          }
+        }
+      }
       // ---- 機慢車兩段式左轉: 待轉區 at the far-right corner, in front of the crosswalk of the road on the right ----
       if (design === 'twoStage' && t.L && t.R) {
         const Rg = t.R.o, elR = Rg.rd.el, lwR = elR.laneWidth;
@@ -1847,13 +1879,14 @@
             a: legPt(Rg, sBack, o0), b: legPt(Rg, sBack, o1), dir: G.angle(G.mul(onLeg(Rg, sBack, 0).t, -1)) });
         }
       }
-      if (el.leftGuide && t.L && !lg.entry.oneWay && design !== 'banned' && design !== 'twoStage') {
+      if (el.leftGuide && t.L && design !== 'banned' && design !== 'twoStage') {
         const T = t.L.o, elT = T.rd.el, lwT = elT.laneWidth;
         const startT = elT.lanesB === 0 ? -(T.leftExt - 0.3) : (elT.centerType === 'median' ? elT.medianWidth / 2 + 0.3 : 0);
         const sIn = lg.entry.ds - (stopW * m) / 2, sOut = T.cwIn;
         // the left turn starts from the pocket when there is one, otherwise from the inner lane
         const pocketEdges = lg.pocketW ? [-(el.medianWidth / 2 - lg.pocketW), -(el.medianWidth / 2 + 0.15)] : null;
-        const fromEdges = pocketEdges || [-start, -(start + lw)];
+        const L1 = lg.rightExt - 0.3; // one-way: the lanes' left edge (driver's left = + side)
+        const fromEdges = pocketEdges || (lg.entry.oneWay ? (lg.pocketOne ? [L1 + lg.pocketOne, L1] : [L1, L1 - lw]) : [-start, -(start + lw)]);
         for (const [oi, ot] of [[fromEdges[0], startT], [fromEdges[1], startT + lwT]]) {
           const P0 = atL(lg, sIn, oi), P1 = atL(T, sOut, ot);
           const X = lineIntersect(P0, tr, P1, T.v), ctl = X && G.dot(G.sub(X, P0), tr) > 0 ? X : G.mid(P0, P1);
@@ -1887,7 +1920,8 @@
       }
     }
     const own = {}; for (const k of J_KEYS) if (prm[k] !== undefined) own[k] = prm[k];
-    out.unshift(Object.assign({ id: jid, type: 'junction', pts: poly, corners, cornerCuts, legSecIds, genClick: G.copy(click), genPrm: clone(prm) }, own));
+    const laneSig0 = laneSigNow();
+    out.unshift(Object.assign({ id: jid, type: 'junction', laneSig: laneSig0, pts: poly, corners, cornerCuts, pocketCuts, legSecIds, genClick: G.copy(click), genPrm: clone(prm) }, own));
     return out;
   }
 

@@ -1271,6 +1271,7 @@ window.Render = (function () {
         case 'buslane': clipRoad(); for (const c of crossCuts) clipOutside(c); cutJunctions(); drawBikeSurface(ctx, el, ppm, P); markLane(el); break;
         case 'sidewalk':
           yieldToRoundabouts(el);
+          for (const j of els) if (j.type === 'junction') for (const c of j.pocketCuts || []) clipOutside(c); // a left-turn pocket widens into islands
           // a junction's corner sidewalk opens wherever another road (ramp, slip road, driveway) crosses it
           if (el.yieldTo) for (const sec of els) if (sec.type === 'section' && !el.yieldTo.includes(sec.id)) clipOutside(R.sectionPoly(sec, ppm));
           drawSidewalk(ctx, el, ppm, P); break;
