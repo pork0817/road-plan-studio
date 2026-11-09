@@ -903,6 +903,107 @@ window.Render = (function () {
     }
   }
 
+  // ---------- bus stops (公車停靠區) ----------
+  // Placed by two clicks along a road section's kerb; everything is computed live from that section, so the stop
+  // follows the road. Regulation: §190 停靠區 white 10 cm lines with white wording; §169 red 禁止臨時停車線 on the
+  // kerb; §174-4 bike markings stay 2 m clear of a 公車停靠區. Bay sizes / tapers are not in the regulation (≈).
+  //   roadside: the bus stops in the kerb lane; a boarding island sits at the kerb and the bike lane runs behind it.
+  //   bay: the bus pulls right into a recess (entry taper, berth, exit taper); the platform and the bike lane are
+  //        behind the bay.
+  const smooth01 = (u) => { u = G.clamp(u, 0, 1); return u * u * (3 - 2 * u); };
+  R.busStopGeom = function (el, els, ppm) {
+    const secs = els.filter((e) => e.type === 'section');
+    if (!secs.length || !el.a || !el.b) return null;
+    const mid = G.mid(el.a, el.b);
+    let host = secs.find((e) => e.id === el.host);
+    if (!host) { let bd = Infinity; for (const e of secs) { const g = R.sectionGeom(e, ppm); const r = g && G.nearestOnPolyline(mid, g.pts); if (r && r.d < bd) { bd = r.d; host = e; } } }
+    const g = R.sectionGeom(host, ppm);
+    if (!g) return null;
+    const pts = g.pts, cum = [0];
+    for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + G.dist(pts[i - 1], pts[i]) / ppm);
+    const stationOf = (p) => { const r = G.nearestOnPolyline(p, pts); return { s: cum[r.i] + G.dist(pts[r.i], r.proj) / ppm, r }; };
+    const A = stationOf(el.a), B = stationOf(el.b), rm = G.nearestOnPolyline(mid, pts);
+    const side = G.dot(G.sub(mid, rm.proj), G.rightN(rm.tangent)) >= 0 ? 1 : -1; // which kerb
+    const dir = host.lanesB === 0 ? 1 : side;                                       // travel along increasing station?
+    const s0 = Math.min(A.s, B.s), s1 = Math.max(A.s, B.s), total = cum[cum.length - 1];
+    const bay = el.kind === 'bay';
+    const Lin = bay ? Math.max(0, +el.Lin || 0) : 0, Lout = bay ? Math.max(0, +el.Lout || 0) : 0;
+    const before = dir > 0 ? Lin : Lout, after = dir > 0 ? Lout : Lin;
+    const Tb = Math.max(2, +el.Tb || 10), D = bay ? Math.max(1, +el.D || 3) : 0, wP = Math.max(0.5, +el.wP || 2.5), wb = Math.max(1, +el.wb || 1.5);
+    const bL = host.bikeLane || 0, sl = host.slowLane || 0;
+    // offsets (m) outward from the road centre line on the stop's side
+    const extAt = (sm) => { const e = R.sectionExtAt(host, sm); return side > 0 ? e.right : e.left; };
+    const aAt = (sm) => extAt(sm) - bL - sl - (host.edge ? 0.3 : 0);                 // outer edge of the motor lanes
+    const outAt = (sm) => { // the kerb line of the stop (bay recess or plain kerb)
+      if (!bay) return aAt(sm);
+      let u = 1;
+      if (sm < s0) u = before > 0 ? smooth01((sm - (s0 - before)) / before) : 0;
+      else if (sm > s1) u = after > 0 ? smooth01(1 - (sm - s1) / after) : 0;
+      return aAt(sm) + D * u;
+    };
+    const cb = (sm) => aAt(sm) + (bL > 0 ? bL / 2 : 0.75);                            // where bikes ride on the road
+    const bikeAt = (sm) => {
+      const lo = s0 - before, hi = s1 + after, behind = (x) => outAt(x) + wP + wb / 2;
+      if (sm >= lo && sm <= hi) return behind(sm);
+      if (sm < lo) return cb(sm) + (behind(lo) - cb(sm)) * smooth01((sm - (lo - Tb)) / Tb);
+      return cb(sm) + (behind(hi) - cb(sm)) * smooth01(1 - (sm - hi) / Tb);
+    };
+    // a point at station sm (m) and outward offset o (m)
+    const at = (sm, o) => {
+      sm = G.clamp(sm, 0, total);
+      let i = 1; while (i < cum.length - 1 && cum[i] < sm) i++;
+      const p0 = pts[i - 1], p1 = pts[i], u = (sm - cum[i - 1]) / Math.max(1e-9, cum[i] - cum[i - 1]), t = G.norm(G.sub(p1, p0));
+      return G.add(G.add(p0, G.mul(G.sub(p1, p0), G.clamp(u, 0, 1))), G.mul(G.rightN(t), side * o * ppm));
+    };
+    const run = (from, to, f) => { const out = [], n = Math.max(2, Math.ceil((to - from) / 0.5) + 1); for (let k = 0; k < n; k++) { const sm = from + ((to - from) * k) / (n - 1); out.push(at(sm, f(sm))); } return out; };
+    const band = (from, to, f0, f1) => run(from, to, f0).concat(run(from, to, f1).reverse());
+    const lo = s0 - before, hi = s1 + after, mlo = lo - (el.bike !== false ? Tb : 0), mhi = hi + (el.bike !== false ? Tb : 0);
+    const travel = (sm) => { const q = at(sm + 0.5, 0), p = at(sm - 0.5, 0); return G.angle(dir > 0 ? G.sub(q, p) : G.sub(p, q)); };
+    return {
+      host, side, dir, s0, s1, lo, hi, bay, wb, lw: host.laneWidth,
+      mask: band(mlo, mhi, (x) => aAt(x) - 0.05, (x) => Math.max(extAt(x), bikeAt(x) + wb / 2) + 0.5),
+      bayPave: bay ? band(lo, hi, (x) => aAt(x) - 0.2, outAt) : null,
+      // the island / platform reaches back to the bike lane, so its ends taper along the bike lane's curve
+      platform: el.bike !== false
+        ? band(mlo, mhi, (x) => (x >= lo && x <= hi ? outAt(x) : aAt(x)), (x) => Math.max(x >= lo && x <= hi ? outAt(x) : aAt(x), bikeAt(x) - wb / 2))
+        : band(lo, hi, outAt, (x) => outAt(x) + wP),
+      bike: el.bike !== false ? (dir > 0 ? run(mlo, mhi, bikeAt) : run(mlo, mhi, bikeAt).reverse()) : null,
+      mouth: bay ? run(lo, hi, (x) => aAt(x) + 0.075) : null,
+      tapers: bay ? [run(lo, s0, (x) => outAt(x) - 0.075), run(s1, hi, (x) => outAt(x) - 0.075)] : [],
+      kerb: run(s0, s1, (x) => outAt(x) + 0.075),
+      box: bay ? band(s0, s1, (x) => aAt(x) + 0.1, (x) => outAt(x) - 0.25) : band(s0, s1, (x) => aAt(x) - host.laneWidth + 0.15, (x) => aAt(x) - 0.1),
+      boxMid: (bay ? at((s0 + s1) / 2, aAt((s0 + s1) / 2) + D / 2) : at((s0 + s1) / 2, aAt((s0 + s1) / 2) - host.laneWidth / 2)),
+      crossing: el.bike !== false ? { p: at((s0 + s1) / 2, bikeAt((s0 + s1) / 2)), dir: travel((s0 + s1) / 2) } : null,
+      travelDir: travel((s0 + s1) / 2),
+    };
+  };
+  function drawBusStop(ctx, el, g, ppm, P) {
+    const white = P.colors.white;
+    if (g.bayPave) { ctx.fillStyle = P.colors.asphalt; path(ctx, g.bayPave, true); ctx.fill(); }
+    drawSidewalk(ctx, { pts: g.platform, style: 'pavers' }, ppm, P);
+    if (g.bike) { // bike lane behind the stop: brick-red (§174), white edge lines, bike symbols
+      const bl = { type: 'bikelane', kind: 'exclusive', pts: g.bike, width: g.wb, surface: true, sep: 'none', icons: true, diamonds: false, spacing: 20, smooth: false };
+      drawBikeSurface(ctx, bl, ppm, P);
+      for (const sg of [-1, 1]) R.drawStyled(ctx, G.offset(g.bike, sg * (g.wb / 2 - 0.1) * ppm), { color: white, width: 0.10, pattern: 'solid' }, ppm);
+      drawBikeLane(ctx, bl, ppm, P);
+      // passengers cross the bike lane to the stop on a short 枕木紋 crossing (bars along the bike lane, §185)
+      const c = g.crossing, t = G.fromAngle(c.dir), n = G.rightN(t), half = g.wb / 2;
+      ctx.save(); ctx.fillStyle = white;
+      for (let o = -1.0; o <= 1.0 + 1e-6; o += 0.8) {
+        const q = G.add(c.p, G.mul(t, o * ppm));
+        path(ctx, [G.add(q, G.mul(n, -half * ppm)), G.add(q, G.mul(n, half * ppm)), G.add(G.add(q, G.mul(n, half * ppm)), G.mul(t, 0.4 * ppm)), G.add(G.add(q, G.mul(n, -half * ppm)), G.mul(t, 0.4 * ppm))], true); ctx.fill();
+      }
+      ctx.restore();
+    }
+    if (g.mouth) R.drawStyled(ctx, g.mouth, P.lineStyles.lane, ppm);                         // buses cross into the bay
+    for (const tp of g.tapers) if (tp.length > 1) R.drawStyled(ctx, tp, P.lineStyles.edge, ppm);
+    R.drawStyled(ctx, g.kerb, { color: P.colors.red, width: 0.15, pattern: 'solid' }, ppm);   // §169 禁止臨時停車
+    ctx.save(); ctx.strokeStyle = white; ctx.lineWidth = 0.10 * ppm; ctx.setLineDash([]); path(ctx, g.box, true); ctx.stroke(); ctx.restore(); // §190
+    const txt = el.text || '公車停靠區', n = Array.from(txt).length, len = (g.s1 - g.s0);
+    const cl = Math.min(2.5, (len - 2) / (n + (n - 1) * 0.4)); // fit the wording inside the box
+    if (cl > 0.5) drawText(ctx, P, g.boxMid, g.travelDir, txt, cl * ppm, Math.min(1.0, g.lw * 0.35) * ppm, white, 'far', cl * 0.4 * ppm);
+  }
+
   // ---------- scene ----------
   const MARK = new Set(['buslane', 'bikelane', 'roundabout', 'yield', 'symbol', 'line', 'section', 'crosswalk', 'stopline', 'scooterbox', 'arrow', 'text', 'chevron', 'yellowbox']);
 
@@ -912,6 +1013,7 @@ window.Render = (function () {
       .map((e) => R.crosswalkPad(e, ppm_(o), 0.3));
     const bikeMasks = (o.preview ? o.els.concat([o.preview]) : o.els).filter((e) => e.type === 'bikelane' || e.type === 'buslane').map((e) => R.bikeBand(e, ppm_(o), -0.3)).filter(Boolean);
     R._els = o.preview ? o.els.concat([o.preview]) : o.els;
+    const busStops = R._els.filter((e) => e.type === 'busstop').map((e) => ({ el: e, g: R.busStopGeom(e, R._els, ppm_(o)) })).filter((b) => b.g);
     const clipOutside = (pts) => {
       if (!pts || pts.length < 3) return;
       ctx.beginPath(); ctx.rect(-1e6, -1e6, 2e6, 2e6);
@@ -995,6 +1097,7 @@ window.Render = (function () {
         for (const { b, pts: bp } of R.sectionGeom(el, ppm).bands) if (b.kind === 'bike') {
           // the bike lane stops at the junction and at crosswalks, like the lane lines beside it
           ctx.save(); cutJunctions(); for (const c of crossCutsEarly) clipOutside(c);
+          for (const b of busStops) if (b.g.host === el) clipOutside(b.g.mask); // bikes go behind the bus stop
           ctx.strokeStyle = P.colors.bike; ctx.lineWidth = b.width * ppm; ctx.lineCap = 'butt'; ctx.setLineDash([]);
           path(ctx, bp); ctx.stroke();
           ctx.restore();
@@ -1023,6 +1126,7 @@ window.Render = (function () {
           const major = others.filter((e) => lanes(e) > lanes(el)).map((e) => R.sectionPoly(e, ppm)).filter(Boolean);
           const minor = others.filter((e) => lanes(e) < lanes(el)).map((e) => R.sectionPoly(e, ppm)).filter(Boolean);
           for (const q of major) clipOutside(q);
+          for (const b of busStops) if (b.g.host === el) clipOutside(b.g.mask); // kerb-side lines give way to bus stops
           for (const { l, pts: line } of R.sectionGeom(el, ppm).lines) {
             const st = P.lineStyles[l.style];
             if ((l.style !== 'edge' && l.style !== 'bikeSep') || !minor.length) { R.drawStyled(ctx, line, st, ppm); continue; }
@@ -1088,6 +1192,8 @@ window.Render = (function () {
         }
       }
     }
+    // Bus stops: bay paving, platform / island, bike lane behind it and the stop's markings, over the sidewalks
+    for (const b of busStops) { ctx.save(); drawBusStop(ctx, b.el, b.g, ppm, P); ctx.restore(); }
     // Bike lanes go on any surface — road, sidewalk or bare image — so they are drawn last and not clipped
     for (const el of els) {
       if (el.type !== 'bikelane') continue;
@@ -1104,6 +1210,7 @@ window.Render = (function () {
       case 'bikelane': case 'buslane': { const b = R.bikeBand(el, ppm); return b ? { poly: b } : { line: el.pts, w: 4 }; }
       case 'line': { const st = P.lineStyles[el.style]; return { line: R.basePts(el, ppm), w: ((st ? st.width + (st.sep || 0) * 2 : 0.2) * ppm) }; }
       case 'section': { const p = R.sectionPoly(el, ppm); return p ? { poly: p } : { line: el.pts, w: 4 }; }
+      case 'busstop': { const g = R.busStopGeom(el, R._els || [], ppm); return g ? { poly: g.mask } : { line: [el.a, el.b], w: 4 }; }
       case 'crosswalk': return { poly: R.crosswalkQuad(el, ppm) };
       case 'scooterbox': return { poly: R.frame(el, ppm, el.depth, true).corners };
       case 'roundabout': return { poly: R.circlePts(el.p, el.R * ppm, 48) };

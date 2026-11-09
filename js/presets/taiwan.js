@@ -49,7 +49,7 @@ window.RoadPresets = window.RoadPresets || {};
   const typeNames = {
     road: '車道範圍 Road area', sidewalk: '人行道/分隔島 Sidewalk', surface: '彩色鋪面 Surface', section: '路段 Road section',
     line: '標線 Line', crosswalk: '行人穿越道 Crosswalk', stopline: '停止線 Stop line', scooterbox: '機車停等區 Scooter box',
-    junction: '路口範圍 Intersection', roundabout: '圓環 Roundabout', bikelane: '自行車道 Bike lane', buslane: '公車專用道 Bus lane', roundaboutTool: '圓環 Roundabout', yield: '讓路線 Yield line', arrow: '指向線 Arrow', symbol: '圖示 Icon', text: '路面文字 Text', chevron: '槽化線 Channelizing', yellowbox: '網狀線 Box junction',
+    junction: '路口範圍 Intersection', roundabout: '圓環 Roundabout', bikelane: '自行車道 Bike lane', buslane: '公車專用道 Bus lane', roundaboutTool: '圓環 Roundabout', yield: '讓路線 Yield line', arrow: '指向線 Arrow', symbol: '圖示 Icon', text: '路面文字 Text', chevron: '槽化線 Channelizing', yellowbox: '網狀線 Box junction', busstop: '公車站 Bus stop',
   };
 
   const sec = (label, en, o) => ({ id: 'sec_' + label, label, en, mode: 'polyline', icon: { glyph: '═' },
@@ -96,6 +96,8 @@ window.RoadPresets = window.RoadPresets || {};
       { id: 'bike_two', label: '雙向自行車道', en: 'Two-way bike lane', mode: 'polyline', icon: { fill: C.bike }, defaults: { type: 'bikelane', kind: 'exclusive', width: 2.5, twoWay: true, surface: true, sep: 'both', spacing: 40, icons: true, diamonds: true, smooth: true } },
       { id: 'bus_curb', label: '公車道 路側', en: 'Bus lane, kerbside (§174)', mode: 'polyline', icon: { fill: C.bus }, defaults: { type: 'buslane', kind: 'exclusive', width: 3.5, surface: false, sep: 'left', sepStyle: 'double', spacing: 50, text: '公車專用', smooth: true } },
       { id: 'bus_median', label: '公車道 中央', en: 'Bus lane, median (§174)', mode: 'polyline', icon: { fill: C.bus }, defaults: { type: 'buslane', kind: 'exclusive', width: 3.5, surface: false, sep: 'both', sepStyle: 'double', spacing: 50, text: '公車專用', smooth: true } },
+      { id: 'bus_stop', label: '公車站 路側', en: 'Bus stop at the kerb: island + bike lane behind (click start, end)', mode: 'two', icon: { glyph: '▤' }, defaults: { type: 'busstop', kind: 'roadside', bike: true, wP: 2.5, wb: 1.5, D: 3.2, Lin: 15, Lout: 12, Tb: 10, text: '公車停靠區' } },
+      { id: 'bus_bay', label: '公車站 港灣式', en: 'Bus bay: bus pulls in, bike lane behind (click start, end)', mode: 'two', icon: { glyph: '◫' }, defaults: { type: 'busstop', kind: 'bay', bike: true, wP: 2.5, wb: 1.5, D: 3.2, Lin: 15, Lout: 12, Tb: 10, text: '公車停靠區' } },
       { id: 'bike_prio', label: '自行車優先', en: 'Bike priority lane (§174-4)', mode: 'polyline', icon: { glyph: '◇' }, defaults: { type: 'bikelane', kind: 'priority', width: 1.5, twoWay: false, surface: false, sep: 'none', spacing: 40, icons: true, diamonds: false, smooth: true } },
     ] },
     { title: '指向線 Arrows', items: [arrow('S', '↑'), arrow('L', '↰'), arrow('R', '↱'), arrow('SL', '⬉'), arrow('SR', '⬈'), arrow('LR', '⇄'), arrow('SLR', '⇈'), arrow('U', '↶')] },
@@ -228,6 +230,15 @@ window.RoadPresets = window.RoadPresets || {};
         { kind: 'chk', key: 'triangles', label: '倒三角形 Triangles' }].concat(el.arcC ? [{ kind: 'chk', key: 'curved', label: '沿圓環弧線 Follow roundabout curve' }] : []).concat([
         { kind: 'law', text: '§172 讓路線：白色雙虛線＋倒三角形 (寬1.2m 長3.0m 線寬15cm 頂部60cm)，三角形距虛線2.0–2.5m。虛線尺寸量自附圖 (≈)。' },
         { kind: 'btn', action: 'realign', label: '對齊車道 Align to lanes' }, { kind: 'btn', action: 'flip', label: '反轉方向 Flip' }]);
+      case 'busstop': return [
+        { kind: 'sel', key: 'kind', label: '型式 Type', options: [['roadside', '路側 Kerbside (候車島)'], ['bay', '港灣式 Bus bay']] },
+        { kind: 'info', text: el.kind === 'bay' ? '公車右轉駛入港灣停靠，再駛回車道；候車區在人行道側。The bus pulls into the bay and rejoins traffic.' : '公車停在外側車道不需切入；候車島設在路緣，自行車道繞到候車島後方。The bus stops in its lane; bikes pass behind the island.' },
+        { kind: 'chk', key: 'bike', label: '自行車道繞行後方 Bike lane behind the stop' },
+        num('wP', el.kind === 'bay' ? '候車區寬 Platform width' : '候車島寬 Island width', 1.5, 5, 0.1, '≈ 候車空間，常用 2.0–3.0 m'),
+        ...(el.bike !== false ? [num('wb', '自行車道寬 Bike lane width', 1.2, 2.5, 0.1, '≈ 單向 ≥ 1.2 m (常用 1.5 m)'), num('Tb', '自行車道轉換段 Bike transition', 3, 30, 0.5, '≈ §174-4 自行車標線距停靠區前後 2 m 內不劃設')] : []),
+        ...(el.kind === 'bay' ? [num('D', '港灣深度 Bay depth', 2.5, 4.5, 0.1, '≈ 常用 3.0–3.5 m'), num('Lin', '進站漸變段 Entry taper', 5, 40, 0.5, '≈ 約 1:5'), num('Lout', '出站漸變段 Exit taper', 5, 40, 0.5, '≈ 約 1:3–1:4')] : []),
+        { kind: 'txt', key: 'text', label: '標字 Wording' },
+        { kind: 'law', text: '§190 停靠區：白色實線 (10 cm) 及白色專用車輛標字；§169 路緣紅實線 禁止臨時停車；§174-4 自行車標線於公車停靠區前後 2 m 內不得劃設。港灣、候車島尺寸法規未規定 (≈)。拖曳兩端點調整停靠區長度。' }];
       case 'junction': return [...junctionCorner, { kind: 'btn', action: 'regenJunction', label: '↻ 重新產生 Regenerate' }, { kind: 'info', text: '路口範圍：範圍內的車道線、路段標線會被中斷 (行人穿越道、箭頭等不受影響)。拖曳節點可調整範圍；此框只在編輯時顯示，不會匯出。' }];
       case 'bikelane': {
         const minW = el.kind === 'priority' ? 1.2 : el.twoWay ? 2.5 : 1.2;

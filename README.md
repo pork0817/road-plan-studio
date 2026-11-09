@@ -57,6 +57,12 @@ Pick 🚲 自行車專用車道, 雙向自行車道 or 自行車優先車道 and
 
 **Bus lanes** (公車專用道, kerbside or median,) work the same way and follow §174/§175: a white diamond (2.5 × 1.0 m, 15 cm line) at the start and every 30–60 m, 「公車專用」 written along the lane between diamonds, 雙白實線 separation, or 單邊禁止變換車道線 where buses may move out. A coloured surface is optional (the regulation doesn't specify one).
 
+**Bus stops** (自行車・公車道 group): click the start and end of the stop beside a road section; the stop attaches to that road's kerb and follows it when the road changes. Drag either end to change its length.
+- **公車站 路側 Kerbside stop**: the bus stops in its lane, so it never has to pull in. A boarding island sits at the kerb and the bike lane runs behind it, with a short crossing for passengers, so riders and waiting passengers don't meet.
+- **公車站 港灣式 Bus bay**: the bus turns right into a recess (entry taper, berth, exit taper) and rejoins traffic afterwards. The lane edge becomes dashed across the bay mouth. The waiting platform is on the sidewalk side, and the bike lane runs behind it.
+- 自行車道繞行後方 (on by default) routes the bike lane behind the stop. If the road has its own bike lane, that lane is interrupted and joined to the detour.
+- Markings follow the regulation where it has one: §190 停靠區 box (white 10 cm lines) with white wording (default 「公車停靠區」), §169 red 禁止臨時停車線 on the stop's kerb, and §174-4 (no bike markings within 2 m of the stop). Bay depth, tapers, island and bike-lane widths aren't set by the regulation; the defaults are marked ≈ and adjustable.
+
 ## Aligning and the magnet
 - **Align (A)**: select a crosswalk, stop line, scooter box, arrow, text or icon, press **A** (or click 📐 對齊至…), then click the object to line it up with. A stop line aligned to a crosswalk becomes parallel and sits the §170 2.0 m edge-to-edge gap away. The panel then offers left / centre / right and top / middle / bottom alignment, measured either in the target's frame (up = direction of travel, left/right = the driver's left/right) or in screen directions. Any object can be aligned this way; crosswalks, stop lines, boxes, arrows, text and icons can also take the target's direction.
 - **🧲 Magnet** (top bar): while drawing, dragging or rotating, angles lock to horizontal, vertical, or parallel/perpendicular to the nearest lane within 3°, and points snap to existing corners. Hold Alt to turn it off for one move.

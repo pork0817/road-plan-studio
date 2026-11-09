@@ -106,13 +106,19 @@
     const el = Object.assign({ id: newId() }, clone(S.params || item.defaults), geom);
     if (el.type === 'crosswalk' || el.type === 'stopline' || el.type === 'scooterbox' || el.type === 'yield') { el.dir = null; alignTwo(el, false); }
     if (el.type === 'yield') el.lanes = Math.max(1, Math.round(G.dist(el.a, el.b) / ppm() / 3.25));
+    if (el.type === 'busstop') { // attach to the nearest road section; the stop is drawn along its kerb
+      const mid = G.mid(el.a, el.b); let best = null;
+      for (const e of S.els) if (e.type === 'section') { const r = G.nearestOnPolyline(mid, R.basePts(e, ppm())); if (r && (!best || r.d < best.d)) best = { d: r.d, e }; }
+      if (!best || best.d > 40 * ppm()) { alert('請在路段旁點兩點 (停靠區起點、終點)。Click along a road section\'s kerb: start and end of the stop.'); return null; }
+      el.host = best.e.id;
+    }
     if (el.type === 'arrow' || el.type === 'text' || el.type === 'symbol' || el.type === 'chevron' || el.type === 'yellowbox') alignPoint(el);
     return el;
   }
   const findEl = (id) => S.els.find((e) => e.id === id);
 
   function hitRank(el) {
-    return { junction: 0.5, roundabout: 0.6, yield: 3.6, sidewalk: 5, arrow: 4, text: 4, stopline: 4, crosswalk: 3.5, scooterbox: 3.4, line: 3, chevron: 2.5, yellowbox: 2.5, surface: 2, section: 1, road: 0 }[el.type] || 0;
+    return { busstop: 3.2, junction: 0.5, roundabout: 0.6, yield: 3.6, sidewalk: 5, arrow: 4, text: 4, stopline: 4, crosswalk: 3.5, scooterbox: 3.4, line: 3, chevron: 2.5, yellowbox: 2.5, surface: 2, section: 1, road: 0 }[el.type] || 0;
   }
   function hitTest(w) {
     const tol = 6 / S.view.s;
@@ -146,6 +152,7 @@
       let r = 0; for (const q of el.quad) r = Math.max(r, G.dot(G.sub(q, c), d));
       return el.quad.map((p, i) => ({ key: 'q', i, p })).concat([{ key: 'rot2', p: G.add(c, G.mul(d, r + 1.5 * ppm())) }]);
     }
+    if (el.type === 'busstop') return [{ key: 'a', p: el.a }, { key: 'b', p: el.b }];
     if (el.a) {
       const m = G.mid(el.a, el.b), t = G.fromAngle(el.dir || 0);
       const ext = (el.type === 'crosswalk' ? el.width / 2 : el.type === 'scooterbox' ? el.depth : el.type === 'yield' ? 0 : el.width / 2) + 1.5;
@@ -484,7 +491,8 @@
         if (!S.draft) S.draft = { a: p };
         else if (G.dist(S.draft.a, p) > 2) {
           const el = buildElement(S.item, { a: S.draft.a, b: p });
-          S.els.push(el); S.sel = el.id; S.draft = null; commit();
+          S.draft = null;
+          if (el) { S.els.push(el); S.sel = el.id; commit(); }
         }
       } else if (m === 'roundabout') {
         const rb = buildRoundabout(w, S.params);
@@ -534,6 +542,7 @@
           el.pts[h.i] = snapW(w, nb, e, el.id);
         } else if (h.key === 'p') el.p = snapW(w, null, e, el.id);
         else if (h.key === 'rad') el.R = G.clamp(Math.round((G.dist(w, el.p) / ppm()) * 2) / 2, el.turbo ? 3 + 2 * el.laneWidth + 0.45 + (el.laneWidth + 0.45) / 2 : 8, 70);
+        else if ((h.key === 'a' || h.key === 'b') && el.type === 'busstop') el[h.key] = snapW(w, null, e, el.id); // slides the stop's start / end
         else if (h.key === 'a' || h.key === 'b') {
           // keep the crossing square to traffic: the dragged end slides along the line through the other end
           const other = h.key === 'a' ? o.b : o.a;
