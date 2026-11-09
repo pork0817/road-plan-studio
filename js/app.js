@@ -1440,14 +1440,30 @@
     //  - deleted pieces stay deleted (by key, or by position for pieces made before keys existed)
     //  - edited pieces (moved, re-set, arrow kind changed …) stay exactly as the user left them
     //  - untouched pieces that come out the same keep their identity; only genuinely new / changed ones are new
-    j.laneSig = laneSigNow();
-    const old = S.els.filter((e) => e.owner === oldId), oldByKey = new Map(old.filter((e) => e.jkey).map((e) => [e.jkey, e]));
+    // EXCEPT on a road whose lane design was just changed (left-turn design, lane use, lane counts …): there the
+    // arrows, lane lines and scooter boxes are rebuilt to the new design (and the stop line too when a left-turn
+    // pocket is added or removed). Every other road's pieces are left exactly as they are.
+    const nowSig = laneSigNow(), prevSig = j.laneSig || nowSig;
+    const redesigned = new Map();
+    for (const id of Object.keys(nowSig)) if (prevSig[id] !== undefined && prevSig[id] !== nowSig[id]) {
+      let before = []; try { before = JSON.parse(prevSig[id]); } catch (e) { before = []; }
+      const now = JSON.parse(nowSig[id]), lt = LANE_KEYS.indexOf('leftTurn');
+      redesigned.set(id, { pocket: (before[lt] === 'pocket') !== (now[lt] === 'pocket') });
+    }
+    j.laneSig = nowSig;
+    const secOfKey = (k) => String(k || '').split('|')[0].split(':')[0];
+    const follows = (e) => { // a piece that must follow its road's new lane design
+      const r = redesigned.get(secOfKey(e.jkey)); if (!r) return false;
+      return ['arrow', 'line', 'scooterbox'].includes(e.type) || (e.type === 'stopline' && r.pocket);
+    };
+    if (j.removed) j.removed = j.removed.filter((k) => { const p = String(k).split('|'); return !follows({ jkey: k, type: p[1] }); });
+    const old = S.els.filter((e) => e.owner === oldId && !follows(e)), oldByKey = new Map(old.filter((e) => e.jkey).map((e) => [e.jkey, e]));
     const removed = new Set(j.removed || []), tombs = j.removedAt || [];
     const near = (a, b, tolM) => { const p = piecePos(a), q = piecePos(b); return p && q && G.dist(p, q) < tolM * ppm(); };
     const taken = new Set(), pieces = [];
     for (const f of made.slice(1)) {
       if (removed.has(f.jkey)) continue;
-      if (tombs.some((t) => t.type === f.type && G.dist(t.p, piecePos(f) || { x: 1e9, y: 1e9 }) < 2 * ppm())) { (j.removed = j.removed || []).push(f.jkey); continue; }
+      if (!follows(f) && tombs.some((t) => t.type === f.type && G.dist(t.p, piecePos(f) || { x: 1e9, y: 1e9 }) < 2 * ppm())) { (j.removed = j.removed || []).push(f.jkey); continue; }
       let o = oldByKey.get(f.jkey);
       if (o && taken.has(o)) o = null;
       if (!(o && (o.edited || o.locked))) { // an edited piece without a matching key (older pieces): the one of its kind nearest this spot
