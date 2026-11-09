@@ -877,7 +877,10 @@ window.Render = (function () {
     if (el.kind === 'priority') {
       for (const sg of [-1, 1]) R.drawStyled(ctx, G.offset(pts, sideOff(sg, solid) * ppm), solid, ppm);
     } else {
-      const sides = el.sep === 'both' ? [-1, 1] : el.sep === 'right' ? [1] : el.sep === 'none' ? [] : [-1];
+      if (el.sep === 'edges') { // standard look: one thin white solid line along each edge
+        for (const sg of [-1, 1]) R.drawStyled(ctx, G.offset(pts, sg * (w / 2 - 0.1) * ppm), solid, ppm);
+      }
+      const sides = el.sep === 'both' ? [-1, 1] : el.sep === 'right' ? [1] : el.sep === 'none' || el.sep === 'edges' ? [] : [-1];
       // §174: 雙白實線; where the lane's vehicles may move to the next lane, 單邊禁止變換車道線 (solid on the
       // traffic side, dashed on the lane side, 10 cm lines 10 cm apart)
       const mixed = { color: white, width: 0.10, sep: 0.10, pattern: 'solid-dashed', dash: [4, 6] };
@@ -1012,24 +1015,37 @@ window.Render = (function () {
       })() : [],
     };
   };
-  function drawBusStop(ctx, el, g, ppm, P) {
+  // the standard bike lane look (also what the bike lane tool draws by default)
+  R.BIKE_STANDARD = { type: 'bikelane', kind: 'exclusive', surface: true, sep: 'edges', icons: true, diamonds: false, spacing: 30 };
+  // The stop's own bike lane. With a drawn bike lane passing through or joined to it, it takes that lane's style
+  // (separator lines, symbols); otherwise a plain lane with a white line on each side.
+  function drawStopBikePath(ctx, g, ppm, P, style) {
+    if (!g.bike) return;
+    if (style) { // run in the drawn lane's direction, so its separator stays on the same side
+      const r = G.nearestOnPolyline(g.bike[0], R.basePts(style, ppm)), d = G.sub(g.bike[g.bike.length - 1], g.bike[0]);
+      const pts = r && G.dot(r.tangent, d) < 0 ? g.bike.slice().reverse() : g.bike;
+      const bl = Object.assign({}, style, { pts, width: g.wb, smooth: false, tanS: null, tanE: null, surface: true });
+      drawBikeSurface(ctx, bl, ppm, P); drawBikeLane(ctx, bl, ppm, P); return;
+    }
+    const bl = Object.assign({}, R.BIKE_STANDARD, { pts: g.bike, width: g.wb, smooth: false });
+    drawBikeSurface(ctx, bl, ppm, P); drawBikeLane(ctx, bl, ppm, P);
+  }
+  // passengers cross the bike lane to the stop on a short 枕木紋 crossing (bars along the bike lane, §185)
+  function drawStopCrossing(ctx, g, ppm, P) {
+    if (!g.crossing) return;
+    const c = g.crossing, t = G.fromAngle(c.dir), n = G.rightN(t), half = g.wb / 2;
+    ctx.save(); ctx.fillStyle = P.colors.white;
+    for (let o = -1.0; o <= 1.0 + 1e-6; o += 0.8) {
+      const q = G.add(c.p, G.mul(t, o * ppm));
+      path(ctx, [G.add(q, G.mul(n, -half * ppm)), G.add(q, G.mul(n, half * ppm)), G.add(G.add(q, G.mul(n, half * ppm)), G.mul(t, 0.4 * ppm)), G.add(G.add(q, G.mul(n, -half * ppm)), G.mul(t, 0.4 * ppm))], true); ctx.fill();
+    }
+    ctx.restore();
+  }
+  function drawBusStop(ctx, el, g, ppm, P, bikeStyle, skipBike) {
     const white = P.colors.white;
     if (g.bayPave) { ctx.fillStyle = P.colors.asphalt; path(ctx, g.bayPave, true); ctx.fill(); }
     drawSidewalk(ctx, { pts: g.platform, style: 'pavers' }, ppm, P);
-    if (g.bike) { // bike lane behind the stop: brick-red (§174), white edge lines, bike symbols
-      const bl = { type: 'bikelane', kind: 'exclusive', pts: g.bike, width: g.wb, surface: true, sep: 'none', icons: true, diamonds: false, spacing: 20, smooth: false };
-      drawBikeSurface(ctx, bl, ppm, P);
-      for (const sg of [-1, 1]) R.drawStyled(ctx, G.offset(g.bike, sg * (g.wb / 2 - 0.1) * ppm), { color: white, width: 0.10, pattern: 'solid' }, ppm);
-      drawBikeLane(ctx, bl, ppm, P);
-      // passengers cross the bike lane to the stop on a short 枕木紋 crossing (bars along the bike lane, §185)
-      const c = g.crossing, t = G.fromAngle(c.dir), n = G.rightN(t), half = g.wb / 2;
-      ctx.save(); ctx.fillStyle = white;
-      for (let o = -1.0; o <= 1.0 + 1e-6; o += 0.8) {
-        const q = G.add(c.p, G.mul(t, o * ppm));
-        path(ctx, [G.add(q, G.mul(n, -half * ppm)), G.add(q, G.mul(n, half * ppm)), G.add(G.add(q, G.mul(n, half * ppm)), G.mul(t, 0.4 * ppm)), G.add(G.add(q, G.mul(n, -half * ppm)), G.mul(t, 0.4 * ppm))], true); ctx.fill();
-      }
-      ctx.restore();
-    }
+    if (!skipBike) drawStopBikePath(ctx, g, ppm, P, bikeStyle);
     if (g.mouth) R.drawStyled(ctx, g.mouth, P.lineStyles.lane, ppm);                         // buses cross into the bay
     for (const tp of g.tapers) if (tp.length > 1) R.drawStyled(ctx, tp, P.lineStyles.edge, ppm);
     R.drawStyled(ctx, g.kerb, { color: P.colors.red, width: 0.15, pattern: 'solid' }, ppm);   // §169 禁止臨時停車
@@ -1227,16 +1243,39 @@ window.Render = (function () {
         }
       }
     }
+    // Bike lanes joined to a bus stop are drawn together with the stop's bike lane as ONE lane (lane → stop →
+    // lane), so lines, diamonds and symbols run on without a seam.
+    const stopById = new Map(busStops.map((b) => [b.el.id, b]));
+    const stopPath = (b, from) => (from === 0 ? b.g.bike : b.g.bike.slice().reverse()); // from the given end
+    const merged = new Map(), consumed = new Set(), stopTaken = new Set();
+    const lanes = els.filter((e) => e.type === 'bikelane');
+    for (const bl of lanes) { // lanes flowing INTO a stop first, then the stop, then a lane leaving its other end
+      const L = bl.linkE, b = L && stopById.get(L.id);
+      if (!b || !b.g.bike || stopTaken.has(b.el.id)) continue;
+      let pts = R.basePts(bl, ppm).concat(stopPath(b, L.i).slice(1));
+      const out = lanes.find((o) => o !== bl && o.linkS && o.linkS.id === L.id && o.linkS.i === 1 - L.i);
+      if (out) { pts = pts.concat(R.basePts(out, ppm).slice(1)); consumed.add(out); }
+      merged.set(bl, pts); stopTaken.add(b.el.id);
+    }
+    for (const bl of lanes) { // a lane leaving a stop that no lane runs into
+      const L = bl.linkS, b = L && stopById.get(L.id);
+      if (!b || !b.g.bike || stopTaken.has(b.el.id) || consumed.has(bl)) continue;
+      merged.set(bl, stopPath(b, 1 - L.i).concat(R.basePts(bl, ppm).slice(1))); stopTaken.add(b.el.id);
+    }
     // Bus stops: bay paving, platform / island, bike lane behind it and the stop's markings, over the sidewalks
-    for (const b of busStops) { ctx.save(); drawBusStop(ctx, b.el, b.g, ppm, P); ctx.restore(); }
+    for (const b of busStops) {
+      ctx.save(); drawBusStop(ctx, b.el, b.g, ppm, P, b.g.through || null, stopTaken.has(b.el.id)); ctx.restore();
+    }
     // Bike lanes go on any surface — road, sidewalk or bare image — so they are drawn last and not clipped
-    for (const el of els) {
-      if (el.type !== 'bikelane') continue;
+    for (const el of lanes) {
+      if (consumed.has(el)) continue;
       ctx.save(); yieldToRoundabouts(el); for (const c of crossCutsEarly) clipOutside(c);
       for (const b of busStops) if (b.g.through === el) clipOutside(b.g.mask); // detoured behind the bus stop
-      drawBikeSurface(ctx, el, ppm, P); drawBikeLane(ctx, el, ppm, P);
+      const d = merged.has(el) ? Object.assign({}, el, { pts: merged.get(el), smooth: false, tanS: null, tanE: null }) : el;
+      drawBikeSurface(ctx, d, ppm, P); drawBikeLane(ctx, d, ppm, P);
       ctx.restore();
     }
+    for (const b of busStops) drawStopCrossing(ctx, b.g, ppm, P); // the passengers' crossing goes over the bike lane
   };
 
   // ---------- shapes for hit-testing & selection outline ----------

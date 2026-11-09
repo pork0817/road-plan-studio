@@ -92,8 +92,8 @@ window.RoadPresets = window.RoadPresets || {};
       { id: 'yellowbox', label: '網狀線', en: 'Box junction', mode: 'poly', icon: { glyph: '▦' }, defaults: { type: 'yellowbox', border: 0.20, stripe: 0.10, gap: 1.50, dir: 0 } },
     ] },
     { title: '自行車・公車道 Bike & bus', items: [
-      { id: 'bike_excl', label: '自行車道', en: 'Bike lane (§174)', mode: 'polyline', icon: { fill: C.bike }, defaults: { type: 'bikelane', kind: 'exclusive', width: 1.5, twoWay: false, surface: true, sep: 'left', spacing: 40, icons: true, diamonds: true, smooth: true } },
-      { id: 'bike_two', label: '雙向自行車道', en: 'Two-way bike lane', mode: 'polyline', icon: { fill: C.bike }, defaults: { type: 'bikelane', kind: 'exclusive', width: 2.5, twoWay: true, surface: true, sep: 'both', spacing: 40, icons: true, diamonds: true, smooth: true } },
+      { id: 'bike_excl', label: '自行車道', en: 'Bike lane (§174)', mode: 'polyline', icon: { fill: C.bike }, defaults: { type: 'bikelane', kind: 'exclusive', width: 1.5, twoWay: false, surface: true, sep: 'edges', spacing: 30, icons: true, diamonds: false, smooth: true } },
+      { id: 'bike_two', label: '雙向自行車道', en: 'Two-way bike lane', mode: 'polyline', icon: { fill: C.bike }, defaults: { type: 'bikelane', kind: 'exclusive', width: 2.5, twoWay: true, surface: true, sep: 'edges', spacing: 30, icons: true, diamonds: false, smooth: true } },
       { id: 'bus_curb', label: '公車道 路側', en: 'Bus lane, kerbside (§174)', mode: 'polyline', icon: { fill: C.bus }, defaults: { type: 'buslane', kind: 'exclusive', width: 3.5, surface: false, sep: 'left', sepStyle: 'double', spacing: 50, text: '公車專用', smooth: true } },
       { id: 'bus_median', label: '公車道 中央', en: 'Bus lane, median (§174)', mode: 'polyline', icon: { fill: C.bus }, defaults: { type: 'buslane', kind: 'exclusive', width: 3.5, surface: false, sep: 'both', sepStyle: 'double', spacing: 50, text: '公車專用', smooth: true } },
       { id: 'bus_stop', label: '公車站 路側', en: 'Bus stop at the kerb: island + bike lane behind (click start, end)', mode: 'two', icon: { glyph: '▤' }, defaults: { type: 'busstop', kind: 'roadside', bike: true, wP: 2.5, wb: 1.5, D: 3.2, Lin: 15, Lout: 12, Tb: 10, text: '公車停靠區' } },
@@ -246,7 +246,7 @@ window.RoadPresets = window.RoadPresets || {};
           num('width', '車道寬 Width', minW, 5, 0.1, el.twoWay ? '≈ 手冊：雙向 ≥ 2.5 m' : '≈ 手冊：單向 ≥ 1.2 m，建議 1.5–2.0 m'),
           { kind: 'chk', key: 'twoWay', label: '雙向 Two-way' }];
         if (el.kind !== 'priority') f.push({ kind: 'chk', key: 'surface', label: '磚紅色鋪面 Brick-red surface (§174)' },
-          { kind: 'sel', key: 'sep', label: '雙白實線 Separator', options: [['left', '左側 (車道側) Left'], ['right', '右側 Right'], ['both', '兩側 Both'], ['none', '無 None']] },
+          { kind: 'sel', key: 'sep', label: '邊線 Edge lines', options: [['edges', '兩側白實線 White line each side (標準 standard)'], ['left', '雙白實線 左側 (車道側) Double, left'], ['right', '雙白實線 右側 Double, right'], ['both', '雙白實線 兩側 Double, both'], ['none', '無 None']] },
           { kind: 'chk', key: 'diamonds', label: '菱形標記 Diamonds' });
         f.push({ kind: 'chk', key: 'icons', label: '自行車圖示 Bike icons' }, num('spacing', '標記間距 Spacing', 30, 60, 1, '§174 菱形每 30–60 m'),
           { kind: 'chk', key: 'smooth', label: '平滑曲線 Smooth curve' },
