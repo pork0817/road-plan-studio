@@ -1461,9 +1461,25 @@
       // lanes in force here (a section may add or drop lanes along its length)
       let sM = 0; for (let k = 0; k < r.i; k++) sM += G.dist(pts[k], pts[k + 1]); sM = (sM + G.dist(pts[r.i], r.proj)) / m;
       const at = R.sectionAt(el, sM), L = at.L;
-      if (r.d > (Math.max(L.left, L.right) + 6) * m) continue;
-      roads.push({ el: at.el, src: el, pts, L, r, sM });
+      roads.push({ el: at.el, src: el, pts, L, r, sM, core: r.d <= (Math.max(L.left, L.right) + 6) * m });
     }
+    // The roads at the click, plus every other carriageway that crosses one of them nearby: a fast/slow road
+    // (快慢分隔) or a boulevard with separate carriageways becomes ONE intersection with the street crossing it.
+    const crossPt = (A, B) => { // where two centre lines cross (nearest the click), if they are not parallel
+      let best = null;
+      for (let i = 0; i < A.pts.length - 1; i++) for (let j = 0; j < B.pts.length - 1; j++) {
+        const a = A.pts[i], b = A.pts[i + 1], c = B.pts[j], d = B.pts[j + 1], u = G.sub(b, a), w = G.sub(d, c), den = G.cross(u, w);
+        if (Math.abs(den) < 1e-9 || Math.abs(den) / (G.len(u) * G.len(w)) < 0.3) continue;
+        const t = G.cross(G.sub(c, a), w) / den, v = G.cross(G.sub(c, a), u) / den;
+        if (t < 0 || t > 1 || v < 0 || v > 1) continue;
+        const X = G.add(a, G.mul(u, t));
+        if (!best || G.dist(X, click) < G.dist(best, click)) best = X;
+      }
+      return best;
+    };
+    const core = roads.filter((rd) => rd.core);
+    roads = roads.filter((rd) => rd.core || core.some((c) => { const X = crossPt(rd, c); return X && G.dist(X, click) < 60 * m; }));
+    for (const rd of roads) if (!rd.core) rd.r = G.nearestOnPolyline(click, rd.pts);
     if (roads.length < 2) {
       alert('找不到兩條交會的路段。請先用「② 路段」沿每條道路的中心線畫過路口，再點兩路交會處。\nNeed two road sections crossing here — draw sections along each road first.');
       return null;
@@ -1495,7 +1511,7 @@
         const k = G.dot(lg.v, B.n);
         if (Math.abs(k) < 0.2) continue;
         const ext = (k > 0 ? B.L.right : B.L.left) * m;
-        const base = G.dot(G.sub(C, B.r.proj), B.n);
+        const base = G.dot(G.sub(lg.rd.r.proj, B.r.proj), B.n); // from where this road passes the centre
         for (const q of [G.mul(lg.nv, lg.rightExt * m), G.mul(lg.nv, -lg.leftExt * m)]) {
           const s = (Math.sign(k) * ext - base - G.dot(q, B.n)) / k;
           E = Math.max(E, s);
@@ -1503,14 +1519,20 @@
       }
       lg.E = E;
     }
+    // parallel carriageways on the same side share one crossing line, so crosswalks and stop lines line up
+    for (const lg of legs) lg.E0 = lg.E;
+    for (const lg of legs) for (const o of legs) if (o !== lg && G.dot(o.v, lg.v) > 0.95) lg.E = Math.max(lg.E, o.E0);
     const out = [];
     const jid = newId();
     const stopW = 0.4;
     const poly = [];
-    legs.sort((a, b) => G.angle(a.v) - G.angle(b.v));
+    // order the legs by where they are around the centre (not just their direction), so side-by-side carriageways
+    // are in their real order and corners form between the outermost ones
+    for (const lg of legs) lg.pa = G.angle(G.sub(legPt(lg, lg.E + 15 * m, 0), C));
+    legs.sort((a, b) => a.pa - b.pa);
     for (const lg of legs) {
       const el = lg.rd.el;
-      const at = (d, off) => G.add(G.add(C, G.mul(lg.v, d)), G.mul(lg.nv, off * m));
+      const at = (d, off) => legPt(lg, d, off); // along the road's own line (carriageways may sit off-centre)
       const cwIn = lg.E + prm.setback * m, cwOut = cwIn + (prm.crosswalks ? prm.cwWidth * m : 0);
       if (prm.crosswalks) {
         const w = G.clamp(prm.cwWidth, P().crosswalk[prm.cwKind].width.min, P().crosswalk[prm.cwKind].width.max);
@@ -1647,6 +1669,7 @@
       for (const o of legs) {
         if (o === lg) continue;
         const ang = Math.atan2(G.dot(o.v, G.rightN(tr)), G.dot(o.v, tr)) * 180 / Math.PI;
+        if (Math.abs(ang) > 150) continue; // a parallel carriageway back the way traffic came is not a turn
         const key = Math.abs(ang) < 35 ? 'S' : ang > 0 ? 'R' : 'L';
         if (!res[key] || (key === 'L' && ang < res.L.ang) || (key === 'R' && ang > res.R.ang)) res[key] = { o, ang };
       }
