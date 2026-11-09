@@ -213,6 +213,11 @@
     let best = null, bd = tol;
     for (const el of S.els) {
       if (el.id === excludeId) continue;
+      if (el.type === 'busstop') { // the open ends of a bus stop's bike lane
+        const g = R.busStopGeom(el, S.els, ppm());
+        for (const e of (g && g.ends) || []) { const d = G.dist(e.p, w); if (d < bd) { bd = d; best = e.p; } }
+        continue;
+      }
       const cand = el.pts || (el.a ? [el.a, el.b] : []);
       for (const p of cand) { const d = G.dist(p, w); if (d < bd) { bd = d; best = p; } }
     }
@@ -1335,8 +1340,32 @@
     j.pts = fresh.pts; j.corners = fresh.corners; j.cornerCuts = fresh.cornerCuts; j.legSecIds = fresh.legSecIds;
     S.els = S.els.filter((e) => e.owner !== oldId).concat(made.slice(1));
   }
+  // Bike lanes whose end sits on an open end of a bus stop's bike lane are joined to it: the end follows the stop
+  // when the stop or its road moves, takes the stop's direction and width, and lets go when dragged away.
+  function syncBikeJoins() {
+    const m = ppm(), stops = S.els.filter((e) => e.type === 'busstop');
+    const endsOf = new Map(stops.map((st) => { const g = R.busStopGeom(st, S.els, m); return [st.id, (g && g.ends) || []]; }));
+    for (const bl of S.els) {
+      if (bl.type !== 'bikelane' || !bl.pts || bl.pts.length < 2) continue;
+      for (const [lk, tk, idx] of [['linkS', 'tanS', 0], ['linkE', 'tanE', bl.pts.length - 1]]) {
+        const p = bl.pts[idx], L = bl[lk];
+        let hit = null;
+        if (L && endsOf.has(L.id)) {
+          const e = endsOf.get(L.id)[L.i];
+          // follow the stop if the lane's end hasn't been moved by hand, or is still on the join
+          if (e && ((L.lp && G.dist(p, L.lp) < 0.05 * m) || G.dist(p, e.p) < 1.0 * m)) hit = { id: L.id, i: L.i, e };
+        }
+        if (!hit) for (const [id, ends] of endsOf) ends.forEach((e, i) => { if (!hit && G.dist(p, e.p) < 0.5 * m) hit = { id, i, e }; });
+        if (hit) {
+          bl.pts[idx] = G.copy(hit.e.p); bl[tk] = G.copy(hit.e.t); bl[lk] = { id: hit.id, i: hit.i, lp: G.copy(hit.e.p) };
+          if (!L || L.id !== hit.id) bl.width = hit.e.w; // match the stop's bike lane on joining
+        } else { delete bl[lk]; delete bl[tk]; }
+      }
+    }
+  }
   const syncAll = () => {
     for (const e of S.els.slice()) if (e.type === 'roundabout') syncRoundabout(e);
+    syncBikeJoins();
     for (const e of S.els.slice()) if (e.type === 'junction' && e.genClick) syncJunction(e);
   };
   function buildRoundabout(C, prm) {

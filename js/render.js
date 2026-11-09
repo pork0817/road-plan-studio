@@ -13,7 +13,17 @@ window.Render = (function () {
   }
   R.path = path;
 
-  R.basePts = (el, ppm) => (el.smooth && el.pts.length > 2 ? G.smooth(el.pts, Math.max(2, ppm * 0.75)) : el.pts);
+  R.basePts = (el, ppm) => {
+    let pts = el.pts;
+    // a bike lane joined to a bus stop leaves the join in the stop's own direction (guide point 2 m out along it)
+    if (el.type === 'bikelane' && (el.tanS || el.tanE) && pts.length >= 2) {
+      pts = pts.slice();
+      if (el.tanE) pts.splice(pts.length - 1, 0, G.add(pts[pts.length - 1], G.mul(el.tanE, 2 * ppm)));
+      if (el.tanS) pts.splice(1, 0, G.add(pts[0], G.mul(el.tanS, 2 * ppm)));
+      return G.smooth(pts, Math.max(2, ppm * 0.75));
+    }
+    return el.smooth && pts.length > 2 ? G.smooth(pts, Math.max(2, ppm * 0.75)) : pts;
+  };
   const colorOf = (P, c) => P.colors[c] || c;
 
 
@@ -929,7 +939,8 @@ window.Render = (function () {
     const bay = el.kind === 'bay';
     const Lin = bay ? Math.max(0, +el.Lin || 0) : 0, Lout = bay ? Math.max(0, +el.Lout || 0) : 0;
     const before = dir > 0 ? Lin : Lout, after = dir > 0 ? Lout : Lin;
-    const Tb = Math.max(2, +el.Tb || 10), D = bay ? Math.max(1, +el.D || 3) : 0, wP = Math.max(0.5, +el.wP || 2.5), wb = Math.max(1, +el.wb || 1.5);
+    const Tb = Math.max(2, +el.Tb || 10), D = bay ? Math.max(1, +el.D || 3) : 0, wP = Math.max(0.5, +el.wP || 2.5);
+    let wb = Math.max(1, +el.wb || 1.5);
     const bL = host.bikeLane || 0, sl = host.slowLane || 0;
     // offsets (m) outward from the road centre line on the stop's side
     const extAt = (sm) => { const e = R.sectionExtAt(host, sm); return side > 0 ? e.right : e.left; };
@@ -941,16 +952,6 @@ window.Render = (function () {
       else if (sm > s1) u = after > 0 ? smooth01(1 - (sm - s1) / after) : 0;
       return aAt(sm) + D * u;
     };
-    const cb = (sm) => aAt(sm) + (bL > 0 ? bL / 2 : 0.75);                            // where bikes ride on the road
-    // with no bike lane on the road there is nothing to rejoin: the bike lane runs straight behind the stop
-    const straightOff = aAt((s0 + s1) / 2) + D + wP + wb / 2;
-    const bikeAt = (sm) => {
-      if (bL <= 0) return straightOff;
-      const lo = s0 - before, hi = s1 + after, behind = (x) => outAt(x) + wP + wb / 2;
-      if (sm >= lo && sm <= hi) return behind(sm);
-      if (sm < lo) return cb(sm) + (behind(lo) - cb(sm)) * smooth01((sm - (lo - Tb)) / Tb);
-      return cb(sm) + (behind(hi) - cb(sm)) * smooth01(1 - (sm - hi) / Tb);
-    };
     // a point at station sm (m) and outward offset o (m)
     const at = (sm, o) => {
       sm = G.clamp(sm, 0, total);
@@ -958,13 +959,38 @@ window.Render = (function () {
       const p0 = pts[i - 1], p1 = pts[i], u = (sm - cum[i - 1]) / Math.max(1e-9, cum[i] - cum[i - 1]), t = G.norm(G.sub(p1, p0));
       return G.add(G.add(p0, G.mul(G.sub(p1, p0), G.clamp(u, 0, 1))), G.mul(G.rightN(t), side * o * ppm));
     };
+    // a separately drawn bike lane running along this kerb, past both ends of the stop, is detoured too
+    const lo0 = s0 - before - Tb, hi0 = s1 + after + Tb;
+    const offOf = (p) => { const r = G.nearestOnPolyline(p, pts); return { o: side * G.dot(G.sub(p, r.proj), G.rightN(r.tangent)) / ppm, t: r.tangent }; };
+    let through = null;
+    if (el.bike !== false) for (const bl of els) {
+      if (bl.type !== 'bikelane' || bl.kind === 'priority' || !bl.pts || bl.pts.length < 2) continue;
+      const bp = R.basePts(bl, ppm), hit = (sm) => {
+        const ref = at(sm, aAt(sm) + 1.5), r = G.nearestOnPolyline(ref, bp);
+        if (!r || r.d > 6 * ppm || (r.i === 0 && r.t <= 0) || (r.i === bp.length - 2 && r.t >= 1)) return null;
+        const q = offOf(r.proj); return Math.abs(G.dot(r.tangent, q.t)) > 0.9 ? q.o : null;
+      };
+      const oA = hit(lo0), oB = hit(hi0);
+      if (oA != null && oB != null) { through = { el: bl, oA, oB }; wb = Math.max(1, bl.width || wb); break; }
+    }
+    const cb = (sm) => (through ? through.oA + (through.oB - through.oA) * G.clamp((sm - lo0) / Math.max(1e-6, hi0 - lo0), 0, 1)
+      : aAt(sm) + (bL > 0 ? bL / 2 : 0.75));                                            // where bikes ride before / after
+    // with no bike lane on the road there is nothing to rejoin: the bike lane runs straight behind the stop
+    const straightOff = aAt((s0 + s1) / 2) + D + wP + wb / 2;
+    const bikeAt = (sm) => {
+      if (bL <= 0 && !through) return straightOff;
+      const lo = s0 - before, hi = s1 + after, behind = (x) => outAt(x) + wP + wb / 2;
+      if (sm >= lo && sm <= hi) return behind(sm);
+      if (sm < lo) return cb(sm) + (behind(lo) - cb(sm)) * smooth01((sm - (lo - Tb)) / Tb);
+      return cb(sm) + (behind(hi) - cb(sm)) * smooth01(1 - (sm - hi) / Tb);
+    };
     const run = (from, to, f) => { const out = [], n = Math.max(2, Math.ceil((to - from) / 0.5) + 1); for (let k = 0; k < n; k++) { const sm = from + ((to - from) * k) / (n - 1); out.push(at(sm, f(sm))); } return out; };
     const band = (from, to, f0, f1) => run(from, to, f0).concat(run(from, to, f1).reverse());
     const lo = s0 - before, hi = s1 + after, mlo = lo - (el.bike !== false ? Tb : 0), mhi = hi + (el.bike !== false ? Tb : 0);
     const travel = (sm) => { const q = at(sm + 0.5, 0), p = at(sm - 0.5, 0); return G.angle(dir > 0 ? G.sub(q, p) : G.sub(p, q)); };
     return {
       host, side, dir, s0, s1, lo, hi, bay, wb, lw: host.laneWidth,
-      mask: band(mlo, mhi, (x) => aAt(x) - 0.05, (x) => Math.max(extAt(x), bikeAt(x) + wb / 2) + 0.5),
+      mask: band(mlo, mhi, (x) => Math.min(aAt(x), through ? cb(x) - wb / 2 : Infinity) - 0.05, (x) => Math.max(extAt(x), bikeAt(x) + wb / 2, through ? cb(x) + wb / 2 : -Infinity) + 0.5),
       bayPave: bay ? band(lo, hi, (x) => aAt(x) - 0.2, outAt) : null,
       // the island / platform reaches back to the bike lane, so its ends taper along the bike lane's curve
       platform: el.bike !== false
@@ -978,6 +1004,12 @@ window.Render = (function () {
       boxMid: (bay ? at((s0 + s1) / 2, aAt((s0 + s1) / 2) + D / 2) : at((s0 + s1) / 2, aAt((s0 + s1) / 2) - host.laneWidth / 2)),
       crossing: el.bike !== false ? { p: at((s0 + s1) / 2, bikeAt((s0 + s1) / 2)), dir: travel((s0 + s1) / 2) } : null,
       travelDir: travel((s0 + s1) / 2),
+      through: through && through.el,
+      // the two open ends of the stop's bike lane: point, direction pointing away from the stop, width
+      ends: el.bike !== false && !through ? (() => {
+        const b = dir > 0 ? run(mlo, mhi, bikeAt) : run(mlo, mhi, bikeAt).reverse(), n = b.length;
+        return [{ p: b[0], t: G.norm(G.sub(b[0], b[1])), w: wb }, { p: b[n - 1], t: G.norm(G.sub(b[n - 1], b[n - 2])), w: wb }];
+      })() : [],
     };
   };
   function drawBusStop(ctx, el, g, ppm, P) {
@@ -1201,6 +1233,7 @@ window.Render = (function () {
     for (const el of els) {
       if (el.type !== 'bikelane') continue;
       ctx.save(); yieldToRoundabouts(el); for (const c of crossCutsEarly) clipOutside(c);
+      for (const b of busStops) if (b.g.through === el) clipOutside(b.g.mask); // detoured behind the bus stop
       drawBikeSurface(ctx, el, ppm, P); drawBikeLane(ctx, el, ppm, P);
       ctx.restore();
     }
