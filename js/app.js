@@ -1379,8 +1379,38 @@
     const others = S.els.filter((e) => e !== j && e.type === 'junction' && e.genClick).map((e) => [Math.round(e.genClick.x), Math.round(e.genClick.y)]);
     return JSON.stringify([m, junctionPrm(j), secs.map((e) => SEC_KEYS.map((k) => e[k])), others]);
   }
+  // Junctions made before pieces had keys: while the roads are unchanged, match every existing piece to its rebuilt
+  // twin to give it a key; a piece with no twin nearby was deleted by the user, one that moved was edited.
+  function keyLegacyPieces(j) {
+    const old = S.els.filter((e) => e.owner === j.id);
+    if (j.sig !== junctionSig(j)) return; // only while nothing has changed: then what's missing was deleted by the user
+    // keys from the first version also named arrow / crosswalk types: re-key those (their deletions are re-found)
+    const oldFormat = (k) => { const p = String(k).split('|'); return p.length === 4 && p[0] !== 'legacy' && p[1] !== 'line' && p[2] !== ''; };
+    for (const e of old) if (e.jkey && oldFormat(e.jkey) && !e.edited) delete e.jkey;
+    if (j.removed) j.removed = j.removed.filter((k) => !oldFormat(k));
+    if (!old.length || old.every((e) => e.jkey)) return;
+    const made = buildJunction(j.genClick, junctionPrm(j));
+    if (!made) return;
+    const posOf = (e) => (e.a && e.b ? G.mid(e.a, e.b) : e.p ? e.p : e.pts ? e.pts[Math.floor(e.pts.length / 2)] : null);
+    const free = new Set(old.filter((e) => !e.jkey));
+    const pick = (f, tol) => {
+      const q = posOf(f); if (!q) return null;
+      let best = null, bd = tol * ppm();
+      for (const o of free) { if (o.type !== f.type) continue; const p = posOf(o); const d = p ? G.dist(p, q) : Infinity; if (d < bd) { bd = d; best = o; } }
+      return best;
+    };
+    const fresh = made.slice(1).filter((f) => f.jkey);
+    const unmatched = [];
+    for (const f of fresh) { const o = pick(f, 0.5); if (o) { o.jkey = f.jkey; free.delete(o); } else unmatched.push(f); }
+    for (const f of unmatched) { // moved a little: edited; nothing of its kind nearby: deleted
+      const o = pick(f, 6);
+      if (o) { o.jkey = f.jkey; o.edited = true; free.delete(o); } else (j.removed = j.removed || []).push(f.jkey);
+    }
+    for (const o of free) { o.jkey = 'legacy|' + o.id; o.edited = true; } // anything else of theirs is kept as it is
+  }
   function syncJunction(j) {
     if (!j.genClick) return;
+    keyLegacyPieces(j);
     const sig = junctionSig(j);
     if (j.sig === sig) return;
     const made = buildJunction(j.genClick, junctionPrm(j));
@@ -1846,7 +1876,8 @@
           if (!best || r.d < best.d) best = { d: r.d, lg, sQ, lat: G.dot(G.sub(q, r.proj), lg.nv) };
         }
         if (!best) continue;
-        const g = best.lg.rd.src.id + ':' + best.lg.sgn + '|' + e.type + '|' + (e.style || e.kind || '');
+        // keyed by approach, kind of piece and position (not arrow / crosswalk type, which a design change alters)
+        const g = best.lg.rd.src.id + ':' + best.lg.sgn + '|' + e.type + '|' + (e.type === 'line' ? e.style : '');
         if (!groups.has(g)) groups.set(g, []);
         groups.get(g).push({ e, sQ: best.sQ, lat: best.lat });
       }
