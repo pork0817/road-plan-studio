@@ -942,7 +942,10 @@ window.Render = (function () {
       return aAt(sm) + D * u;
     };
     const cb = (sm) => aAt(sm) + (bL > 0 ? bL / 2 : 0.75);                            // where bikes ride on the road
+    // with no bike lane on the road there is nothing to rejoin: the bike lane runs straight behind the stop
+    const straightOff = aAt((s0 + s1) / 2) + D + wP + wb / 2;
     const bikeAt = (sm) => {
+      if (bL <= 0) return straightOff;
       const lo = s0 - before, hi = s1 + after, behind = (x) => outAt(x) + wP + wb / 2;
       if (sm >= lo && sm <= hi) return behind(sm);
       if (sm < lo) return cb(sm) + (behind(lo) - cb(sm)) * smooth01((sm - (lo - Tb)) / Tb);

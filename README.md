@@ -60,7 +60,7 @@ Pick 🚲 自行車專用車道, 雙向自行車道 or 自行車優先車道 and
 **Bus stops** (自行車・公車道 group): click the start and end of the stop beside a road section; the stop attaches to that road's kerb and follows it when the road changes. Drag either end to change its length.
 - **公車站 路側 Kerbside stop**: the bus stops in its lane, so it never has to pull in. A boarding island sits at the kerb and the bike lane runs behind it, with a short crossing for passengers, so riders and waiting passengers don't meet.
 - **公車站 港灣式 Bus bay**: the bus turns right into a recess (entry taper, berth, exit taper) and rejoins traffic afterwards. The lane edge becomes dashed across the bay mouth. The waiting platform is on the sidewalk side, and the bike lane runs behind it.
-- 自行車道繞行後方 (on by default) routes the bike lane behind the stop. If the road has its own bike lane, that lane is interrupted and joined to the detour.
+- 自行車道繞行後方 (on by default) routes the bike lane behind the stop. If the road has its own bike lane, that lane is interrupted and curves out to the detour and back; if it has none, the bike lane and platform run straight behind the stop.
 - Markings follow the regulation where it has one: §190 停靠區 box (white 10 cm lines) with white wording (default 「公車停靠區」), §169 red 禁止臨時停車線 on the stop's kerb, and §174-4 (no bike markings within 2 m of the stop). Bay depth, tapers, island and bike-lane widths aren't set by the regulation; the defaults are marked ≈ and adjustable.
 
 ## Aligning and the magnet
