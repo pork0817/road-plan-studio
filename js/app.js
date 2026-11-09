@@ -1374,19 +1374,21 @@
   const SEC_KEYS = ['pts', 'smooth', 'lanesF', 'lanesB', 'laneWidth', 'centerType', 'medianWidth', 'slowLane', 'bikeLane', 'edge', 'autoArrows', 'autoBox', 'boxDepth', 'solidLen', 'laneUse', 'leftGuide', 'leftTurn', 'pocketLen', 'pocketTaper', 'lanesF2', 'lanesB2', 'changeAt', 'taper'];
   const J_KEYS = ['crosswalks', 'cwKind', 'cwWidth', 'setback', 'stops', 'stopGap', 'cornerR', 'sidewalks', 'swWidth', 'bikeCross'];
   const junctionPrm = (j) => { const o = Object.assign({}, j.genPrm || {}); for (const k of J_KEYS) if (j[k] !== undefined) o[k] = j[k]; return o; };
-  function junctionSig(j) {
+  function junctionSig(j, core) { // core: the signature as it was before bus lanes were part of it
     const m = ppm(), near = (40 + 60) * m;
     const secs = S.els.filter((e) => e.type === 'section' && e.pts.some((p, i) => {
       const q = e.pts[i + 1]; return G.dist(p, j.genClick) < near || (q && G.distToSeg(j.genClick, p, q).d < near);
     }));
     const others = S.els.filter((e) => e !== j && e.type === 'junction' && e.genClick).map((e) => [Math.round(e.genClick.x), Math.round(e.genClick.y)]);
-    return JSON.stringify([m, junctionPrm(j), secs.map((e) => SEC_KEYS.map((k) => e[k])), others]);
+    if (core) return JSON.stringify([m, junctionPrm(j), secs.map((e) => SEC_KEYS.map((k) => e[k])), others]);
+    const buses = S.els.filter((e) => e.type === 'buslane' && e.pts && e.pts.length > 1 && G.nearestOnPolyline(j.genClick, e.pts).d < 100 * m).map((e) => [e.pts, e.width, e.smooth]);
+    return JSON.stringify([m, junctionPrm(j), secs.map((e) => SEC_KEYS.map((k) => e[k])), others, buses]);
   }
   // Junctions made before pieces had keys: while the roads are unchanged, match every existing piece to its rebuilt
   // twin to give it a key; a piece with no twin nearby was deleted by the user, one that moved was edited.
   function keyLegacyPieces(j) {
     const old = S.els.filter((e) => e.owner === j.id);
-    if (j.sig !== junctionSig(j)) return; // only while nothing has changed: then what's missing was deleted by the user
+    if (j.sig !== junctionSig(j) && j.sig !== junctionSig(j, true)) return; // only while the roads are unchanged: then what's missing was deleted by the user
     // keys from the first version also named arrow / crosswalk types: re-key those (their deletions are re-found)
     const oldFormat = (k) => { const p = String(k).split('|'); return p.length === 4 && p[0] !== 'legacy' && p[1] !== 'line' && p[2] !== ''; };
     for (const e of old) if (e.jkey && oldFormat(e.jkey) && !e.edited) delete e.jkey;
@@ -1411,6 +1413,7 @@
       else unmatched.push(f);
     }
     for (const f of unmatched) { // moved a little: edited; nothing of its kind nearby: deleted
+      if (f.bus) continue; // bus-lane pieces are new in this version, not something the user deleted
       const o = pick(f, 6);
       if (o) { o.jkey = f.jkey; o.edited = true; free.delete(o); } else (j.removed = j.removed || []).push(f.jkey);
     }
@@ -1421,7 +1424,7 @@
   function laneSigNow() { const o = {}; for (const e of S.els) if (e.type === 'section') o[e.id] = JSON.stringify(LANE_KEYS.map((k) => e[k])); return o; }
   function syncJunction(j) {
     if (!j.genClick) return;
-    if (!j.laneSig && j.sig === junctionSig(j)) j.laneSig = laneSigNow(); // older junctions: remember the lane design as it stands
+    if (!j.laneSig && (j.sig === junctionSig(j) || j.sig === junctionSig(j, true))) j.laneSig = laneSigNow(); // older junctions: remember the lane design as it stands
     keyLegacyPieces(j);
     const sig = junctionSig(j);
     if (j.sig === sig) return;
@@ -1758,6 +1761,47 @@
         const mid = (s0 + s1) / 2, across = G.norm(G.sub(legPt(lg, mid, l1), legPt(lg, mid, l0)));
         for (const [off, d] of [[l0 + 1.3, across], [l1 - 1.3, G.mul(across, -1)]])
           out.push({ id: newId(), owner: jid, type: 'symbol', kind: 'bike', small: W < 1.6, p: legPt(lg, mid, off), dir: G.angle(d) });
+      }
+    }
+    // ---- bus lanes (公車專用道) through the intersection: a stop line on the approach, lined up with the stop lines of
+    // the traffic lanes going the same way, and the crosswalks continued across the bus lane on both sides ----
+    for (const bl of S.els) {
+      if (bl.type !== 'buslane' || !bl.pts || bl.pts.length < 2) continue;
+      const bp = R.basePts(bl, m), rc = G.nearestOnPolyline(C, bp);
+      if (!rc || rc.d > 60 * m) continue;
+      const dirB = rc.tangent, halfW = (bl.width || 3.5) / 2;
+      // where the bus lane's centre line crosses the line across leg L at distance s from the centre
+      const crossAt = (L, s) => {
+        const S0 = legPt(L, s, 0), tv = onLeg(L, s, 0).t;
+        for (let i = 0; i < bp.length - 1; i++) {
+          const a = G.dot(G.sub(bp[i], S0), tv), b = G.dot(G.sub(bp[i + 1], S0), tv);
+          if ((a <= 0 && b >= 0) || (a >= 0 && b <= 0)) { const u = Math.abs(a - b) < 1e-9 ? 0 : a / (a - b); return { p: G.add(bp[i], G.mul(G.sub(bp[i + 1], bp[i]), u)), n: G.rightN(tv) }; }
+        }
+        return null;
+      };
+      const nearestLeg = (cond) => {
+        let best = null;
+        for (const L of legs) {
+          if (!cond(L)) continue;
+          const r = G.nearestOnPolyline(rc.proj, L.path.pts); if (!r) continue;
+          if (!best || r.d < best.d) best = { d: r.d, L };
+        }
+        return best && best.L;
+      };
+      const inL = nearestLeg((L) => L.entry && G.dot(G.mul(L.v, -1), dirB) > 0.9);  // traffic arriving the bus's way
+      const outL = nearestLeg((L) => G.dot(L.v, dirB) > 0.9);                         // traffic leaving the bus's way
+      if (inL && prm.stops) {
+        const X = crossAt(inL, inL.entry.ds);
+        if (X) out.push({ id: newId(), owner: jid, bus: true, type: 'stopline', width: stopW, a: G.add(X.p, G.mul(X.n, (halfW - 0.1) * m)), b: G.sub(X.p, G.mul(X.n, (halfW - 0.1) * m)), dir: G.angle(dirB) });
+      }
+      if (prm.crosswalks) {
+        const w = G.clamp(prm.cwWidth, P().crosswalk[prm.cwKind].width.min, P().crosswalk[prm.cwKind].width.max);
+        for (const L of [inL, outL]) {
+          if (!L || L.cwIn == null) continue;
+          const X = crossAt(L, L.cwIn + (w * m) / 2);
+          if (X) out.push({ id: newId(), owner: jid, bus: true, type: 'crosswalk', kind: prm.cwKind, width: w, gap: 0.4, green: false,
+            a: G.sub(X.p, G.mul(X.n, (halfW - 0.05) * m)), b: G.add(X.p, G.mul(X.n, (halfW - 0.05) * m)), dir: G.angle(dirB) });
+        }
       }
     }
     // which turns each entry can make (other legs to its left / straight on / right)
