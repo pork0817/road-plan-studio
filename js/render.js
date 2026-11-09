@@ -461,14 +461,14 @@ window.Render = (function () {
     SR: SL.map(mirror),
     LR: [rect(-0.1, 0, 0.1, 2.75), ARM, mirror(ARM)],                 // 圖四
     SLR: [STUB, SPLIT_STRAIGHT, mirror(SPLIT_STRAIGHT), SPLIT_ARM, mirror(SPLIT_ARM)], // 圖五
-    // 迴轉: no figure in §188 — drawn with the same 0.2 m stroke and 圖二 head proportions (≈)
+    // 迴轉: no figure in §188. As painted on Taiwan roads: a full-length 0.2 m shaft, a tight hook at the far
+    // end, and a short return leg carrying the full 圖一 straight-arrow head (2.6 m × 0.9 m) pointing back.
     U: (() => {
-      const shaft = rect(-0.1, 0, 0.1, 3.4);
-      const outer = arc(-0.7, 3.4, 0.8, 0, Math.PI), inner = arc(-0.7, 3.4, 0.6, Math.PI, 0);
-      const bend = outer.concat(inner);
-      const leg = rect(-1.5, 2.2, -1.3, 3.4);
-      const head = [[-1.4, 0.9], [-1.85, 2.2], [-0.95, 2.2]];
-      return [shaft, bend, leg, head];
+      const cx = -0.6, top = 4.3;                         // hook centre; return leg centred at x = -1.2
+      const shaft = rect(-0.1, 0, 0.1, top);
+      const bend = arc(cx, top, 0.7, 0, Math.PI).concat(arc(cx, top, 0.5, Math.PI, 0));
+      const lx = 2 * cx, head = [[lx + 0.1, top], [lx - 0.1, top], [lx - 0.1, 3.0], [lx - 0.45, 3.1], [lx, 0.5], [lx + 0.45, 3.1], [lx + 0.1, 3.0]];
+      return [shaft, bend, head];
     })(),
   };
   R.arrowKinds = Object.keys(ARROWS);
