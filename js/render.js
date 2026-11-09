@@ -1504,7 +1504,6 @@ window.Render = (function () {
           ctx.restore();
           drawRoundaboutIsland(ctx, el, ppm, P);
           for (const sp of el.splits || []) { ctx.save(); for (const c of crossCuts) clipOutside(c); drawSidewalk(ctx, { pts: sp, style: 'island' }, ppm, P); ctx.restore(); }
-          if (el.bikeRing) drawBikeRing(ctx, el, ppm, P);
           break;
         case 'surface': clipRoad(); yieldToRoundabouts(el); drawSurface(ctx, el, ppm, P); break;
         case 'buslane': clipRoad(); for (const c of crossCuts) clipOutside(c); cutJunctions(); drawBikeSurface(ctx, el, ppm, P); markLane(el); break;
@@ -1566,6 +1565,9 @@ window.Render = (function () {
         drawEl(els[i]); i++;
       }
     }
+    // cycle paths around roundabouts (and their links from the roads' bike lanes) go over every road, whatever the
+    // layer order: a road listed above the roundabout must not pave over them
+    for (const el of els) if (el.type === 'roundabout' && el.bikeRing) drawBikeRing(ctx, el, ppm, P);
   };
 
   // ---------- shapes for hit-testing & selection outline ----------
