@@ -2234,16 +2234,6 @@
       box.appendChild(btns);
     } else {
       const h = document.createElement('h3'); h.textContent = '專案 Project'; box.appendChild(h);
-      const steps = [
-        [!!S.img, '上傳/貼上衛星圖 Upload image'],
-        [!!S.ppm, '校正比例尺 Calibrate scale'],
-        [S.els.some((e) => e.type === 'road'), '描繪車道範圍 Mark road area'],
-        [S.els.some((e) => e.type === 'sidewalk'), '描繪人行道 Mark sidewalks'],
-        [S.els.some((e) => !['road', 'sidewalk'].includes(e.type)), '放置標線 Add markings from library'],
-      ];
-      const ol = document.createElement('ol'); ol.className = 'steps';
-      steps.forEach(([done, t]) => { const li = document.createElement('li'); li.textContent = (done ? '✓ ' : '') + t; if (done) li.className = 'done'; ol.appendChild(li); });
-      box.appendChild(ol);
     }
 
     // scale
