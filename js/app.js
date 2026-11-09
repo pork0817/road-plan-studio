@@ -54,6 +54,8 @@
     known = new Set(S.els.map((e) => e.id));
   }
   const resetKnown = () => { known = new Set(S.els.map((e) => e.id)); };
+  // projects saved before drawing order existed: sort once into the default levels (stable), so they look the same
+  const migrateOrder = (d) => { if (!d || !(d.v >= 2)) S.els = S.els.map((e, i) => [e, i]).sort((a, b) => R.rankOf(a[0]) - R.rankOf(b[0]) || a[1] - b[1]).map((x) => x[0]); };
   // swap a generator's pieces for freshly built ones, keeping the drawing order: each new piece takes the list
   // slot of an old piece of the same kind; extras are filed by level (placeNew), surplus old slots disappear
   function replaceOwned(isOld, fresh) {
