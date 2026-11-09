@@ -117,12 +117,12 @@ Pick the country at the top (國家). Switching restyles every marking and rebui
 - Arrows (fig. 2.3.2): 5.00 m urban, 7.50 m above 50 km/h, 2.50 m on cycle paths; straight head 2.05 × 0.75 m, turn arrows with a 45° arm and a sideways head, shaft 0.30 m off the lane centre.
 - Text (BUS, STOP, TAXI, speeds) in one line across the lane, letters 1.60 m (or 4.00 m) long.
 - OFOS bike box 4–5 m (red, bike symbols, two 0.15 m car stop lines behind); cycle crossings with 0.50 m blocks; fietsstrook with 1-1 line and red surface; busstrook with BUS; turbo roundabouts.
-- Road sections have a Fietsstroken switch (1.7 m bike lanes, width adjustable). Roundabouts have *Fietspad rondom*: a red cycle path about 5 m outside the ring; with cyclists in priority, every road crossing gets 0.50 m blocks and shark teeth for drivers (outside on the way in, inside on the way out), and the zebras move outside it.
+- Road sections have a Fietsstroken switch (1.7 m bike lanes, width adjustable). Roundabouts have *Fietspad rondom*: a red cycle path about 5 m outside the ring; with cyclists in priority, every road crossing gets 0.50 m blocks and shark teeth for drivers (outside on the way in, inside on the way out), and the zebras move outside it. The roads' bike lanes stop just beyond the zebra and curve out around it into the cycle path.
 
 **日本 Japan** (`japan.js`) — 道路標識、区画線及び道路標示に関する命令 (別表第4・第6, figures as reprinted by NILIM). **Left-hand traffic:** a road's drawing-direction lanes sit on the left of its centre line; intersections, turn pockets, guide lines, bus stops and roundabouts (clockwise) are all built for driving on the left.
 - 車線境界線 0.10–0.15 m dashed (3–10 m, gap 1–2 × the dash; 5 m / 5 m used), 中央線 0.12–0.15 m (white dashed / solid / double), はみ出し禁止 yellow 0.15–0.20 m, 進路変更禁止 yellow 0.10–0.15 m, 車道外側線 0.15–0.20 m.
 - 横断歩道: bars and gaps 0.45–0.50 m, 4 m standard. 停止線 0.30–0.45 m, at least 1 m (2 m standard) before the crosswalk. 自転車横断帯 lines 0.15–0.30 m with bike symbols.
-- Arrows (204): 5 m, 0.15 m shaft, straight head 2.5 × 0.45 m; a turn head (2.2 m) leans toward the turn off a short R 0.75 m bend, tip 0.3 m to the side (0.6 m for the side head of a combined arrow).
+- Arrows (110 / 204): 5 m, 0.15 m shaft, straight head 2.5 × 0.45 m; a turn arrow hooks round into a head pointing 45° to the side; straight + turn has a 45° side head below the straight head.
 - 二段停止線 (二輪 / 四輪, 2–5 m apart) instead of a scooter box; 導流帯 (0.45 m stripes every 1.0–1.5 m), 立入り禁止部分 (yellow), 停止禁止部分; ◇ 横断歩道あり (1.5 × 5.0 m), ▽ 前方優先道路, blue 矢羽根; Japanese text stacked along the lane, numbers across it (最高速度 yellow, 5.0 × 1.2 m).
 - The lane cards follow the driver: ＋附加右轉 cuts the median (needs about 2.75 m a lane), ＋附加左轉 widens the kerb side.
 

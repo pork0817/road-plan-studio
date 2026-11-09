@@ -1010,6 +1010,7 @@
         const oneWay = el.lanesB === 0, median = !oneWay && el.centerType === 'median';
         legs.push({ key: el.id + ':' + k, el, X, v, nv, sgn, rightExt, leftExt, oneWay, median, bc: G.copy(cc.c), br: cc.rM,
           incoming: oneWay ? sgn < 0 : true,
+          bikes: L.bands.filter((b) => b.kind === 'bike').map((b) => ({ lat: sgn * b.off, w: b.width })), // road bike lanes (leg frame)
           inner: oneWay ? rightExt - 0.3 : -(median ? el.medianWidth / 2 + 0.3 : 0.15),
           lanes: Math.max(1, oneWay ? el.lanesF : (sgn > 0 ? el.lanesB : el.lanesF)) });
       });
@@ -1340,7 +1341,7 @@
     // per leg: where it meets the ring, its direction and lane extents (left / right of the outward direction v),
     // and which side carries traffic into the ring — for the cycle path crossings drawn by the renderer
     rb.legs = legs.map((lg) => ({ ang: G.angle(G.sub(lg.X, rb.p)), w: Math.max(lg.rightExt, lg.leftExt),
-      X: G.copy(lg.X), v: G.copy(lg.v), le: lg.leftExt, re: lg.rightExt, oneWay: !!lg.oneWay, inc: !!lg.incoming }));
+      X: G.copy(lg.X), v: G.copy(lg.v), le: lg.leftExt, re: lg.rightExt, oneWay: !!lg.oneWay, inc: !!lg.incoming, bikes: lg.bikes || [] }));
     legs.forEach((lg, i) => { lg.li = i; });
     rb.legSecIds = [...new Set(legs.map((lg) => lg.el.id))]; // roads joining the ring: their outline is part of the kerb
     rbCorners(rb, legs);

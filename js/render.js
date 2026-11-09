@@ -556,33 +556,33 @@ window.Render = (function () {
     return { S: [shaft(2.95), head], R: R1, L: R1.map(mirror), SR: SR1, SL: SR1.map(mirror),
       LR: [shaft(2.55)].concat(arm(2.55), arm(2.55).map(mirror)), SLR: [shaft(2.95), head].concat(arm(0.35), arm(0.35).map(mirror)), U: ARROWS.U };
   })();
-  // ---- Japan: 標識令 別表第6 「進行方向」(204) — 5 m long, 0.15 m shaft; straight head 2.5 m × 0.45 m. A turn head (2.2 m)
-  // leans toward the turn: the shaft curves (R ≈ 0.75 m on its centre line) by a small angle, so the tip ends 0.3 m
-  // (turn arrow) or 0.6 m (side head of a combined arrow) to the side, as in the figure. ----
+  // ---- Japan: 標識令 別表第6 「進行方向別通行区分」(110) / 「進行方向」(204) — 5 m long, 0.15 m shaft. Straight: head
+  // 2.5 m × 0.45 m. Turn: the shaft hooks round (R ≈ 0.6 m) into a head pointing 45° to the side. Straight + turn:
+  // a straight arrow (2.2 m head) with a 45° side head branching off below it. ----
   const JP_ARROWS = (() => {
     const hw = 0.075, D2R = Math.PI / 180;
-    // one leaning arm, leaving the shaft centre line at height y0, turning left by th; head length hl, base width bw
-    const arm = (y0, th, hl, bw, yTip) => {
-      const r = 0.75, n = 8, cl = [];
-      // straight part so the tip lands at yTip
-      const y1 = yTip - (r * Math.sin(th) + (0.1 + hl) * Math.cos(th));
-      if (y1 > y0) cl.push([0, y0]);
-      for (let k = 0; k <= n; k++) { const a = (th * k) / n; cl.push([-(r - r * Math.cos(a)), Math.max(y0, y1) + r * Math.sin(a)]); }
-      const d = [-Math.sin(th), Math.cos(th)], nr = [d[1], -d[0]]; // direction and its right normal
-      const last = cl[cl.length - 1], B = [last[0] + d[0] * 0.1, last[1] + d[1] * 0.1];
+    // a left-leaning arm from the shaft centre line at height y0: arc of centre-line radius r turning th, a short
+    // stem, then a head (length hl, base width bw). yTip (optional): add a straight part first so the tip lands there.
+    const arm = (y0, th, r, stem, hl, bw, yTip) => {
+      const rise = r * Math.sin(th) + (stem + hl) * Math.cos(th), y1 = yTip != null ? Math.max(y0, yTip - rise) : y0, cl = [];
+      if (y1 > y0 + 1e-6) cl.push([0, y0]);
+      for (let k = 0; k <= 10; k++) { const a = (th * k) / 10; cl.push([-(r - r * Math.cos(a)), y1 + r * Math.sin(a)]); }
+      const d = [-Math.sin(th), Math.cos(th)], nr = [d[1], -d[0]];
+      const e = cl[cl.length - 1], B = [e[0] + d[0] * stem, e[1] + d[1] * stem];
       cl.push(B);
-      const off = (p, k, s) => { // offset the centre line by s at point k (normal from the local direction)
+      const off = (k, sd) => {
         const q = cl[Math.min(k + 1, cl.length - 1)], o = cl[Math.max(k - 1, 0)], t = [q[0] - o[0], q[1] - o[1]], L = Math.hypot(t[0], t[1]) || 1;
-        return [p[0] + (t[1] / L) * s, p[1] - (t[0] / L) * s];
+        return [cl[k][0] + (t[1] / L) * sd, cl[k][1] - (t[0] / L) * sd];
       };
-      const left = cl.map((p, k) => off(p, k, -hw)), right = cl.map((p, k) => off(p, k, hw));
+      const left = cl.map((_, k) => off(k, -hw)), right = cl.map((_, k) => off(k, hw));
       const tip = [B[0] + d[0] * hl, B[1] + d[1] * hl];
       return left.concat([[B[0] - nr[0] * bw / 2, B[1] - nr[1] * bw / 2], tip, [B[0] + nr[0] * bw / 2, B[1] + nr[1] * bw / 2]], right.reverse());
     };
     const straight = (yb) => [[-hw, 0], [hw, 0], [hw, yb], [0.225, yb], [0, 5.0], [-0.225, yb], [-hw, yb]];
-    const L = [arm(0, 8 * D2R, 2.2, 0.55, 5.0)], SIDE = arm(0.3, 15 * D2R, 2.2, 0.5, 2.5);
-    return { S: [straight(2.5)], L, R: L.map(mirror), SL: [straight(2.8), SIDE], SR: [straight(2.8), SIDE].map(mirror),
-      LR: [arm(0, 15 * D2R, 2.2, 0.5, 5.0), mirror(arm(0, 15 * D2R, 2.2, 0.5, 5.0))], SLR: [straight(2.8), SIDE, mirror(SIDE)], U: ARROWS.U };
+    const TURN = arm(0, 45 * D2R, 0.6, 0.15, 1.4, 0.5, 5.0);          // turn arrow: tip 5.0 m up, ≈ 1.3 m to the side
+    const SIDE = arm(1.0, 45 * D2R, 0.3, 0.3, 1.3, 0.45);              // side head of a combined arrow, below the 2.2 m head
+    return { S: [straight(2.5)], L: [TURN], R: [mirror(TURN)], SL: [straight(2.8), SIDE], SR: [straight(2.8), SIDE].map(mirror),
+      LR: [TURN, mirror(TURN)], SLR: [straight(2.8), SIDE, mirror(SIDE)], U: ARROWS.U };
   })();
   const ARROW_SETS = { TW: ARROWS, NL: NL_ARROWS, JP: JP_ARROWS };
   const ARROW_ANCHOR = { NL: { R: 0.30, SR: 0.30, L: -0.30, SL: -0.30 } }; // lane centre relative to the shaft (else: outline centre)
@@ -833,12 +833,36 @@ window.Render = (function () {
   // A red one-way cycle path bikeGap m outside the ring (≈ 5 m: room for one car between ring and crossing), bikeW
   // wide. Where cyclists have priority (bibeko) each road crossing gets 0.50 m blocks along both edges (RBBV 2.2c)
   // and haaientanden for drivers: outside the crossing on the way in, inside it on the way out.
+  // road bike lanes stop this far from the centre (just beyond the zebra) and swing out into the cycle path
+  R.bikeRingCutR = (el) => el.R + (el.bikeGap != null ? el.bikeGap : 5) + (el.bikeW || 2) + 1.3 + (el.cwWidth || 4) + 2.5;
   function drawBikeRing(ctx, el, ppm, P) {
     const C = el.p, gap = el.bikeGap != null ? el.bikeGap : 5, w = el.bikeW || 2;
     const r0 = (el.R + gap) * ppm, r1 = (el.R + gap + w) * ppm, flip = R.LHT ? -1 : 1;
     ctx.save();
-    ctx.fillStyle = P.colors.bike;
+    ctx.fillStyle = ctx.strokeStyle = P.colors.bike;
     ctx.beginPath(); ctx.arc(C.x, C.y, r1, 0, 2 * Math.PI); ctx.arc(C.x, C.y, r0, 0, 2 * Math.PI, true); ctx.fill();
+    // links from each road bike lane: leave the road beyond the zebra, curve round outside it, and run into the path
+    const rCut = R.bikeRingCutR(el), rm = el.R + gap + w / 2;
+    for (const lg of el.legs || []) {
+      if (!lg.v || !lg.X) continue;
+      const nv = G.rightN(lg.v), d0 = G.dist(lg.X, C) / ppm;
+      for (const bk of lg.bikes || []) {
+        const lat = bk.lat, side = Math.sign(lat) || 1, out = G.mul(nv, flip * side);
+        const sA = Math.sqrt(Math.max(0, rCut * rCut - lat * lat)) - d0;
+        const P0 = G.add(G.add(lg.X, G.mul(lg.v, sA * ppm)), G.mul(nv, flip * lat * ppm));
+        const aim = G.add(G.add(lg.X, G.mul(lg.v, (rm - el.R) * ppm)), G.mul(nv, flip * (lat + side * (bk.w / 2 + 3)) * ppm));
+        const rad = G.norm(G.sub(aim, C)), P3 = G.add(C, G.mul(rad, rm * ppm));
+        let t3 = G.rightN(rad); if (G.dot(t3, out) < 0) t3 = G.mul(t3, -1);
+        const k = G.dist(P0, P3) * 0.45, t0 = G.norm(G.add(G.mul(lg.v, -1), G.mul(out, 0.6)));
+        const P1 = G.add(P0, G.mul(t0, k)), P2 = G.sub(P3, G.mul(t3, k)), pts = [];
+        for (let i = 0; i <= 24; i++) { const u = i / 24, a = (1 - u) ** 3, b = 3 * (1 - u) ** 2 * u, c = 3 * (1 - u) * u * u, d = u ** 3;
+          pts.push({ x: a * P0.x + b * P1.x + c * P2.x + d * P3.x, y: a * P0.y + b * P1.y + c * P2.y + d * P3.y }); }
+        // run the link a little into the road lane so the two join without a seam
+        pts.unshift(G.add(P0, G.mul(lg.v, 0.5 * ppm)));
+        ctx.lineWidth = bk.w * ppm; ctx.lineCap = 'butt'; ctx.lineJoin = 'round'; ctx.setLineDash([]);
+        path(ctx, pts); ctx.stroke();
+      }
+    }
     if (el.bikePrio !== false) {
       ctx.fillStyle = ctx.strokeStyle = P.colors.white;
       const Y = { base: 0.5, height: 0.5 };
@@ -1429,10 +1453,11 @@ window.Render = (function () {
 
     // ---- one element's own drawing (its pavement is done by pave()) ----
     const lineCuts = () => { cutJunctions(); for (const c of crossCuts) clipOutside(c); for (const b of bikeMasks) clipOutside(b); };
+    const bikeRingCuts = els.filter((e) => e.type === 'roundabout' && e.bikeRing).map((e) => R.circlePts(e.p, R.bikeRingCutR(e) * ppm, 72));
     const drawSectionParts = (el) => {
       const g = R.sectionGeom(el, ppm); if (!g) return;
       for (const { b, pts: bp } of g.bands) if (b.kind === 'bike') { // a road's bike lane stops at junctions, crosswalks, bus stops
-        ctx.save(); clipRoad(); cutJunctions(); for (const c of crossCuts) clipOutside(c);
+        ctx.save(); clipRoad(); cutJunctions(); for (const c of crossCuts) clipOutside(c); for (const c of bikeRingCuts) clipOutside(c);
         for (const st of busStops) if (st.g.host === el) clipOutside(st.g.mask);
         ctx.strokeStyle = P.colors.bike; ctx.lineWidth = b.width * ppm; ctx.lineCap = 'butt'; ctx.setLineDash([]);
         path(ctx, bp); ctx.stroke(); ctx.restore();
@@ -1449,6 +1474,7 @@ window.Render = (function () {
       for (const st of busStops) if (st.g.host === el) clipOutside(st.g.mask);
       for (const { l, pts: line } of g.lines) {
         const sty = P.lineStyles[l.style];
+        if (l.style === 'bikeSep' && bikeRingCuts.length) { ctx.save(); for (const c of bikeRingCuts) clipOutside(c); R.drawStyled(ctx, line, sty, ppm); ctx.restore(); continue; }
         if ((l.style !== 'edge' && l.style !== 'bikeSep') || !minor.length) { R.drawStyled(ctx, line, sty, ppm); continue; }
         ctx.save(); for (const q of minor) clipOutside(q); R.drawStyled(ctx, line, sty, ppm); ctx.restore();
         for (const q of minor) { ctx.save(); path(ctx, q, true); ctx.clip(); R.drawStyled(ctx, line, P.lineStyles.lane, ppm); ctx.restore(); }
