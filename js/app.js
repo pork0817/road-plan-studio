@@ -160,6 +160,9 @@
     return el;
   }
   const findEl = (id) => S.els.find((e) => e.id === id);
+  // hidden / locked apply to a whole group: a piece inherits them from the intersection / roundabout that made it
+  const isHidden = (e) => !!(e && (e.hidden || (e.owner && (findEl(e.owner) || {}).hidden)));
+  const isLocked = (e) => !!(e && (e.locked || (e.owner && (findEl(e.owner) || {}).locked)));
 
   function hitRank(el) {
     return { busstop: 3.2, junction: 0.5, roundabout: 0.6, yield: 3.6, sidewalk: 5, arrow: 4, text: 4, stopline: 4, crosswalk: 3.5, scooterbox: 3.4, line: 3, chevron: 2.5, yellowbox: 2.5, surface: 2, section: 1, road: 0 }[el.type] || 0;
@@ -168,7 +171,7 @@
     const tol = 6 / S.view.s;
     const order = S.els.map((e, i) => [e, i]).sort((a, b) => hitRank(b[0]) - hitRank(a[0]) || b[1] - a[1]);
     for (const [el] of order) {
-      if (el.locked) continue; // locked: can't be picked on the canvas (select it from the layer list)
+      if (isLocked(el) || isHidden(el)) continue; // locked / hidden: can't be picked on the canvas (select it from the layer list)
       const sh = R.shape(el, ppm(), P());
       if (!sh) continue;
       if (sh.poly && sh.poly.length >= 3 && G.pointInPoly(w, sh.poly)) return el;
@@ -178,7 +181,7 @@
   }
 
   function handlesOf(el) {
-    if (!el || el.locked) return [];
+    if (!el || isLocked(el)) return [];
     if (el.pts) {
       // vertices, plus a "+" handle in the middle of every segment: drag it to add a point there
       const hs = el.pts.map((p, i) => ({ key: 'pts', i, p }));
@@ -701,7 +704,7 @@
       renderProps(); redraw(); return;
     }
     if (e.key === 'Enter') { if (S.draft && S.draft.pts) finishDraft(); return; }
-    if (sel && sel.locked && (e.key === 'Backspace' || e.key === 'Delete' || e.key.startsWith('Arrow') || e.key === '[' || e.key === ']' || e.key === 'f' || e.key === 'a')) { e.preventDefault(); return; } // locked
+    if (sel && isLocked(sel) && (e.key === 'Backspace' || e.key === 'Delete' || e.key.startsWith('Arrow') || e.key === '[' || e.key === ']' || e.key === 'f' || e.key === 'a')) { e.preventDefault(); return; } // locked
     if (e.key === 'Backspace' || e.key === 'Delete') {
       e.preventDefault();
       if (S.draft && S.draft.pts && S.draft.pts.length) { S.draft.pts.pop(); if (!S.draft.pts.length) S.draft = null; redraw(); }
@@ -730,7 +733,7 @@
 
   function deleteEl(id) {
     const el = findEl(id);
-    if (el && el.locked) return; // unlock it in the layer list first
+    if (el && isLocked(el)) return; // unlock it in the layer list first
     if (el && el.owner) {
       const o = findEl(el.owner);
       if (o && o.type === 'roundabout' && el.legKey) (o.removed = o.removed || []).push(el.type + ':' + el.legKey);
@@ -2225,8 +2228,8 @@
       }
       if (el) {
         const d = document.createElement('button'); d.textContent = '複製 Duplicate'; d.onclick = () => duplicate(el); btns.appendChild(d);
-        const x = document.createElement('button'); x.className = 'danger'; x.textContent = '刪除 Delete'; x.disabled = !!el.locked; x.onclick = () => deleteEl(el.id); btns.appendChild(x);
-        if (el.locked) { const li = document.createElement('div'); li.className = 'info'; li.textContent = '已鎖定：不能在圖上選取、移動或刪除；可在圖層清單解鎖。Locked: unlock it in the layer list.'; box.insertBefore(li, box.children[1] || null); }
+        const x = document.createElement('button'); x.className = 'danger'; x.textContent = '刪除 Delete'; x.disabled = isLocked(el); x.onclick = () => deleteEl(el.id); btns.appendChild(x);
+        if (isLocked(el)) { const li = document.createElement('div'); li.className = 'info'; li.textContent = '已鎖定：不能在圖上選取、移動或刪除；可在圖層清單解鎖。Locked: unlock it in the layer list.'; box.insertBefore(li, box.children[1] || null); }
       }
       box.appendChild(btns);
     } else {
@@ -2263,6 +2266,9 @@
     box.appendChild(layersPanel(prevScroll));
   }
 
+  const EYE_SVG = (on) => on
+    ? '<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M1 8s2.6-4.5 7-4.5S15 8 15 8s-2.6 4.5-7 4.5S1 8 1 8z" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="8" r="2.2" fill="currentColor"/></svg>'
+    : '<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M1 8s2.6-4.5 7-4.5S15 8 15 8s-2.6 4.5-7 4.5S1 8 1 8z" fill="none" stroke="currentColor" stroke-width="1.4" opacity=".5"/><path d="M2.5 13.5l11-11" stroke="currentColor" stroke-width="1.5"/></svg>';
   const LOCK_SVG = (on) => `<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5" fill="currentColor"/><path d="M5 7V5a3 3 0 0 1 ${on ? '6 0v2' : '6 0'}" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>`;
   const layerOpen = new Set();
   const isHiddenLayer = (e) => e.type === 'lanemask' || e.type === 'mediancut'; // internal cut-outs aren't layers
@@ -2312,7 +2318,7 @@
       const li = document.createElement('li');
       if (e.id === S.sel) { li.classList.add('sel'); selRow = li; }
       if (opts.child) li.classList.add('child');
-      const locked = opts.members.every((m) => m.locked);
+      const locked = opts.members.every((m) => isLocked(m));
       if (locked) li.classList.add('locked');
       const tg = document.createElement('button'); tg.className = 'tg';
       if (opts.group) { const open = layerOpen.has(opts.group); tg.textContent = open ? '▾' : '▸'; tg.title = open ? '收合 Collapse' : '展開 Expand'; tg.onclick = (ev) => { ev.stopPropagation(); open ? layerOpen.delete(opts.group) : layerOpen.add(opts.group); renderProps(); }; }
@@ -2320,6 +2326,11 @@
       const sp = document.createElement('span');
       const ex = extraName(e);
       sp.textContent = shortName(e) + ' ' + (opts.child ? opts.idx : e.num || '') + (ex ? ' · ' + ex : '') + (opts.group ? `  (${opts.members.length - 1})` : '');
+      const hiddenAll = opts.members.every((m) => isHidden(m));
+      if (hiddenAll) li.classList.add('hiddenrow');
+      const ey = document.createElement('button'); ey.className = 'ey' + (hiddenAll ? ' off' : ''); ey.innerHTML = EYE_SVG(!hiddenAll);
+      ey.title = hiddenAll ? '顯示 Show' : '隱藏 Hide (不繪製、不匯出、不能在圖上選取 not drawn, exported or picked)';
+      ey.onclick = (ev) => { ev.stopPropagation(); for (const m of opts.members) { if (hiddenAll) delete m.hidden; else m.hidden = true; } commit(); };
       const lk = document.createElement('button'); lk.className = 'lk' + (locked ? ' on' : ''); lk.innerHTML = LOCK_SVG(locked);
       lk.title = locked ? '解鎖 Unlock' : '鎖定 Lock (不能在圖上選取、移動或刪除 can\'t be picked, moved or deleted)';
       lk.onclick = (ev) => { ev.stopPropagation(); for (const m of opts.members) { if (locked) delete m.locked; else m.locked = true; } commit(); };
@@ -2329,7 +2340,7 @@
       dn.onclick = (ev) => { ev.stopPropagation(); opts.move(false); };
       const x = document.createElement('button'); x.textContent = '✕'; x.title = '刪除 Delete'; x.disabled = locked;
       x.onclick = (ev) => { ev.stopPropagation(); deleteEl(e.id); };
-      li.append(tg, sp, lk, up, dn, x);
+      li.append(tg, ey, sp, lk, up, dn, x);
       li.onclick = () => { if (S.tool !== 'select') setTool('select'); S.sel = e.id; renderProps(); redraw(); };
       ul.appendChild(li);
     };

@@ -1119,7 +1119,8 @@ window.Render = (function () {
   // whatever the order.
   R.drawScene = function (ctx, o) {
     const { ppm, P } = o;
-    const els = o.preview ? o.els.concat([o.preview]) : o.els;
+    const all = o.preview ? o.els.concat([o.preview]) : o.els, hiddenIds = new Set(all.filter((e) => e.hidden).map((e) => e.id));
+    const els = all.filter((e) => !e.hidden && !(e.owner && hiddenIds.has(e.owner))); // hidden in the layer list (or its group): not drawn
     R._els = els;
     const clipOutside = (pts) => {
       if (!pts || pts.length < 3) return;

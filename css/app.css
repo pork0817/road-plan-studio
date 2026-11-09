@@ -108,3 +108,7 @@ body.lib-hidden #libShow { display: block; }
 .layers li .lk.on { color: var(--warn); border-color: #6b5520; }
 .layers li.locked span { color: var(--muted); }
 .layers li button:disabled { opacity: .35; cursor: default; }
+.layers li .ey { color: var(--muted); display: flex; align-items: center; padding: 2px 3px; border: none; background: none; }
+.layers li .ey:hover { color: var(--text); }
+.layers li .ey.off { color: #6b7280; }
+.layers li.hiddenrow span { color: #6b7280; text-decoration: line-through; }
