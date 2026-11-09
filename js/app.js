@@ -73,7 +73,7 @@
   }
   // a junction-made piece the user has changed (moved, reshaped, re-set) is marked edited, so rebuilds keep it
   let ownedSnap = new Map();
-  const isJunctionPiece = (e) => e.owner && e.jkey && S.els.some((j) => j.id === e.owner && j.type === 'junction');
+  const isJunctionPiece = (e) => e.owner && S.els.some((j) => j.id === e.owner && j.type === 'junction');
   const pieceSig = (e) => { const c = Object.assign({}, e); delete c.edited; return JSON.stringify(c); };
   const snapOwned = () => { ownedSnap = new Map(S.els.filter(isJunctionPiece).map((e) => [e.id, pieceSig(e)])); };
   function commit() {
@@ -734,7 +734,10 @@
     if (el && el.owner) {
       const o = findEl(el.owner);
       if (o && o.type === 'roundabout' && el.legKey) (o.removed = o.removed || []).push(el.type + ':' + el.legKey);
-      if (o && o.type === 'junction' && el.jkey) (o.removed = o.removed || []).push(el.jkey); // stays deleted when the junction rebuilds
+      if (o && o.type === 'junction') { // stays deleted when the junction rebuilds
+        if (el.jkey) (o.removed = o.removed || []).push(el.jkey);
+        else { const q = piecePos(el); if (q) (o.removedAt = o.removedAt || []).push({ type: el.type, p: G.copy(q) }); }
+      }
     }
     // deleting an intersection or roundabout also deletes the markings it generated
     S.els = S.els.filter((e) => e.id !== id && e.owner !== id);
@@ -1401,13 +1404,19 @@
     };
     const fresh = made.slice(1).filter((f) => f.jkey);
     const unmatched = [];
-    for (const f of fresh) { const o = pick(f, 0.5); if (o) { o.jkey = f.jkey; free.delete(o); } else unmatched.push(f); }
+    const body = (e) => { const c = Object.assign({}, e); for (const k of ['id', 'owner', 'jkey', 'edited', 'locked', 'num']) delete c[k]; return JSON.stringify(c); };
+    for (const f of fresh) {
+      const o = pick(f, 0.5);
+      if (o) { o.jkey = f.jkey; if (body(o) !== body(f)) o.edited = true; free.delete(o); } // same spot, but re-set (e.g. arrow kind changed): edited
+      else unmatched.push(f);
+    }
     for (const f of unmatched) { // moved a little: edited; nothing of its kind nearby: deleted
       const o = pick(f, 6);
-      if (o) { o.jkey = f.jkey; if (!['arrow', 'line', 'scooterbox'].includes(o.type)) o.edited = true; free.delete(o); } else (j.removed = j.removed || []).push(f.jkey);
+      if (o) { o.jkey = f.jkey; o.edited = true; free.delete(o); } else (j.removed = j.removed || []).push(f.jkey);
     }
-    for (const o of free) { o.jkey = 'legacy|' + o.id; if (!['arrow', 'line', 'scooterbox'].includes(o.type)) o.edited = true; } // other leftovers are kept; lane-design leftovers are rebuilt
+    for (const o of free) { o.jkey = 'legacy|' + o.id; o.edited = true; } // anything else of the user's is kept as it is
   }
+  const piecePos = (e) => (e.a && e.b ? G.mid(e.a, e.b) : e.p ? e.p : e.pts && e.pts.length ? e.pts[Math.floor(e.pts.length / 2)] : null);
   const LANE_KEYS = ['leftTurn', 'laneUse', 'lanesF', 'lanesB', 'lanesF2', 'lanesB2', 'changeAt', 'taper', 'pocketLen', 'pocketTaper', 'autoArrows', 'autoBox', 'boxDepth', 'solidLen', 'leftGuide', 'laneWidth', 'medianWidth', 'centerType'];
   function laneSigNow() { const o = {}; for (const e of S.els) if (e.type === 'section') o[e.id] = JSON.stringify(LANE_KEYS.map((k) => e[k])); return o; }
   function syncJunction(j) {
@@ -1421,18 +1430,29 @@
     if (!made) return;
     const fresh = made[0], oldId = j.id;
     for (const e of made) if (e.owner === fresh.id) e.owner = oldId;
-    // Arrows, lane lines and scooter boxes follow each road's lane design: when that changes (left-turn design,
-    // lane use, lane counts, pocket), the road's ones are rebuilt fresh, whatever was deleted or edited before.
-    const laneSig = laneSigNow();
-    const prevSig = j.laneSig || {}, changedSecs = new Set(Object.keys(laneSig).filter((id) => prevSig[id] !== undefined && prevSig[id] !== laneSig[id]));
-    j.laneSig = laneSig;
-    const designPiece = (k) => { const p = String(k || '').split('|'); return changedSecs.has(p[0].split(':')[0]) && ['arrow', 'line', 'scooterbox'].includes(p[1]); };
-    if (j.removed) j.removed = j.removed.filter((k) => !designPiece(k));
-    // keep what the user did to this intersection's pieces: deleted ones stay deleted, edited ones stay as edited
-    const old = S.els.filter((e) => e.owner === oldId && !(e.edited && designPiece(e.jkey))), oldByKey = new Map(old.filter((e) => e.jkey).map((e) => [e.jkey, e]));
-    const removed = new Set(j.removed || []);
-    const pieces = made.slice(1).filter((e) => !removed.has(e.jkey)).map((e) => { const o = oldByKey.get(e.jkey); return o && o.edited ? o : e; });
-    for (const o of old) if (o.edited && !pieces.includes(o)) pieces.push(o);
+    // Keep everything the user did to this intersection's pieces, on every road, whatever changed:
+    //  - deleted pieces stay deleted (by key, or by position for pieces made before keys existed)
+    //  - edited pieces (moved, re-set, arrow kind changed …) stay exactly as the user left them
+    //  - untouched pieces that come out the same keep their identity; only genuinely new / changed ones are new
+    j.laneSig = laneSigNow();
+    const old = S.els.filter((e) => e.owner === oldId), oldByKey = new Map(old.filter((e) => e.jkey).map((e) => [e.jkey, e]));
+    const removed = new Set(j.removed || []), tombs = j.removedAt || [];
+    const near = (a, b, tolM) => { const p = piecePos(a), q = piecePos(b); return p && q && G.dist(p, q) < tolM * ppm(); };
+    const taken = new Set(), pieces = [];
+    for (const f of made.slice(1)) {
+      if (removed.has(f.jkey)) continue;
+      if (tombs.some((t) => t.type === f.type && G.dist(t.p, piecePos(f) || { x: 1e9, y: 1e9 }) < 2 * ppm())) { (j.removed = j.removed || []).push(f.jkey); continue; }
+      let o = oldByKey.get(f.jkey);
+      if (o && taken.has(o)) o = null;
+      if (!(o && (o.edited || o.locked))) { // an edited piece without a matching key (older pieces): the one of its kind nearest this spot
+        const e2 = old.find((x) => (x.edited || x.locked) && !taken.has(x) && x.type === f.type && (!x.jkey || !made.some((y) => y.jkey === x.jkey)) && near(x, f, 3));
+        if (e2) o = e2;
+      }
+      if (o && (o.edited || o.locked)) { o.jkey = o.jkey || f.jkey; taken.add(o); pieces.push(o); continue; } // the user's version wins
+      if (o && JSON.stringify(Object.assign({}, o, { id: 0, num: 0 })) === JSON.stringify(Object.assign({}, f, { id: 0, num: 0 }))) { taken.add(o); pieces.push(o); continue; } // unchanged
+      pieces.push(f);
+    }
+    for (const o of old) if ((o.edited || o.locked) && !taken.has(o)) pieces.push(o); // edited / locked pieces the rebuild no longer makes: kept
     made.length = 1; made.push(...pieces);
     j.pts = fresh.pts; j.corners = fresh.corners; j.cornerCuts = fresh.cornerCuts; j.pocketCuts = fresh.pocketCuts; j.legSecIds = fresh.legSecIds;
     replaceOwned((e) => e.owner === oldId, made.slice(1));
