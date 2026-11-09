@@ -834,7 +834,9 @@ window.Render = (function () {
   // wide. Where cyclists have priority (bibeko) each road crossing gets 0.50 m blocks along both edges (RBBV 2.2c)
   // and haaientanden for drivers: outside the crossing on the way in, inside it on the way out.
   // road bike lanes stop this far from the centre (just beyond the zebra) and swing out into the cycle path
-  R.bikeRingCutR = (el) => el.R + (el.bikeGap != null ? el.bikeGap : 5) + (el.bikeW || 2) + 1.3 + (el.cwWidth || 4) + 2.5;
+  // (zebra's outer edge + 1 m: where the link has moved off the road, + 7 m for that sideways move)
+  const RING_SHIFT = 7;
+  R.bikeRingCutR = (el) => el.R + (el.bikeGap != null ? el.bikeGap : 5) + (el.bikeW || 2) + 1.3 + (el.cwWidth || 4) + 1.0 + RING_SHIFT;
   function drawBikeRing(ctx, el, ppm, P) {
     const C = el.p, gap = el.bikeGap != null ? el.bikeGap : 5, w = el.bikeW || 2;
     const r0 = (el.R + gap) * ppm, r1 = (el.R + gap + w) * ppm, flip = R.LHT ? -1 : 1;
@@ -845,14 +847,19 @@ window.Render = (function () {
     const rCut = R.bikeRingCutR(el), rm = el.R + gap + w / 2;
     // a red link from a bike lane at P0 (running along v, away from the ring) curving out (side unit vector out)
     // round the zebra and into the cycle path, joining it tangentially
-    const link = (P0, v, out, bw) => {
-      const aim = G.add(G.add(P0, G.mul(v, -(rCut - rm) * ppm)), G.mul(out, (bw / 2 + 3) * ppm));
+    // First an S-bend off the carriageway (offM: from the lane's centre to beyond the kerb), so the link passes the
+    // zebra's end outside the road; then a curve that meets the cycle path along its own direction at the corner.
+    const bez = (A, B, C2, D, n, out) => { for (let i = 1; i <= n; i++) { const u = i / n, a = (1 - u) ** 3, b = 3 * (1 - u) ** 2 * u, c = 3 * (1 - u) * u * u, d = u ** 3;
+      out.push({ x: a * A.x + b * B.x + c * C2.x + d * D.x, y: a * A.y + b * B.y + c * C2.y + d * D.y }); } };
+    const link = (P0, v, out, bw, offM) => {
+      const back = G.mul(v, -1), pts = [G.add(P0, G.mul(v, 0.5 * ppm)), P0]; // starts a little inside the lane: no seam
+      const Q1 = G.add(G.add(P0, G.mul(back, RING_SHIFT * ppm)), G.mul(out, offM * ppm));
+      bez(P0, G.add(P0, G.mul(back, RING_SHIFT * 0.5 * ppm)), G.sub(Q1, G.mul(back, RING_SHIFT * 0.5 * ppm)), Q1, 16, pts);
+      const aim = G.add(G.add(Q1, G.mul(back, (rCut - RING_SHIFT - rm) * ppm)), G.mul(out, (bw / 2 + 4) * ppm));
       const rad = G.norm(G.sub(aim, C)), P3 = G.add(C, G.mul(rad, rm * ppm));
       let t3 = G.rightN(rad); if (G.dot(t3, out) < 0) t3 = G.mul(t3, -1);
-      const k = G.dist(P0, P3) * 0.45, t0 = G.norm(G.add(G.mul(v, -1), G.mul(out, 0.6)));
-      const P1 = G.add(P0, G.mul(t0, k)), P2 = G.sub(P3, G.mul(t3, k)), pts = [G.add(P0, G.mul(v, 0.5 * ppm))]; // starts a little inside the lane: no seam
-      for (let i = 0; i <= 24; i++) { const u = i / 24, a = (1 - u) ** 3, b = 3 * (1 - u) ** 2 * u, c = 3 * (1 - u) * u * u, d = u ** 3;
-        pts.push({ x: a * P0.x + b * P1.x + c * P2.x + d * P3.x, y: a * P0.y + b * P1.y + c * P2.y + d * P3.y }); }
+      const k = G.dist(Q1, P3) * 0.5;
+      bez(Q1, G.add(Q1, G.mul(back, k)), G.sub(P3, G.mul(t3, k)), P3, 24, pts);
       ctx.lineWidth = bw * ppm; ctx.lineCap = 'butt'; ctx.lineJoin = 'round'; ctx.setLineDash([]);
       path(ctx, pts); ctx.stroke();
     };
@@ -862,7 +869,8 @@ window.Render = (function () {
       for (const bk of lg.bikes || []) {
         const lat = bk.lat, side = Math.sign(lat) || 1;
         const sA = Math.sqrt(Math.max(0, rCut * rCut - lat * lat)) - d0;
-        link(G.add(G.add(lg.X, G.mul(lg.v, sA * ppm)), G.mul(nv, flip * lat * ppm)), lg.v, G.mul(nv, flip * side), bk.w);
+        const ext = side > 0 ? lg.re : lg.le;
+        link(G.add(G.add(lg.X, G.mul(lg.v, sA * ppm)), G.mul(nv, flip * lat * ppm)), lg.v, G.mul(nv, flip * side), bk.w, ext - Math.abs(lat) + bk.w / 2 + 1.0);
       }
     }
     // separately drawn bike lanes (Fietsstrook tool) crossing that radius: the same link, from where they cross it
@@ -880,7 +888,8 @@ window.Render = (function () {
           let best = null; for (const lg of el.legs || []) { if (!lg.v || !lg.X) continue; const al = G.dot(G.sub(P0, lg.X), lg.v); if (al < 0) continue; const lt = G.dot(G.sub(P0, lg.X), G.rightN(lg.v)); if (!best || Math.abs(lt) / ppm - (Math.max(lg.le, lg.re) + 4) < best.score) best = { lg, lt, score: Math.abs(lt) / ppm - (Math.max(lg.le, lg.re) + 4) }; }
           if (!best || best.score > 0) continue;
           let away = G.norm(G.sub(P0, C)); if (G.dot(away, best.lg.v) < 0.5) away = best.lg.v;
-          link(P0, away, G.mul(G.rightN(best.lg.v), Math.sign(best.lt) || 1), bl.width || 1.5);
+          const sd = Math.sign(best.lt) || 1, extD = (sd * flip > 0 ? best.lg.re : best.lg.le), bw = bl.width || 1.5;
+          link(P0, away, G.mul(G.rightN(best.lg.v), sd), bw, Math.max(bw / 2 + 1.0, extD - Math.abs(best.lt) / ppm + bw / 2 + 1.0));
         }
       }
     }
