@@ -1448,12 +1448,21 @@
     for (const id of Object.keys(nowSig)) if (prevSig[id] !== undefined && prevSig[id] !== nowSig[id]) {
       let before = []; try { before = JSON.parse(prevSig[id]); } catch (e) { before = []; }
       const now = JSON.parse(nowSig[id]), lt = LANE_KEYS.indexOf('leftTurn');
-      redesigned.set(id, { pocket: (before[lt] === 'pocket') !== (now[lt] === 'pocket') });
+      const changed = LANE_KEYS.filter((k, i) => JSON.stringify(before[i]) !== JSON.stringify(now[i]));
+      // only the left-turn settings changed: just the left lane (and the pocket) follow
+      const leftOnly = changed.every((k) => ['leftTurn', 'pocketLen', 'pocketTaper', 'leftGuide'].includes(k));
+      redesigned.set(id, { pocket: (before[lt] === 'pocket') !== (now[lt] === 'pocket'), leftOnly });
     }
     j.laneSig = nowSig;
     const secOfKey = (k) => String(k || '').split('|')[0].split(':')[0];
+    const laneOfKey = new Map(made.slice(1).filter((f) => f.type === 'arrow').map((f) => [f.jkey, f.lane])); // lane (0 = driver's left) by key
     const follows = (e) => { // a piece that must follow its road's new lane design
       const r = redesigned.get(secOfKey(e.jkey)); if (!r) return false;
+      if (r.leftOnly) { // a left-turn design change touches the left lane, the pocket and the guide lines only
+        if (e.type === 'arrow') { const ln = e.lane != null ? e.lane : laneOfKey.get(e.jkey); return ln == null || ln <= 0; }
+        if (e.type === 'line') return e.style === 'guide' || r.pocket;
+        return e.type === 'stopline' ? r.pocket : e.type === 'scooterbox';
+      }
       return ['arrow', 'line', 'scooterbox'].includes(e.type) || (e.type === 'stopline' && r.pocket);
     };
     if (j.removed) j.removed = j.removed.filter((k) => { const p = String(k).split('|'); return !follows({ jkey: k, type: p[1] }); });
@@ -1860,10 +1869,17 @@
       const KINDS = new Set(['L', 'S', 'R', 'SL', 'SR', 'LR', 'SLR', 'U']);
       const given = String(el.laneUse || '').toUpperCase().split(/[\s,，、]+/).filter((x) => KINDS.has(x));
       const design = el.leftTurn || 'shared';
+      // Side-by-side carriageways going the same way (快慢分隔): right turns are made from the outer (slow) road and
+      // left turns from the inner (main) road, so an inner carriageway gets no right turn and an outer one no left
+      // turn (unless its left-turn design asks for one)
+      const posOf = (L) => legPt(L, L.entry ? L.entry.ds : L.E, 0), drvRight = G.rightN(tr);
+      const sameWay = legs.filter((o) => o !== lg && o.entry && G.dot(o.v, lg.v) > 0.95);
+      const hasRightCw = sameWay.some((o) => G.dot(G.sub(posOf(o), posOf(lg)), drvRight) > 0);
+      const hasLeftCw = sameWay.some((o) => G.dot(G.sub(posOf(o), posOf(lg)), drvRight) < 0);
       const autoPick = (k) => {
-          const Rx = !!t.R, Sx = !!t.S;
+          const Rx = !!t.R && !hasRightCw, Sx = !!t.S;
           // the left turn is made from the pocket, the two-stage box, or not at all → not from these lanes
-          const L = !!t.L && !lg.pocketW && !lg.pocketOne && design !== 'twoStage' && design !== 'banned';
+          const L = !!t.L && !lg.pocketW && !lg.pocketOne && design !== 'twoStage' && design !== 'banned' && !(hasLeftCw && design === 'shared');
           if (design === 'dedicated' && L && n >= 2 && k === 0) return 'L';
           const combo = (l, s, r) => (l && s && r ? 'SLR' : l && s ? 'SL' : s && r ? 'SR' : l && r ? 'LR' : l ? 'L' : r ? 'R' : 'S');
           if (n === 1) return combo(L, Sx, Rx);
@@ -1906,7 +1922,7 @@
         const inBox = (k) => kS >= 0 && k >= kS && k <= kE;
         const tip1 = (k) => (inBox(k) ? boxRear + 3 * m : stopRear + 1 * m);
         const tip2 = Math.max(boxRear + 33 * m, stopRear + (L0 + 3) * m);
-        const put = (k, tip) => { if (tip + 5 * m < lg.len && sameLanes(tip, tip + 5 * m)) out.push({ id: newId(), owner: jid, type: 'arrow', kind: uses[k], length: 5, p: atL(lg, tip + 2.5 * m, laneOff(k)), dir: dirAt(tip + 2.5 * m) }); };
+        const put = (k, tip) => { if (tip + 5 * m < lg.len && sameLanes(tip, tip + 5 * m)) out.push({ id: newId(), owner: jid, type: 'arrow', lane: k, kind: uses[k], length: 5, p: atL(lg, tip + 2.5 * m, laneOff(k)), dir: dirAt(tip + 2.5 * m) }); };
         for (let k = 0; k < n; k++) put(k, tip1(k));
         for (let k = 0; k < n; k++) put(k, tip2);
       }
@@ -1927,7 +1943,7 @@
         if (el.autoArrows !== false) {
           const cOff = (pIn - 0.2 + -(mh + 0.15)) / 2;
           for (const tip of [stopRear + 1 * m, Math.min(sP - 5 * m, stopRear + 20 * m)]) {
-            if (tip > stopRear) out.push({ id: newId(), owner: jid, type: 'arrow', kind: 'L', length: 5, p: atL(lg, tip + 2.5 * m, cOff), dir: dirAt(tip + 2.5 * m) });
+            if (tip > stopRear) out.push({ id: newId(), owner: jid, type: 'arrow', lane: -1, kind: 'L', length: 5, p: atL(lg, tip + 2.5 * m, cOff), dir: dirAt(tip + 2.5 * m) });
           }
         }
       }
@@ -1947,7 +1963,7 @@
         out.push({ id: newId(), owner: jid, type: 'line', style: 'laneSolid', smooth: false, jline: true, pts: legLine(lg, stopRear, sP, L0) });
         if (el.autoArrows !== false) {
           for (const tip of [stopRear + 1 * m, Math.min(sP - 5 * m, stopRear + 20 * m)]) {
-            if (tip > stopRear) out.push({ id: newId(), owner: jid, type: 'arrow', kind: 'L', length: 5, p: atL(lg, tip + 2.5 * m, L0 + pw / 2), dir: dirAt(tip + 2.5 * m) });
+            if (tip > stopRear) out.push({ id: newId(), owner: jid, type: 'arrow', lane: -1, kind: 'L', length: 5, p: atL(lg, tip + 2.5 * m, L0 + pw / 2), dir: dirAt(tip + 2.5 * m) });
           }
         }
       }
