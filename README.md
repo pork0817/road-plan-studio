@@ -72,6 +72,13 @@ Pick 自行車道, 雙向自行車道 or 自行車優先 and draw along the lane
 ## Regulation shapes
 Arrows follow the §188 figures (直線, 弧形 R=2.0/1.2, 分岔 圖三–圖五, 5.0 m long). The characters 慢 停 禁行機車 公車/機車/大客車/大貨車/自行車/高乘載專用 直行/左彎/右彎專用 and the 機車/自行車 icons are traced from the official figure files, at 1.0 × 2.5 m cells, 1.0 m apart, read far to near (§150). Characters not in that set fall back to a bold font in the same cell. The U-turn arrow has no figure in the regulation and is an approximation.
 
+## Layers (drawing order)
+The 圖層 Layers list is the drawing order: items higher in the list are drawn on top. Use ↑ / ↓ to move anything above or below anything else. For example, put a bus lane or marking above a sidewalk, or a road above the markings it should cover.
+- New items go to the top of their kind's default level. Bottom to top, the levels are: road pieces (areas, sections, roundabouts, intersections); bus lanes and coloured surfaces; markings; sidewalks and islands; bus stops; bike lanes. So by default crosswalks still run under sidewalks.
+- Pieces an intersection rebuilds keep the places you gave them.
+- Projects saved before this change are sorted into those levels once when opened, so they look the same.
+- Road pieces next to each other in the list are paved together, without seams. Markings are always clipped to road surface, and the automatic cut-outs (intersections, crosswalks, medians, bus stops) apply whatever the order.
+
 ## Shortcuts
 V select · H pan (or hold Space) · M measure · ⌘/Ctrl+scroll or pinch to zoom · Enter finish · Esc cancel · ⌫ remove the last point or delete · ⌘Z / ⇧⌘Z · ⌘D duplicate · [ ] rotate · F flip · A align to another object · Shift snaps to 15° angles · Alt turns off point snapping · double-click an edge to add a vertex · Alt+click a vertex to delete it
 

@@ -1078,225 +1078,218 @@ window.Render = (function () {
   const MARK = new Set(['buslane', 'bikelane', 'roundabout', 'yield', 'symbol', 'line', 'section', 'crosswalk', 'stopline', 'scooterbox', 'arrow', 'text', 'chevron', 'yellowbox']);
 
   const ppm_ = (o) => o.ppm;
+  // Default stacking level of each kind of element (bottom → top). New elements are inserted at the top of their
+  // level, and older projects are sorted this way once; after that the list order is the drawing order.
+  R.RANK = { road: 0, section: 0, roundabout: 0, junction: 0, lanemask: 0, mediancut: 0, buslane: 1, surface: 1,
+    line: 2, crosswalk: 2, stopline: 2, scooterbox: 2, arrow: 2, symbol: 2, text: 2, yield: 2, chevron: 2, yellowbox: 2,
+    sidewalk: 3, busstop: 4, bikelane: 5 };
+  R.rankOf = (el) => (R.RANK[el.type] != null ? R.RANK[el.type] : 2);
+  const PAVER = new Set(['road', 'section', 'roundabout', 'junction', 'lanemask', 'mediancut']);
+
+  // Elements are drawn in list order (the 圖層 Layers panel: bottom of the list = top of the drawing).
+  // Consecutive road pieces are paved together as one union, so adjoining pavement has no seams; markings are
+  // always clipped to road surface, and the automatic cut-outs (junctions, crosswalks, medians, bus stops) apply
+  // whatever the order.
   R.drawScene = function (ctx, o) {
-    const crossCutsEarly = (o.preview ? o.els.concat([o.preview]) : o.els).filter((e) => e.type === 'crosswalk' && e.a && e.b && e.dir != null)
-      .map((e) => R.crosswalkPad(e, ppm_(o), 0.3));
-    const bikeMasks = (o.preview ? o.els.concat([o.preview]) : o.els).filter((e) => e.type === 'bikelane' || e.type === 'buslane').map((e) => R.bikeBand(e, ppm_(o), -0.3)).filter(Boolean);
-    R._els = o.preview ? o.els.concat([o.preview]) : o.els;
-    const busStops = R._els.filter((e) => e.type === 'busstop').map((e) => ({ el: e, g: R.busStopGeom(e, R._els, ppm_(o)) })).filter((b) => b.g);
+    const { ppm, P } = o;
+    const els = o.preview ? o.els.concat([o.preview]) : o.els;
+    R._els = els;
     const clipOutside = (pts) => {
       if (!pts || pts.length < 3) return;
       ctx.beginPath(); ctx.rect(-1e6, -1e6, 2e6, 2e6);
       ctx.moveTo(pts[0].x, pts[0].y); for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y); ctx.closePath();
       ctx.clip('evenodd');
     };
-    const { ppm, P } = o;
-    const els = o.preview ? o.els.concat([o.preview]) : o.els;
+    // ---- shared cut-outs ----
+    const crossCuts = els.filter((e) => e.type === 'crosswalk' && e.a && e.b && e.dir != null).map((e) => R.crosswalkPad(e, ppm, 0.3));
+    const bikeMasks = els.filter((e) => e.type === 'bikelane' || e.type === 'buslane').map((e) => R.bikeBand(e, ppm, -0.3)).filter(Boolean);
+    const busStops = els.filter((e) => e.type === 'busstop').map((e) => ({ el: e, g: R.busStopGeom(e, els, ppm) })).filter((b) => b.g);
+    const rbIds = new Set(els.filter((e) => e.type === 'roundabout').map((e) => e.id));
+    const rbAreas = els.filter((e) => e.type === 'roundabout').flatMap((e) => [R.rbOutline(e, ppm)].concat(R.cornerPaving(e, ppm), e.splits || []));
+    const yieldToRoundabouts = (el) => { if (rbAreas.length && !(el.owner && rbIds.has(el.owner)) && el.type !== 'roundabout') for (const a of rbAreas) clipOutside(a); };
+    const junctions = els.filter((e) => (e.type === 'junction' || e.type === 'lanemask') && e.pts.length >= 3)
+      .concat(els.filter((e) => e.type === 'junction').flatMap((e) => (e.cornerCuts || []).map((pts) => ({ pts }))))
+      .concat(els.filter((e) => e.type === 'roundabout').map((e) => ({ pts: R.rbOutline(e, ppm, 1.2) })))
+      .concat(els.filter((e) => e.type === 'roundabout').flatMap((e) => (e.corners || []).map((k) => ({ pts: k.mask })).concat((e.legMasks || []).concat(e.cornerMasks || []).map((pts) => ({ pts })))));
+    const cutJunctions = () => { for (const j of junctions) clipOutside(j.pts); }; // one clip per area: overlaps can't cancel
+    // medians end flush with a roundabout's yield line (0.6 m outside the ring), and the splitter replaces them there
+    const medianCuts = els.filter((e) => (e.type === 'junction' || e.type === 'mediancut') && e.pts.length >= 3).map((e) => e.pts)
+      .concat(els.filter((e) => e.type === 'roundabout').map((e) => R.rbOutline(e, ppm, 0.6)))
+      .concat(els.filter((e) => e.type === 'roundabout').flatMap((e) => e.splits || []));
+    // road surface: markings are clipped to it
+    const roadPolys = [];
+    for (const el of els) {
+      if (el.type === 'road' && el.pts.length >= 3) roadPolys.push(R.areaPts(el));
+      if (el.type === 'section') { const p = R.sectionPoly(el, ppm); if (p) roadPolys.push(p); }
+      if (el.type === 'junction') for (const c of el.corners || []) if (c.length >= 3) roadPolys.push(c);
+      if (el.type === 'buslane') { const b = R.bikeBand(el, ppm); if (b) roadPolys.push(b); }
+      if (el.type === 'roundabout') { roadPolys.push(R.rbOutline(el, ppm)); roadPolys.push(...R.cornerPaving(el, ppm)); }
+    }
+    const clipRoad = () => {
+      if (!o.clip || !roadPolys.length) return;
+      ctx.beginPath();
+      for (let p of roadPolys) { if (G.area(p) < 0) p = p.slice().reverse(); ctx.moveTo(p[0].x, p[0].y); for (let i = 1; i < p.length; i++) ctx.lineTo(p[i].x, p[i].y); ctx.closePath(); }
+      ctx.clip('nonzero');
+    };
+    // bike lanes joined to a bus stop are drawn with the stop's bike lane as ONE lane (lane → stop → lane)
+    const stopById = new Map(busStops.map((b) => [b.el.id, b]));
+    const stopPath = (b, from) => (from === 0 ? b.g.bike : b.g.bike.slice().reverse());
+    const merged = new Map(), consumed = new Set(), stopTaken = new Map(); // stop id → the lane drawing it
+    const lanes = els.filter((e) => e.type === 'bikelane');
+    for (const bl of lanes) {
+      const L = bl.linkE, b = L && stopById.get(L.id);
+      if (!b || !b.g.bike || stopTaken.has(b.el.id)) continue;
+      let pts = R.basePts(bl, ppm).concat(stopPath(b, L.i).slice(1));
+      const out = lanes.find((x) => x !== bl && x.linkS && x.linkS.id === L.id && x.linkS.i === 1 - L.i);
+      if (out) { pts = pts.concat(R.basePts(out, ppm).slice(1)); consumed.add(out); }
+      merged.set(bl, pts); stopTaken.set(b.el.id, bl);
+    }
+    for (const bl of lanes) {
+      const L = bl.linkS, b = L && stopById.get(L.id);
+      if (!b || !b.g.bike || stopTaken.has(b.el.id) || consumed.has(bl)) continue;
+      merged.set(bl, stopPath(b, 1 - L.i).concat(R.basePts(bl, ppm).slice(1))); stopTaken.set(b.el.id, bl);
+    }
+
     if (o.background) { ctx.fillStyle = o.background; ctx.fillRect(0, 0, o.w, o.h); }
     if (o.img && o.imgOpacity > 0) { ctx.globalAlpha = o.imgOpacity; ctx.drawImage(o.img, 0, 0); ctx.globalAlpha = 1; }
 
-    // Layer 0: pavement
-    // Each tone is filled as ONE union path (shapes normalised to the same winding), so overlapping
-    // pavement leaves no hairline seams and no darker overlaps when road opacity is below 100 %.
-    // Roundabout paving is filled last so it always shows on top of existing road areas.
-    ctx.save(); ctx.globalAlpha = o.roadOpacity;
+    // ---- pavement of a run of road pieces: one union per tone; roundabout paving on top ----
     const tones = { asphalt: P.colors.asphalt, worn: P.colors.asphaltWorn, concrete: P.colors.concrete };
-    const byTone = new Map(), rbPave = [];
     const addTo = (list, poly) => { if (poly && poly.length >= 3) list.push(G.area(poly) < 0 ? poly.slice().reverse() : poly); };
-    const toneList = (c) => { if (!byTone.has(c)) byTone.set(c, []); return byTone.get(c); };
-    for (const el of els) {
-      if (el.type === 'road') addTo(toneList(tones[el.tone] || P.colors.asphalt), R.areaPts(el));
-      if (el.type === 'section' && el.pave) addTo(toneList(P.colors.asphalt), R.sectionPoly(el, ppm));
-      if (el.type === 'junction') for (const c of el.corners || []) addTo(toneList(P.colors.asphalt), c); // rounded kerb returns
-      if (el.type === 'buslane') addTo(toneList(P.colors.asphalt), R.bikeBand(el, ppm)); // a bus lane is road: it paves itself
-      if (el.type === 'roundabout') { addTo(rbPave, R.rbOutline(el, ppm)); for (const pv of R.cornerPaving(el, ppm)) addTo(rbPave, pv); }
-    }
     const fillUnion = (color, list) => {
       if (!list.length) return;
       ctx.fillStyle = color; ctx.beginPath();
       for (const q of list) { ctx.moveTo(q[0].x, q[0].y); for (let i = 1; i < q.length; i++) ctx.lineTo(q[i].x, q[i].y); ctx.closePath(); }
       ctx.fill('nonzero');
     };
-    const asphalt = P.colors.asphalt;
-    for (const [c, list] of byTone) { // other tones give way to roundabout paving
-      if (c === asphalt) continue;
-      ctx.save(); for (const q of rbPave) clipOutside(q); fillUnion(c, list); ctx.restore();
-    }
-    fillUnion(asphalt, (byTone.get(asphalt) || []).concat(rbPave));
-    ctx.restore();
-    // areas covered by roundabouts: older drawings underneath (sidewalks, surfaces, markings) give way to them
-    const rbIds = new Set(els.filter((e) => e.type === 'roundabout').map((e) => e.id));
-    const rbAreas = els.filter((e) => e.type === 'roundabout').flatMap((e) => [R.rbOutline(e, ppm)].concat(R.cornerPaving(e, ppm), e.splits || []));
-    const yieldToRoundabouts = (el) => { if (rbAreas.length && !(el.owner && rbIds.has(el.owner)) && el.type !== 'roundabout') for (const a of rbAreas) clipOutside(a); };
-
-    // Clip markings to the road surface
-    ctx.save();
-    if (o.clip) {
-      const polys = [];
-      for (const el of els) {
-        if (el.type === 'road' && el.pts.length >= 3) polys.push(R.areaPts(el));
-        if (el.type === 'section') { const p = R.sectionPoly(el, ppm); if (p) polys.push(p); } // a road section always counts as road surface
-        if (el.type === 'junction') for (const c of el.corners || []) if (c.length >= 3) polys.push(c);
-        if (el.type === 'buslane') { const b = R.bikeBand(el, ppm); if (b) polys.push(b); } // …and counts as road surface
-        if (el.type === 'roundabout') { polys.push(R.rbOutline(el, ppm)); polys.push(...R.cornerPaving(el, ppm)); }
+    const pave = (run) => {
+      const byTone = new Map(), rbPave = [];
+      const toneList = (c) => { if (!byTone.has(c)) byTone.set(c, []); return byTone.get(c); };
+      for (const el of run) {
+        if (el.type === 'road') addTo(toneList(tones[el.tone] || P.colors.asphalt), R.areaPts(el));
+        if (el.type === 'section' && el.pave) addTo(toneList(P.colors.asphalt), R.sectionPoly(el, ppm));
+        if (el.type === 'junction') for (const c of el.corners || []) addTo(toneList(P.colors.asphalt), c);
+        if (el.type === 'buslane') addTo(toneList(P.colors.asphalt), R.bikeBand(el, ppm)); // a bus lane is road: it paves itself
+        if (el.type === 'roundabout') { addTo(rbPave, R.rbOutline(el, ppm)); for (const pv of R.cornerPaving(el, ppm)) addTo(rbPave, pv); }
       }
-      if (polys.length) {
-        ctx.beginPath();
-        for (let p of polys) {
-          if (G.area(p) < 0) p = p.slice().reverse();
-          ctx.moveTo(p[0].x, p[0].y); for (let i = 1; i < p.length; i++) ctx.lineTo(p[i].x, p[i].y); ctx.closePath();
-        }
-        ctx.clip('nonzero');
-      }
-    }
-    // Intersection areas: lane lines (and a road's bike lanes) are interrupted inside them.
-    const junctions = els.filter((e) => (e.type === 'junction' || e.type === 'lanemask') && e.pts.length >= 3)
-      .concat(els.filter((e) => e.type === 'junction').flatMap((e) => (e.cornerCuts || []).map((pts) => ({ pts }))))
-      .concat(els.filter((e) => e.type === 'roundabout').map((e) => ({ pts: R.rbOutline(e, ppm, 1.2) })))
-      .concat(els.filter((e) => e.type === 'roundabout').flatMap((e) => (e.corners || []).map((k) => ({ pts: k.mask })).concat((e.legMasks || []).concat(e.cornerMasks || []).map((pts) => ({ pts })))));
-    const cutJunctions = () => {
-      // one clip per area, so overlapping areas can't cancel each other out
-      for (const j of junctions) clipOutside(j.pts);
+      ctx.save(); ctx.globalAlpha = o.roadOpacity;
+      const asphalt = P.colors.asphalt;
+      for (const [c, list] of byTone) { if (c === asphalt) continue; ctx.save(); for (const q of rbPave) clipOutside(q); fillUnion(c, list); ctx.restore(); }
+      fillUnion(asphalt, (byTone.get(asphalt) || []).concat(rbPave));
+      ctx.restore();
     };
 
-    // Layer 1: coloured surfaces
-    for (const el of els) {
-      if (el.type === 'surface') { ctx.save(); yieldToRoundabouts(el); drawSurface(ctx, el, ppm, P); ctx.restore(); }
-      if (el.type === 'buslane') { ctx.save(); yieldToRoundabouts(el); for (const c of crossCutsEarly) clipOutside(c); drawBikeSurface(ctx, el, ppm, P); ctx.restore(); }
-      if (el.type === 'section') {
-        const pts = R.basePts(el, ppm);
-        if (pts.length < 2) continue;
-        for (const { b, pts: bp } of R.sectionGeom(el, ppm).bands) if (b.kind === 'bike') {
-          // the bike lane stops at the junction and at crosswalks, like the lane lines beside it
-          ctx.save(); cutJunctions(); for (const c of crossCutsEarly) clipOutside(c);
-          for (const b of busStops) if (b.g.host === el) clipOutside(b.g.mask); // bikes go behind the bus stop
-          ctx.strokeStyle = P.colors.bike; ctx.lineWidth = b.width * ppm; ctx.lineCap = 'butt'; ctx.setLineDash([]);
-          path(ctx, bp); ctx.stroke();
-          ctx.restore();
-        }
+    // ---- one element's own drawing (its pavement is done by pave()) ----
+    const lineCuts = () => { cutJunctions(); for (const c of crossCuts) clipOutside(c); for (const b of bikeMasks) clipOutside(b); };
+    const drawSectionParts = (el) => {
+      const g = R.sectionGeom(el, ppm); if (!g) return;
+      for (const { b, pts: bp } of g.bands) if (b.kind === 'bike') { // a road's bike lane stops at junctions, crosswalks, bus stops
+        ctx.save(); clipRoad(); cutJunctions(); for (const c of crossCuts) clipOutside(c);
+        for (const st of busStops) if (st.g.host === el) clipOutside(st.g.mask);
+        ctx.strokeStyle = P.colors.bike; ctx.lineWidth = b.width * ppm; ctx.lineCap = 'butt'; ctx.setLineDash([]);
+        path(ctx, bp); ctx.stroke(); ctx.restore();
       }
-    }
-    for (const el of els) {
-      if (!MARK.has(el.type) || el.type === 'bikelane') continue; // bike lanes are drawn later, on any surface
-      ctx.save();
-      if ((el.type === 'line' && el.style !== 'guide' && !el.jline) || el.type === 'section') { // guide / junction-made lines aren't cut
-        cutJunctions(); for (const c of crossCutsEarly) clipOutside(c); // crosswalks take priority
-        for (const b of bikeMasks) clipOutside(b); // road lane lines give way to bike lanes drawn over them
-      } else if (el.type === 'bikelane' || el.type === 'buslane') { for (const c of crossCutsEarly) clipOutside(c); }
-      else yieldToRoundabouts(el);
-      switch (el.type) {
-        case 'line': R.drawStyled(ctx, R.basePts(el, ppm), P.lineStyles[el.style], ppm); break;
-        case 'bikelane': case 'buslane': drawBikeLane(ctx, el, ppm, P); break;
-        case 'section': {
-          const pts = R.basePts(el, ppm);
-          if (pts.length < 2) break;
-          // Where two roads overlap outside an intersection (a ramp or slip road joining a bigger road), the road
-          // with fewer lanes gives way: its lines stop at the bigger road's edge, and the bigger road's edge line
-          // turns into a dashed lane line across the mouth so traffic can merge / diverge there.
-          const lanes = (e) => (e.lanesF | 0) + (e.lanesB | 0);
-          const others = els.filter((e) => e.type === 'section' && e !== el);
-          const major = others.filter((e) => lanes(e) > lanes(el)).map((e) => R.sectionPoly(e, ppm)).filter(Boolean);
-          const minor = others.filter((e) => lanes(e) < lanes(el)).map((e) => R.sectionPoly(e, ppm)).filter(Boolean);
-          for (const q of major) clipOutside(q);
-          for (const b of busStops) if (b.g.host === el) clipOutside(b.g.mask); // kerb-side lines give way to bus stops
-          for (const { l, pts: line } of R.sectionGeom(el, ppm).lines) {
-            const st = P.lineStyles[l.style];
-            if ((l.style !== 'edge' && l.style !== 'bikeSep') || !minor.length) { R.drawStyled(ctx, line, st, ppm); continue; }
-            ctx.save(); for (const q of minor) clipOutside(q); R.drawStyled(ctx, line, st, ppm); ctx.restore();
-            for (const q of minor) { ctx.save(); path(ctx, q, true); ctx.clip(); R.drawStyled(ctx, line, P.lineStyles.lane, ppm); ctx.restore(); }
-          }
-          break;
-        }
-        case 'crosswalk': drawCrosswalk(ctx, el, ppm, P); break;
-        case 'stopline': drawStopLine(ctx, el, ppm, P); break;
-        case 'scooterbox': drawScooterBox(ctx, el, ppm, P); break;
-        case 'arrow': drawArrow(ctx, el, ppm, P); break;
-        case 'symbol': drawIcon(ctx, el, ppm, P); break;
-        case 'roundabout': drawRoundaboutLines(ctx, el, ppm, P); drawRoundaboutKerbs(ctx, el, ppm, P); for (const c of el.curves || []) R.drawStyled(ctx, c.pts, c.style, ppm, c.dashOffset); break;
-        case 'yield': drawYield(ctx, el, ppm, P); break;
-        case 'text': drawText(ctx, P, el.p, el.dir, el.text, el.charLen * ppm, el.charWid * ppm, colorOf(P, el.color), el.order, charGap(el) * ppm); break;
-        // §171 槽化線 border 15 / stripe 20 / gap 30 cm; §173 網狀線 border 20 / lines 10 cm, spacing user (1–5 m)
-        case 'chevron': drawHatched(ctx, Object.assign({}, el, { border: 0.15, stripe: 0.20, gap: 0.30 }), ppm, P, false); break;
-        case 'yellowbox': drawHatched(ctx, Object.assign({}, el, { border: 0.20, stripe: 0.10, gap: Math.max(0, el.gap - 0.10) }), ppm, P, true); break;
+      // Where two roads overlap outside an intersection (a ramp or slip road joining a bigger road), the road with
+      // fewer lanes gives way: its lines stop at the bigger road's edge, and the bigger road's edge line turns into a
+      // dashed lane line across the mouth.
+      ctx.save(); clipRoad(); lineCuts();
+      const lanesOf = (e) => (e.lanesF | 0) + (e.lanesB | 0);
+      const others = els.filter((e) => e.type === 'section' && e !== el);
+      const major = others.filter((e) => lanesOf(e) > lanesOf(el)).map((e) => R.sectionPoly(e, ppm)).filter(Boolean);
+      const minor = others.filter((e) => lanesOf(e) < lanesOf(el)).map((e) => R.sectionPoly(e, ppm)).filter(Boolean);
+      for (const q of major) clipOutside(q);
+      for (const st of busStops) if (st.g.host === el) clipOutside(st.g.mask);
+      for (const { l, pts: line } of g.lines) {
+        const sty = P.lineStyles[l.style];
+        if ((l.style !== 'edge' && l.style !== 'bikeSep') || !minor.length) { R.drawStyled(ctx, line, sty, ppm); continue; }
+        ctx.save(); for (const q of minor) clipOutside(q); R.drawStyled(ctx, line, sty, ppm); ctx.restore();
+        for (const q of minor) { ctx.save(); path(ctx, q, true); ctx.clip(); R.drawStyled(ctx, line, P.lineStyles.lane, ppm); ctx.restore(); }
       }
       ctx.restore();
-    }
-    ctx.restore();
-
-    // Layer 3: sidewalks & medians always on top (crosswalks run "under" them)
-    // medians end flush with a roundabout's yield line (0.6 m outside the ring), not behind it
-    const medianCuts = els.filter((e) => (e.type === 'junction' || e.type === 'mediancut') && e.pts.length >= 3).map((e) => e.pts)
-      .concat(els.filter((e) => e.type === 'roundabout').map((e) => R.rbOutline(e, ppm, 0.6)))
-      .concat(els.filter((e) => e.type === 'roundabout').flatMap((e) => e.splits || [])); // splitter replaces the median there
-    const crossCuts = els.filter((e) => e.type === 'crosswalk' && e.a && e.b && e.dir != null)
-      .map((e) => R.crosswalkPad(e, ppm, 0.3));
-    for (const el of els) {
-      if (el.type === 'sidewalk') {
-        ctx.save(); yieldToRoundabouts(el);
-        // a junction's corner sidewalk opens wherever another road (ramp, slip road, driveway) crosses it
-        if (el.yieldTo) for (const sec of els) if (sec.type === 'section' && !el.yieldTo.includes(sec.id)) clipOutside(R.sectionPoly(sec, ppm));
-        drawSidewalk(ctx, el, ppm, P); ctx.restore();
-      }
-      if (el.type === 'roundabout') {
-        drawRoundaboutIsland(ctx, el, ppm, P);
-        for (const sp of el.splits || []) { // splitter islands, opened where crosswalks pass (pedestrian refuge)
-          ctx.save();
-          for (const c of crossCuts) clipOutside(c);
-          drawSidewalk(ctx, { pts: sp, style: 'island' }, ppm, P);
-          ctx.restore();
-        }
-      }
-      if (el.type === 'section') {
-        const pts = R.basePts(el, ppm);
-        if (pts.length < 2) continue;
-        for (const { b, pts: mp } of R.sectionGeom(el, ppm).bands) if (b.kind === 'median') {
-          const poly = G.offset(mp, -b.width / 2 * ppm).concat(G.offset(mp, b.width / 2 * ppm).reverse());
-          // Medians are opened wherever a crosswalk crosses them (0.3 m clear each side), and stop at
-          // intersection / roundabout areas. Computed live, so they follow crosswalk width and position.
-          const cuts = medianCuts.concat(crossCuts);
-          if (!cuts.length) { drawSidewalk(ctx, { pts: poly, style: 'island' }, ppm, P); continue; }
-          const cutAll = () => { for (const c of cuts) clipOutside(c); };
-          ctx.save(); cutAll(); drawSidewalk(ctx, { pts: poly, style: 'island' }, ppm, P); ctx.restore();
+      // medians: opened wherever a crosswalk crosses them (0.3 m clear each side), stopped at junctions / roundabouts
+      for (const { b, pts: mp } of g.bands) if (b.kind === 'median') {
+        const poly = G.offset(mp, -b.width / 2 * ppm).concat(G.offset(mp, b.width / 2 * ppm).reverse());
+        const cuts = medianCuts.concat(crossCuts);
+        const cutAll = () => { for (const c of cuts) clipOutside(c); };
+        ctx.save(); cutAll(); drawSidewalk(ctx, { pts: poly, style: 'island' }, ppm, P); ctx.restore();
+        if (cuts.length) {
           ctx.save(); path(ctx, poly, true); ctx.clip(); cutAll();
           ctx.strokeStyle = '#b9b5ab'; ctx.lineWidth = 0.5 * ppm; ctx.lineJoin = 'round'; ctx.setLineDash([]);
           for (const c of cuts) { path(ctx, c, true); ctx.stroke(); }
           ctx.restore();
         }
       }
-    }
-    // Bike lanes joined to a bus stop are drawn together with the stop's bike lane as ONE lane (lane → stop →
-    // lane), so lines, diamonds and symbols run on without a seam.
-    const stopById = new Map(busStops.map((b) => [b.el.id, b]));
-    const stopPath = (b, from) => (from === 0 ? b.g.bike : b.g.bike.slice().reverse()); // from the given end
-    const merged = new Map(), consumed = new Set(), stopTaken = new Set();
-    const lanes = els.filter((e) => e.type === 'bikelane');
-    for (const bl of lanes) { // lanes flowing INTO a stop first, then the stop, then a lane leaving its other end
-      const L = bl.linkE, b = L && stopById.get(L.id);
-      if (!b || !b.g.bike || stopTaken.has(b.el.id)) continue;
-      let pts = R.basePts(bl, ppm).concat(stopPath(b, L.i).slice(1));
-      const out = lanes.find((o) => o !== bl && o.linkS && o.linkS.id === L.id && o.linkS.i === 1 - L.i);
-      if (out) { pts = pts.concat(R.basePts(out, ppm).slice(1)); consumed.add(out); }
-      merged.set(bl, pts); stopTaken.add(b.el.id);
-    }
-    for (const bl of lanes) { // a lane leaving a stop that no lane runs into
-      const L = bl.linkS, b = L && stopById.get(L.id);
-      if (!b || !b.g.bike || stopTaken.has(b.el.id) || consumed.has(bl)) continue;
-      merged.set(bl, stopPath(b, 1 - L.i).concat(R.basePts(bl, ppm).slice(1))); stopTaken.add(b.el.id);
-    }
-    // Bus stops: bay paving, platform / island, bike lane behind it and the stop's markings, over the sidewalks
-    for (const b of busStops) {
-      ctx.save(); drawBusStop(ctx, b.el, b.g, ppm, P, b.g.through || null, stopTaken.has(b.el.id)); ctx.restore();
-    }
-    // Bike lanes go on any surface — road, sidewalk or bare image — so they are drawn last and not clipped
-    for (const el of lanes) {
-      if (consumed.has(el)) continue;
-      ctx.save(); yieldToRoundabouts(el); for (const c of crossCutsEarly) clipOutside(c);
-      for (const b of busStops) if (b.g.through === el) clipOutside(b.g.mask); // detoured behind the bus stop
-      const d = merged.has(el) ? Object.assign({}, el, { pts: merged.get(el), smooth: false, tanS: null, tanE: null }) : el;
-      drawBikeSurface(ctx, d, ppm, P); drawBikeLane(ctx, d, ppm, P);
+    };
+    const drawEl = (el) => {
+      ctx.save();
+      switch (el.type) {
+        case 'section': ctx.restore(); drawSectionParts(el); return;
+        case 'roundabout':
+          ctx.save(); clipRoad(); drawRoundaboutLines(ctx, el, ppm, P); drawRoundaboutKerbs(ctx, el, ppm, P);
+          for (const c of el.curves || []) R.drawStyled(ctx, c.pts, c.style, ppm, c.dashOffset);
+          ctx.restore();
+          drawRoundaboutIsland(ctx, el, ppm, P);
+          for (const sp of el.splits || []) { ctx.save(); for (const c of crossCuts) clipOutside(c); drawSidewalk(ctx, { pts: sp, style: 'island' }, ppm, P); ctx.restore(); }
+          break;
+        case 'surface': clipRoad(); yieldToRoundabouts(el); drawSurface(ctx, el, ppm, P); break;
+        case 'buslane': clipRoad(); for (const c of crossCuts) clipOutside(c); drawBikeSurface(ctx, el, ppm, P); drawBikeLane(ctx, el, ppm, P); break;
+        case 'sidewalk':
+          yieldToRoundabouts(el);
+          // a junction's corner sidewalk opens wherever another road (ramp, slip road, driveway) crosses it
+          if (el.yieldTo) for (const sec of els) if (sec.type === 'section' && !el.yieldTo.includes(sec.id)) clipOutside(R.sectionPoly(sec, ppm));
+          drawSidewalk(ctx, el, ppm, P); break;
+        case 'busstop': {
+          const b = busStops.find((x) => x.el === el); if (!b) break;
+          drawBusStop(ctx, el, b.g, ppm, P, b.g.through || null, stopTaken.has(el.id));
+          if (!stopTaken.has(el.id)) drawStopCrossing(ctx, b.g, ppm, P);
+          break;
+        }
+        case 'bikelane': {
+          if (consumed.has(el)) break;
+          yieldToRoundabouts(el); for (const c of crossCuts) clipOutside(c);
+          for (const b of busStops) if (b.g.through === el) clipOutside(b.g.mask); // detoured behind the bus stop
+          const d = merged.has(el) ? Object.assign({}, el, { pts: merged.get(el), smooth: false, tanS: null, tanE: null }) : el;
+          drawBikeSurface(ctx, d, ppm, P); drawBikeLane(ctx, d, ppm, P);
+          ctx.restore(); ctx.save();
+          for (const [sid, owner] of stopTaken) if (owner === el) drawStopCrossing(ctx, stopById.get(sid).g, ppm, P); // passengers' crossing on top
+          break;
+        }
+        default: {
+          if (!MARK.has(el.type)) break;
+          clipRoad();
+          if (el.type === 'line' && el.style !== 'guide' && !el.jline) lineCuts(); // junction-made / guide lines aren't cut
+          else yieldToRoundabouts(el);
+          switch (el.type) {
+            case 'line': R.drawStyled(ctx, R.basePts(el, ppm), P.lineStyles[el.style], ppm); break;
+            case 'crosswalk': drawCrosswalk(ctx, el, ppm, P); break;
+            case 'stopline': drawStopLine(ctx, el, ppm, P); break;
+            case 'scooterbox': drawScooterBox(ctx, el, ppm, P); break;
+            case 'arrow': drawArrow(ctx, el, ppm, P); break;
+            case 'symbol': drawIcon(ctx, el, ppm, P); break;
+            case 'yield': drawYield(ctx, el, ppm, P); break;
+            case 'text': drawText(ctx, P, el.p, el.dir, el.text, el.charLen * ppm, el.charWid * ppm, colorOf(P, el.color), el.order, charGap(el) * ppm); break;
+            // §171 槽化線 border 15 / stripe 20 / gap 30 cm; §173 網狀線 border 20 / lines 10 cm, spacing user (1–5 m)
+            case 'chevron': drawHatched(ctx, Object.assign({}, el, { border: 0.15, stripe: 0.20, gap: 0.30 }), ppm, P, false); break;
+            case 'yellowbox': drawHatched(ctx, Object.assign({}, el, { border: 0.20, stripe: 0.10, gap: Math.max(0, el.gap - 0.10) }), ppm, P, true); break;
+          }
+        }
+      }
       ctx.restore();
+    };
+
+    // ---- walk the list: pave each run of road pieces together, then draw its elements in order ----
+    for (let i = 0; i < els.length;) {
+      if (PAVER.has(els[i].type)) {
+        let j = i; while (j < els.length && PAVER.has(els[j].type)) j++;
+        const run = els.slice(i, j);
+        pave(run);
+        for (const el of run) drawEl(el);
+        i = j;
+      } else {
+        if (els[i].type === 'buslane') pave([els[i]]);
+        drawEl(els[i]); i++;
+      }
     }
-    for (const b of busStops) drawStopCrossing(ctx, b.g, ppm, P); // the passengers' crossing goes over the bike lane
   };
 
   // ---------- shapes for hit-testing & selection outline ----------
