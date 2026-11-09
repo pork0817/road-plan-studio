@@ -1108,6 +1108,7 @@ window.Render = (function () {
       if (el.type === 'road') addTo(toneList(tones[el.tone] || P.colors.asphalt), R.areaPts(el));
       if (el.type === 'section' && el.pave) addTo(toneList(P.colors.asphalt), R.sectionPoly(el, ppm));
       if (el.type === 'junction') for (const c of el.corners || []) addTo(toneList(P.colors.asphalt), c); // rounded kerb returns
+      if (el.type === 'buslane') addTo(toneList(P.colors.asphalt), R.bikeBand(el, ppm)); // a bus lane is road: it paves itself
       if (el.type === 'roundabout') { addTo(rbPave, R.rbOutline(el, ppm)); for (const pv of R.cornerPaving(el, ppm)) addTo(rbPave, pv); }
     }
     const fillUnion = (color, list) => {
@@ -1136,6 +1137,7 @@ window.Render = (function () {
         if (el.type === 'road' && el.pts.length >= 3) polys.push(R.areaPts(el));
         if (el.type === 'section') { const p = R.sectionPoly(el, ppm); if (p) polys.push(p); } // a road section always counts as road surface
         if (el.type === 'junction') for (const c of el.corners || []) if (c.length >= 3) polys.push(c);
+        if (el.type === 'buslane') { const b = R.bikeBand(el, ppm); if (b) polys.push(b); } // …and counts as road surface
         if (el.type === 'roundabout') { polys.push(R.rbOutline(el, ppm)); polys.push(...R.cornerPaving(el, ppm)); }
       }
       if (polys.length) {

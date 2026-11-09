@@ -1987,9 +1987,9 @@
       if (e.type === 'crosswalk') extra = P().crosswalk[e.kind].name;
       sp.textContent = (P().typeNames[e.type] || e.type).split(' ')[0] + (extra ? ' · ' + extra : '');
       li.appendChild(sp);
-      const up = document.createElement('button'); up.textContent = '↑'; up.title = 'Bring forward';
+      const up = document.createElement('button'); up.textContent = '↑'; up.title = '上移 Bring forward — 只在同類物件間排序：路面 → 鋪面 → 標線 → 人行道 → 自行車道 的順序固定 (within its kind; the road → surface → markings → sidewalk → bike lane order is fixed)';
       up.onclick = (ev) => { ev.stopPropagation(); const i = S.els.indexOf(e); if (i < S.els.length - 1) { S.els.splice(i, 1); S.els.splice(i + 1, 0, e); commit(); } };
-      const dn = document.createElement('button'); dn.textContent = '↓'; dn.title = 'Send backward';
+      const dn = document.createElement('button'); dn.textContent = '↓'; dn.title = '下移 Send backward — 只在同類物件間排序 (within its kind)';
       dn.onclick = (ev) => { ev.stopPropagation(); const i = S.els.indexOf(e); if (i > 0) { S.els.splice(i, 1); S.els.splice(i - 1, 0, e); commit(); } };
       const x = document.createElement('button'); x.textContent = '✕'; x.onclick = (ev) => { ev.stopPropagation(); deleteEl(e.id); };
       li.append(up, dn, x);
