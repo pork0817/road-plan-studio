@@ -1382,21 +1382,26 @@
   const SEC_KEYS = ['pts', 'smooth', 'lanesF', 'lanesB', 'laneWidth', 'centerType', 'medianWidth', 'slowLane', 'bikeLane', 'edge', 'autoArrows', 'autoBox', 'boxDepth', 'solidLen', 'laneUse', 'leftGuide', 'leftTurn', 'pocketLen', 'pocketTaper', 'lanesF2', 'lanesB2', 'changeAt', 'taper', 'laneUseF', 'laneUseB', 'pocketLF', 'pocketLB', 'pocketRF', 'pocketRB', 'rightGuide'];
   const J_KEYS = ['crosswalks', 'cwKind', 'cwWidth', 'setback', 'stops', 'stopGap', 'cornerR', 'sidewalks', 'swWidth', 'bikeCross'];
   const junctionPrm = (j) => { const o = Object.assign({}, j.genPrm || {}); for (const k of J_KEYS) if (j[k] !== undefined) o[k] = j[k]; return o; };
-  function junctionSig(j, core) { // core: the signature as it was before bus lanes were part of it
+  // JGEN: bumped when the generator's output changes (e.g. stop lines now flush with the lane lines), so every
+  // junction rebuilds once — edited, locked and deleted pieces are still kept as the user left them.
+  const JGEN = 2;
+  function junctionSig(j, core) { // core: true = before bus lanes were part of it; 'v1' = before JGEN
     const m = ppm(), near = (40 + 60) * m;
     const secs = S.els.filter((e) => e.type === 'section' && e.pts.some((p, i) => {
       const q = e.pts[i + 1]; return G.dist(p, j.genClick) < near || (q && G.distToSeg(j.genClick, p, q).d < near);
     }));
     const others = S.els.filter((e) => e !== j && e.type === 'junction' && e.genClick).map((e) => [Math.round(e.genClick.x), Math.round(e.genClick.y)]);
-    if (core) return JSON.stringify([m, junctionPrm(j), secs.map((e) => SEC_KEYS.map((k) => e[k])), others]);
+    if (core === true) return JSON.stringify([m, junctionPrm(j), secs.map((e) => SEC_KEYS.map((k) => e[k])), others]);
     const buses = S.els.filter((e) => e.type === 'buslane' && e.pts && e.pts.length > 1 && G.nearestOnPolyline(j.genClick, e.pts).d < 100 * m).map((e) => [e.pts, e.width, e.smooth]);
-    return JSON.stringify([m, junctionPrm(j), secs.map((e) => SEC_KEYS.map((k) => e[k])), others, buses]);
+    const base = [m, junctionPrm(j), secs.map((e) => SEC_KEYS.map((k) => e[k])), others, buses];
+    return JSON.stringify(core === 'v1' ? base : base.concat([JGEN]));
   }
+  const sigSame = (j) => j.sig === junctionSig(j) || j.sig === junctionSig(j, 'v1') || j.sig === junctionSig(j, true); // roads unchanged
   // Junctions made before pieces had keys: while the roads are unchanged, match every existing piece to its rebuilt
   // twin to give it a key; a piece with no twin nearby was deleted by the user, one that moved was edited.
   function keyLegacyPieces(j) {
     const old = S.els.filter((e) => e.owner === j.id);
-    if (j.sig !== junctionSig(j) && j.sig !== junctionSig(j, true)) return; // only while the roads are unchanged: then what's missing was deleted by the user
+    if (!sigSame(j)) return; // only while the roads are unchanged: then what's missing was deleted by the user
     // keys from the first version also named arrow / crosswalk types: re-key those (their deletions are re-found)
     const oldFormat = (k) => { const p = String(k).split('|'); return p.length === 4 && p[0] !== 'legacy' && p[1] !== 'line' && p[2] !== ''; };
     for (const e of old) if (e.jkey && oldFormat(e.jkey) && !e.edited) delete e.jkey;
@@ -1432,7 +1437,7 @@
   function laneSigNow() { const o = {}; for (const e of S.els) if (e.type === 'section') o[e.id] = JSON.stringify(LANE_KEYS.map((k) => e[k])); return o; }
   function syncJunction(j) {
     if (!j.genClick) return;
-    if (!j.laneSig && (j.sig === junctionSig(j) || j.sig === junctionSig(j, true))) j.laneSig = laneSigNow(); // older junctions: remember the lane design as it stands
+    if (!j.laneSig && sigSame(j)) j.laneSig = laneSigNow(); // older junctions: remember the lane design as it stands
     keyLegacyPieces(j);
     const sig = junctionSig(j);
     if (j.sig === sig) return;
@@ -1692,9 +1697,20 @@
       const fitN = mhalf > 0 ? Math.min(nPL, Math.floor((2 * mhalf - 0.5) / 2.75)) : 0; // pocket lanes the median can give
       lg.pocketW = fitN > 0 ? Math.min(fitN * el.laneWidth, 2 * mhalf - 0.5) : 0;
       lg.pocketN = fitN > 0 ? fitN : 0;
-      const inner = oneWay ? lg.rightExt - 0.3 + lg.pocketOne : lg.pocketW ? -(mhalf - lg.pocketW) - 0.2 : -((el.centerType === 'median' ? el.medianWidth / 2 + 0.2 : 0.15));
+      // The stop line ends flush with the outer side of the lines it meets: the edge line at the kerb (0.15 m wide,
+      // drawn just outside the lane edge, which sits 0.3 m inside the pavement edge), and on the other end the
+      // centre line's near side, the median's edge line, or (one-way) the far edge line.
+      const edgeW = el.edge ? 0.15 : 0;
+      const ctrSt = P().lineStyles[el.centerType] || {};
+      const ctrHalf = ctrSt.width ? (ctrSt.sep != null ? 2 * ctrSt.width + ctrSt.sep : ctrSt.width) / 2 : 0;
+      const laneEdgeL = -lg.leftExt + (el.edge ? 0.3 : 0), laneEdgeR = lg.rightExt - (el.edge ? 0.3 : 0);
+      const inner = oneWay ? laneEdgeR + edgeW + lg.pocketOne
+        : lg.pocketW ? -(mhalf - lg.pocketW) - 0.125                               // pocket's new edge line (centred 0.2 m in)
+        : el.centerType === 'median' ? -(mhalf + 0.125)                             // median edge line (centred mh + 0.2)
+        : -ctrHalf;
+      const outerLat = laneEdgeL - edgeW - lg.pocketRt;
       if (prm.stops && incoming) {
-        out.push({ id: newId(), owner: jid, type: 'stopline', width: stopW, a: legPt(lg, ds, inner), b: legPt(lg, ds, -lg.leftExt + 0.3 - lg.pocketRt), dir: G.angle(G.mul(onLeg(lg, ds, 0).t, -1)) });
+        out.push({ id: newId(), owner: jid, type: 'stopline', width: stopW, a: legPt(lg, ds, inner), b: legPt(lg, ds, outerLat), dir: G.angle(G.mul(onLeg(lg, ds, 0).t, -1)) });
       }
       if (incoming) lg.entry = { ds, inner, oneWay, el };
       lg.cwIn = cwIn;
@@ -1812,7 +1828,7 @@
       if (bl.type !== 'buslane' || !bl.pts || bl.pts.length < 2) continue;
       const bp = R.basePts(bl, m), rc = G.nearestOnPolyline(C, bp);
       if (!rc || rc.d > 60 * m) continue;
-      const dirB = rc.tangent, halfW = (bl.width || 3.5) / 2;
+      const dirB = rc.tangent, halfW = (bl.width || 3.5) / 2 - (bl.kind !== 'priority' && bl.sep === 'edges' ? 0.05 : 0); // to the lines' outer side
       // where the bus lane's centre line crosses the line across leg L at distance s from the centre
       const crossAt = (L, s) => {
         const S0 = legPt(L, s, 0), tv = onLeg(L, s, 0).t;
@@ -1835,7 +1851,7 @@
       const outL = nearestLeg((L) => G.dot(L.v, dirB) > 0.9);                         // traffic leaving the bus's way
       if (inL && prm.stops) {
         const X = crossAt(inL, inL.entry.ds);
-        if (X) out.push({ id: newId(), owner: jid, bus: true, type: 'stopline', width: stopW, a: G.add(X.p, G.mul(X.n, (halfW - 0.1) * m)), b: G.sub(X.p, G.mul(X.n, (halfW - 0.1) * m)), dir: G.angle(dirB) });
+        if (X) out.push({ id: newId(), owner: jid, bus: true, type: 'stopline', width: stopW, a: G.add(X.p, G.mul(X.n, halfW * m)), b: G.sub(X.p, G.mul(X.n, halfW * m)), dir: G.angle(dirB) });
       }
       if (prm.crosswalks) {
         const w = G.clamp(prm.cwWidth, P().crosswalk[prm.cwKind].width.min, P().crosswalk[prm.cwKind].width.max);
