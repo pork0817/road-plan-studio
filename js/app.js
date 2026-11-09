@@ -1403,7 +1403,10 @@
   const syncAll = () => {
     for (const e of S.els.slice()) if (e.type === 'roundabout') syncRoundabout(e);
     syncBikeJoins();
-    for (const e of S.els.slice()) if (e.type === 'junction' && e.genClick) syncJunction(e);
+    for (const e of S.els.slice()) if (e.type === 'junction' && e.genClick) {
+      for (const k of J_KEYS) if (e[k] === undefined && e.genPrm && e.genPrm[k] !== undefined) e[k] = e.genPrm[k]; // older junctions: settings onto the panel
+      syncJunction(e);
+    }
   };
   function buildRoundabout(C, prm) {
     return { id: newId(), type: 'roundabout', p: G.copy(C), R: prm.R, lanes: prm.turbo ? 2 : prm.lanes, laneWidth: prm.laneWidth, apron: prm.turbo ? 0 : prm.apron,
@@ -1533,7 +1536,19 @@
     for (const lg of legs) {
       const el = lg.rd.el;
       const at = (d, off) => legPt(lg, d, off); // along the road's own line (carriageways may sit off-centre)
-      const cwIn = lg.E + prm.setback * m, cwOut = cwIn + (prm.crosswalks ? prm.cwWidth * m : 0);
+      let cwIn = lg.E + prm.setback * m, cwOut = cwIn + (prm.crosswalks ? prm.cwWidth * m : 0), hasCw = !!prm.crosswalks;
+      if (!prm.crosswalks) { // the user's own crosswalk on this leg (nearest the junction): stop lines go behind it
+        let best = null;
+        for (const c of S.els) {
+          if (c.type !== 'crosswalk' || !c.a || !c.b || (c.owner && c.owner !== jid && S.els.some((j) => j.id === c.owner && j.type === 'junction'))) continue;
+          const mid = G.mid(c.a, c.b), r = G.nearestOnPolyline(mid, lg.path.pts);
+          if (!r) continue;
+          const sC = lg.path.cum[r.i] + G.dist(lg.path.pts[r.i], r.proj), lat = G.dot(G.sub(mid, r.proj), lg.nv) / m;
+          if (lat < -lg.leftExt - 2 || lat > lg.rightExt + 2 || sC < lg.E * 0.5 || sC > lg.E + 40 * m) continue;
+          if (!best || sC < best.sC) best = { sC, w: (c.width || 4) * m };
+        }
+        if (best) { cwIn = best.sC - best.w / 2; cwOut = best.sC + best.w / 2; hasCw = true; }
+      }
       if (prm.crosswalks) {
         const w = G.clamp(prm.cwWidth, P().crosswalk[prm.cwKind].width.min, P().crosswalk[prm.cwKind].width.max);
         const d = cwIn + (w * m) / 2;
@@ -1544,7 +1559,7 @@
       const oneWay = el.lanesB === 0;
       const incoming = oneWay ? lg.sgn < 0 : true;
       // stop line across every entering lane, 2–3 m before the crosswalk (§170)
-      const ds = cwOut + (prm.crosswalks ? prm.stopGap * m : 0) + (stopW * m) / 2;
+      const ds = cwOut + (hasCw ? prm.stopGap * m : 0) + (stopW * m) / 2;
       // 左轉附加車道 (pocket): an extra left-turn lane carved out of the median next to the incoming lanes
       const mhalf = el.centerType === 'median' && el.lanesB > 0 ? el.medianWidth / 2 : 0;
       const pocketW = el.leftTurn === 'pocket' && mhalf > 0 ? Math.min(el.laneWidth, 2 * mhalf - 0.5) : 0;

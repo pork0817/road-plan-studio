@@ -112,6 +112,14 @@ window.RoadPresets = window.RoadPresets || {};
 
   const num = (key, label, min, max, step, law) => ({ kind: 'num', key, label, min, max, step, unit: 'm', law });
 
+  const junctionCross = (el) => [
+    { kind: 'chk', key: 'crosswalks', label: '自動行人穿越道 Crosswalks' },
+    ...(el.crosswalks !== false ? [{ kind: 'sel', key: 'cwKind', label: '型式 Type', options: [['ties', '枕木紋 Ties'], ['zebra', '斑馬紋 Zebra']] },
+      num('cwWidth', '穿越道寬 Width', 2, 8, 0.1, '法規 2–8 m')]
+      : [{ kind: 'info', text: '關閉時，停止線會放在您自己畫的行人穿越道後方。With crosswalks off, stop lines go behind the crosswalks you drew yourself.' }]),
+    num('setback', '退縮 Setback', 0, 10, 0.1, '§185 距橫交路口路面邊緣 3–5 m'),
+    { kind: 'chk', key: 'stops', label: '停止線 Stop lines' },
+    num('stopGap', '停止線淨距 Stop gap', 1, 3, 0.1, '§170 與行人穿越道淨距 2–3 m (≥1 m)')];
   const junctionCorner = [
     num('cornerR', '轉角半徑 Corner radius', 0, 30, 0.5, '≈ 市區路口常用 5–12 m，0 = 直角'),
     { kind: 'chk', key: 'sidewalks', label: '轉角人行道 Corner sidewalks' },
@@ -190,13 +198,7 @@ window.RoadPresets = window.RoadPresets || {};
         { kind: 'btn', action: 'realign', label: '對齊車道 Align to lanes' }, { kind: 'btn', action: 'flip', label: '反轉 Flip' }];
       case 'junctionTool': return [
         { kind: 'info', text: '先用「路段」沿兩條道路中心線畫過路口，再用此工具點兩路交會處：會自動產生路口範圍 (中斷車道線)、各路口行人穿越道及停止線。十字、T字、斜交皆可。' },
-        { kind: 'chk', key: 'crosswalks', label: '行人穿越道 Crosswalks' },
-        { kind: 'sel', key: 'cwKind', label: '型式 Type', options: [['ties', '枕木紋 Ties'], ['zebra', '斑馬紋 Zebra']] },
-        num('cwWidth', '穿越道寬 Width', 2, 8, 0.1, '法規 2–8 m'),
-        num('setback', '退縮 Setback', 0, 10, 0.1, '§185 距橫交路口路面邊緣 3–5 m'),
-        { kind: 'chk', key: 'stops', label: '停止線 Stop lines' },
-        num('stopGap', '停止線淨距 Stop gap', 1, 3, 0.1, '§170 與行人穿越道淨距 2–3 m (≥1 m)'),
-        ...junctionCorner];
+        ...junctionCross(el), ...junctionCorner];
       case 'roundaboutTool': case 'roundabout': {
         const tool = el.type === 'roundaboutTool', f = [];
         if (tool) f.push({ kind: 'info', text: el.turbo
@@ -239,7 +241,7 @@ window.RoadPresets = window.RoadPresets || {};
         ...(el.kind === 'bay' ? [num('D', '港灣深度 Bay depth', 2.5, 4.5, 0.1, '≈ 常用 3.0–3.5 m'), num('Lin', '進站漸變段 Entry taper', 5, 40, 0.5, '≈ 約 1:5'), num('Lout', '出站漸變段 Exit taper', 5, 40, 0.5, '≈ 約 1:3–1:4')] : []),
         { kind: 'txt', key: 'text', label: '標字 Wording' },
         { kind: 'law', text: '§190 停靠區：白色實線 (10 cm) 及白色專用車輛標字；§169 路緣紅實線 禁止臨時停車；§174-4 自行車標線於公車停靠區前後 2 m 內不得劃設。港灣、候車島尺寸法規未規定 (≈)。拖曳兩端點調整停靠區長度。' }];
-      case 'junction': return [...junctionCorner, { kind: 'btn', action: 'regenJunction', label: '↻ 重新產生 Regenerate' }, { kind: 'info', text: '路口範圍：範圍內的車道線、路段標線會被中斷 (行人穿越道、箭頭等不受影響)。拖曳節點可調整範圍；此框只在編輯時顯示，不會匯出。' }];
+      case 'junction': return [...junctionCross(el), ...junctionCorner, { kind: 'btn', action: 'regenJunction', label: '↻ 重新產生 Regenerate' }, { kind: 'info', text: '路口範圍：範圍內的車道線、路段標線會被中斷 (行人穿越道、箭頭等不受影響)。拖曳節點可調整範圍；此框只在編輯時顯示，不會匯出。' }];
       case 'bikelane': {
         const minW = el.kind === 'priority' ? 1.2 : el.twoWay ? 2.5 : 1.2;
         const f = [{ kind: 'sel', key: 'kind', label: '種類 Type', options: [['exclusive', '專用車道 Exclusive (§174)'], ['priority', '優先車道 Priority (§174-4)']] },
