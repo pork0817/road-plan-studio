@@ -843,24 +843,45 @@ window.Render = (function () {
     ctx.beginPath(); ctx.arc(C.x, C.y, r1, 0, 2 * Math.PI); ctx.arc(C.x, C.y, r0, 0, 2 * Math.PI, true); ctx.fill();
     // links from each road bike lane: leave the road beyond the zebra, curve round outside it, and run into the path
     const rCut = R.bikeRingCutR(el), rm = el.R + gap + w / 2;
+    // a red link from a bike lane at P0 (running along v, away from the ring) curving out (side unit vector out)
+    // round the zebra and into the cycle path, joining it tangentially
+    const link = (P0, v, out, bw) => {
+      const aim = G.add(G.add(P0, G.mul(v, -(rCut - rm) * ppm)), G.mul(out, (bw / 2 + 3) * ppm));
+      const rad = G.norm(G.sub(aim, C)), P3 = G.add(C, G.mul(rad, rm * ppm));
+      let t3 = G.rightN(rad); if (G.dot(t3, out) < 0) t3 = G.mul(t3, -1);
+      const k = G.dist(P0, P3) * 0.45, t0 = G.norm(G.add(G.mul(v, -1), G.mul(out, 0.6)));
+      const P1 = G.add(P0, G.mul(t0, k)), P2 = G.sub(P3, G.mul(t3, k)), pts = [G.add(P0, G.mul(v, 0.5 * ppm))]; // starts a little inside the lane: no seam
+      for (let i = 0; i <= 24; i++) { const u = i / 24, a = (1 - u) ** 3, b = 3 * (1 - u) ** 2 * u, c = 3 * (1 - u) * u * u, d = u ** 3;
+        pts.push({ x: a * P0.x + b * P1.x + c * P2.x + d * P3.x, y: a * P0.y + b * P1.y + c * P2.y + d * P3.y }); }
+      ctx.lineWidth = bw * ppm; ctx.lineCap = 'butt'; ctx.lineJoin = 'round'; ctx.setLineDash([]);
+      path(ctx, pts); ctx.stroke();
+    };
     for (const lg of el.legs || []) {
       if (!lg.v || !lg.X) continue;
       const nv = G.rightN(lg.v), d0 = G.dist(lg.X, C) / ppm;
       for (const bk of lg.bikes || []) {
-        const lat = bk.lat, side = Math.sign(lat) || 1, out = G.mul(nv, flip * side);
+        const lat = bk.lat, side = Math.sign(lat) || 1;
         const sA = Math.sqrt(Math.max(0, rCut * rCut - lat * lat)) - d0;
-        const P0 = G.add(G.add(lg.X, G.mul(lg.v, sA * ppm)), G.mul(nv, flip * lat * ppm));
-        const aim = G.add(G.add(lg.X, G.mul(lg.v, (rm - el.R) * ppm)), G.mul(nv, flip * (lat + side * (bk.w / 2 + 3)) * ppm));
-        const rad = G.norm(G.sub(aim, C)), P3 = G.add(C, G.mul(rad, rm * ppm));
-        let t3 = G.rightN(rad); if (G.dot(t3, out) < 0) t3 = G.mul(t3, -1);
-        const k = G.dist(P0, P3) * 0.45, t0 = G.norm(G.add(G.mul(lg.v, -1), G.mul(out, 0.6)));
-        const P1 = G.add(P0, G.mul(t0, k)), P2 = G.sub(P3, G.mul(t3, k)), pts = [];
-        for (let i = 0; i <= 24; i++) { const u = i / 24, a = (1 - u) ** 3, b = 3 * (1 - u) ** 2 * u, c = 3 * (1 - u) * u * u, d = u ** 3;
-          pts.push({ x: a * P0.x + b * P1.x + c * P2.x + d * P3.x, y: a * P0.y + b * P1.y + c * P2.y + d * P3.y }); }
-        // run the link a little into the road lane so the two join without a seam
-        pts.unshift(G.add(P0, G.mul(lg.v, 0.5 * ppm)));
-        ctx.lineWidth = bk.w * ppm; ctx.lineCap = 'butt'; ctx.lineJoin = 'round'; ctx.setLineDash([]);
-        path(ctx, pts); ctx.stroke();
+        link(G.add(G.add(lg.X, G.mul(lg.v, sA * ppm)), G.mul(nv, flip * lat * ppm)), lg.v, G.mul(nv, flip * side), bk.w);
+      }
+    }
+    // separately drawn bike lanes (Fietsstrook tool) crossing that radius: the same link, from where they cross it
+    for (const bl of R._els || []) {
+      if (bl.type !== 'bikelane' || bl.kind === 'priority' || !bl.pts || bl.pts.length < 2) continue;
+      const bp = R.basePts(bl, ppm), rr = rCut * ppm;
+      for (let i = 0; i < bp.length - 1; i++) {
+        const a = bp[i], dd = G.sub(bp[i + 1], a), A = G.dot(dd, dd); if (!A) continue;
+        const f = G.sub(a, C), B = 2 * G.dot(f, dd), Cc = G.dot(f, f) - rr * rr, disc = B * B - 4 * A * Cc;
+        if (disc < 0) continue;
+        for (const root of [-1, 1]) {
+          const u = (-B + root * Math.sqrt(disc)) / (2 * A); if (u < 0 || u > 1) continue;
+          const P0 = G.add(a, G.mul(dd, u));
+          // the leg it runs along: link outward, away from that road's centre line
+          let best = null; for (const lg of el.legs || []) { if (!lg.v || !lg.X) continue; const al = G.dot(G.sub(P0, lg.X), lg.v); if (al < 0) continue; const lt = G.dot(G.sub(P0, lg.X), G.rightN(lg.v)); if (!best || Math.abs(lt) / ppm - (Math.max(lg.le, lg.re) + 4) < best.score) best = { lg, lt, score: Math.abs(lt) / ppm - (Math.max(lg.le, lg.re) + 4) }; }
+          if (!best || best.score > 0) continue;
+          let away = G.norm(G.sub(P0, C)); if (G.dot(away, best.lg.v) < 0.5) away = best.lg.v;
+          link(P0, away, G.mul(G.rightN(best.lg.v), Math.sign(best.lt) || 1), bl.width || 1.5);
+        }
       }
     }
     if (el.bikePrio !== false) {
@@ -1522,6 +1543,7 @@ window.Render = (function () {
         case 'bikelane': {
           if (consumed.has(el)) break;
           yieldToRoundabouts(el); for (const c of crossCuts) clipOutside(c);
+          for (const c of bikeRingCuts) clipOutside(c); // stops before a roundabout's cycle path and swings into it (drawBikeRing)
           for (const b of busStops) if (b.g.through === el) clipOutside(b.g.mask); // detoured behind the bus stop
           const d = merged.has(el) ? Object.assign({}, el, { pts: merged.get(el), smooth: false, tanS: null, tanE: null }) : el;
           drawBikeSurface(ctx, d, ppm, P); markLane(d);
