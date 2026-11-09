@@ -241,7 +241,9 @@ window.RoadPresets = window.RoadPresets || {};
         ...(el.kind === 'bay' ? [num('D', '港灣深度 Bay depth', 2.5, 4.5, 0.1, '≈ 常用 3.0–3.5 m'), num('Lin', '進站漸變段 Entry taper', 5, 40, 0.5, '≈ 約 1:5'), num('Lout', '出站漸變段 Exit taper', 5, 40, 0.5, '≈ 約 1:3–1:4')] : []),
         { kind: 'txt', key: 'text', label: '標字 Wording' },
         { kind: 'law', text: '§190 停靠區：白色實線 (10 cm) 及白色專用車輛標字；§169 路緣紅實線 禁止臨時停車；§174-4 自行車標線於公車停靠區前後 2 m 內不得劃設。港灣、候車島尺寸法規未規定 (≈)。拖曳兩端點調整停靠區長度。' }];
-      case 'junction': return [...junctionCross(el), ...junctionCorner, { kind: 'btn', action: 'regenJunction', label: '↻ 重新產生 Regenerate' }, { kind: 'info', text: '路口範圍：範圍內的車道線、路段標線會被中斷 (行人穿越道、箭頭等不受影響)。拖曳節點可調整範圍；此框只在編輯時顯示，不會匯出。' }];
+      case 'junction': return [...junctionCross(el), ...junctionCorner,
+        ...((el.removed && el.removed.length) || (el.removedAt && el.removedAt.length) ? [{ kind: 'info', text: `已刪除 ${(el.removed || []).length + (el.removedAt || []).length} 個自動標線；「還原已刪除」可找回 (其他修改保留)。${(el.removed || []).length + (el.removedAt || []).length} deleted pieces can be brought back.` }, { kind: 'btn', action: 'restoreJunction', label: '還原已刪除 Restore deleted' }] : []),
+        { kind: 'btn', action: 'regenJunction', label: '↻ 重新產生 Regenerate' }, { kind: 'info', text: '路口範圍：範圍內的車道線、路段標線會被中斷 (行人穿越道、箭頭等不受影響)。拖曳節點可調整範圍；此框只在編輯時顯示，不會匯出。' }];
       case 'bikelane': {
         const minW = el.kind === 'priority' ? 1.2 : el.twoWay ? 2.5 : 1.2;
         const f = [{ kind: 'sel', key: 'kind', label: '種類 Type', options: [['exclusive', '專用車道 Exclusive (§174)'], ['priority', '優先車道 Priority (§174-4)']] },

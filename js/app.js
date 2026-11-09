@@ -774,6 +774,9 @@
       S.els.push(s); S.sel = s.id;
     }
     if (a === 'regen' && el.type === 'roundabout') { regenerateRoundabout(el); return; }
+    if (a === 'restoreJunction' && el.type === 'junction') { // bring back deleted pieces, keep every other edit
+      el.removed = []; el.removedAt = []; el.sig = ''; commit(); return;
+    }
     if (a === 'regenJunction' && el.type === 'junction' && el.genClick) {
       const made = buildJunction(el.genClick, el.genPrm || {});
       if (!made) return;
@@ -1412,10 +1415,10 @@
       if (o) { o.jkey = f.jkey; if (body(o) !== body(f)) o.edited = true; free.delete(o); } // same spot, but re-set (e.g. arrow kind changed): edited
       else unmatched.push(f);
     }
-    for (const f of unmatched) { // moved a little: edited; nothing of its kind nearby: deleted
-      if (f.bus) continue; // bus-lane pieces are new in this version, not something the user deleted
+    for (const f of unmatched) { // moved a little: edited. Nothing nearby is NOT taken as deleted: the piece may
+      // simply be new (an approach that joined the junction later, a newer marking) — only real deletions count
       const o = pick(f, 6);
-      if (o) { o.jkey = f.jkey; o.edited = true; free.delete(o); } else (j.removed = j.removed || []).push(f.jkey);
+      if (o) { o.jkey = f.jkey; o.edited = true; free.delete(o); }
     }
     for (const o of free) { o.jkey = 'legacy|' + o.id; o.edited = true; } // anything else of the user's is kept as it is
   }
