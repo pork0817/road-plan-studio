@@ -80,6 +80,9 @@ Arrows follow the §188 figures (直線, 弧形 R=2.0/1.2, 分岔 圖三–圖�
 
 ## Layers (drawing order)
 The 圖層 Layers list is the drawing order: items higher in the list are drawn on top. Use ↑ / ↓ to move anything above or below anything else. For example, put a bus lane or marking above a sidewalk, or a road above the markings it should cover.
+- The list stays at the bottom of the right panel. Items are numbered per kind (人行道 1, 人行道 2 …). Selecting something on the canvas highlights its row and scrolls to it.
+- Pieces an intersection or roundabout generated are grouped under it: ▸ shows them, and ↑ / ↓ or the lock on the group row act on the whole group.
+- The padlock locks an item (or a group). A locked item can't be picked on the canvas, dragged, nudged or deleted. Select it from the list to change its settings or unlock it.
 - New items go to the top of their kind's default level. Bottom to top, the levels are: road pieces (areas, sections, roundabouts, intersections); bus lanes and coloured surfaces; markings; sidewalks and islands; bus stops; bike lanes. So by default crosswalks still run under sidewalks.
 - Pieces an intersection rebuilds keep the places you gave them.
 - Projects saved before this change are sorted into those levels once when opened, so they look the same.

@@ -168,6 +168,7 @@
     const tol = 6 / S.view.s;
     const order = S.els.map((e, i) => [e, i]).sort((a, b) => hitRank(b[0]) - hitRank(a[0]) || b[1] - a[1]);
     for (const [el] of order) {
+      if (el.locked) continue; // locked: can't be picked on the canvas (select it from the layer list)
       const sh = R.shape(el, ppm(), P());
       if (!sh) continue;
       if (sh.poly && sh.poly.length >= 3 && G.pointInPoly(w, sh.poly)) return el;
@@ -177,7 +178,7 @@
   }
 
   function handlesOf(el) {
-    if (!el) return [];
+    if (!el || el.locked) return [];
     if (el.pts) {
       // vertices, plus a "+" handle in the middle of every segment: drag it to add a point there
       const hs = el.pts.map((p, i) => ({ key: 'pts', i, p }));
@@ -700,6 +701,7 @@
       renderProps(); redraw(); return;
     }
     if (e.key === 'Enter') { if (S.draft && S.draft.pts) finishDraft(); return; }
+    if (sel && sel.locked && (e.key === 'Backspace' || e.key === 'Delete' || e.key.startsWith('Arrow') || e.key === '[' || e.key === ']' || e.key === 'f' || e.key === 'a')) { e.preventDefault(); return; } // locked
     if (e.key === 'Backspace' || e.key === 'Delete') {
       e.preventDefault();
       if (S.draft && S.draft.pts && S.draft.pts.length) { S.draft.pts.pop(); if (!S.draft.pts.length) S.draft = null; redraw(); }
@@ -728,6 +730,7 @@
 
   function deleteEl(id) {
     const el = findEl(id);
+    if (el && el.locked) return; // unlock it in the layer list first
     if (el && el.owner) {
       const o = findEl(el.owner);
       if (o && o.type === 'roundabout' && el.legKey) (o.removed = o.removed || []).push(el.type + ':' + el.legKey);
@@ -2058,7 +2061,8 @@
       }
       if (el) {
         const d = document.createElement('button'); d.textContent = '複製 Duplicate'; d.onclick = () => duplicate(el); btns.appendChild(d);
-        const x = document.createElement('button'); x.className = 'danger'; x.textContent = '刪除 Delete'; x.onclick = () => deleteEl(el.id); btns.appendChild(x);
+        const x = document.createElement('button'); x.className = 'danger'; x.textContent = '刪除 Delete'; x.disabled = !!el.locked; x.onclick = () => deleteEl(el.id); btns.appendChild(x);
+        if (el.locked) { const li = document.createElement('div'); li.className = 'info'; li.textContent = '已鎖定：不能在圖上選取、移動或刪除；可在圖層清單解鎖。Locked: unlock it in the layer list.'; box.insertBefore(li, box.children[1] || null); }
       }
       box.appendChild(btns);
     } else {
@@ -2090,28 +2094,106 @@
     sc.appendChild(law);
     box.appendChild(sc);
 
-    // layers
-    const lh = document.createElement('h5'); lh.textContent = `圖層 Layers (${S.els.filter((e) => e.type !== 'lanemask' && e.type !== 'mediancut').length})`; box.appendChild(lh);
+    // layers: top of the list = drawn on top. Pieces an intersection / roundabout generated are grouped under it.
+    const prevBox = document.querySelector('#props .layerbox'), prevScroll = prevBox ? prevBox.scrollTop : 0;
+    box.appendChild(layersPanel(prevScroll));
+  }
+
+  const LOCK_SVG = (on) => `<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5" fill="currentColor"/><path d="M5 7V5a3 3 0 0 1 ${on ? '6 0v2' : '6 0'}" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>`;
+  const layerOpen = new Set();
+  const isHiddenLayer = (e) => e.type === 'lanemask' || e.type === 'mediancut'; // internal cut-outs aren't layers
+  const shortName = (e) => (P().typeNames[e.type] || e.type).split(' ')[0];
+  function layerItems() {
+    const kids = new Map();
+    for (const e of S.els) if (e.owner && !isHiddenLayer(e)) { if (!kids.has(e.owner)) kids.set(e.owner, []); kids.get(e.owner).push(e); }
+    const items = [], seen = new Set();
+    for (let i = S.els.length - 1; i >= 0; i--) {
+      const e = S.els[i];
+      if (isHiddenLayer(e)) continue;
+      const gid = kids.has(e.id) && !e.owner ? e.id : e.owner && findEl(e.owner) && kids.has(e.owner) ? e.owner : null;
+      if (gid) {
+        if (seen.has(gid)) continue; seen.add(gid);
+        const parent = findEl(gid);
+        items.push({ group: gid, parent, members: [parent].concat(kids.get(gid)) });
+      } else items.push({ el: e, members: [e] });
+    }
+    return items;
+  }
+  // numbers per kind, starting from 1, kept on the element so names don't shuffle when the order changes
+  function numberTopLevel() {
+    const max = {};
+    for (const e of S.els) if (e.num) max[e.type] = Math.max(max[e.type] || 0, e.num);
+    for (const e of S.els) if (!e.owner && !isHiddenLayer(e) && !e.num) e.num = (max[e.type] = (max[e.type] || 0) + 1);
+  }
+  const extraName = (e) => (e.type === 'line' ? P().lineStyles[e.style].name : e.type === 'text' ? e.text : e.type === 'crosswalk' ? P().crosswalk[e.kind].name.replace('行人穿越道線', '') : e.type === 'arrow' ? e.kind : '');
+  // move a block of elements (keeping their order) to sit just above / below another block in the drawing order
+  function moveBlock(block, other, above) {
+    const set = new Set(block), rest = S.els.filter((e) => !set.has(e));
+    const idx = other.map((e) => rest.indexOf(e)).filter((i) => i >= 0);
+    if (!idx.length) return;
+    const at = above ? Math.max(...idx) + 1 : Math.min(...idx);
+    const ordered = S.els.filter((e) => set.has(e));
+    rest.splice(at, 0, ...ordered); S.els = rest; commit();
+  }
+  function layersPanel(prevScroll) {
+    numberTopLevel();
+    const wrap = document.createElement('div'); wrap.className = 'layerbox';
+    const items = layerItems();
+    const sel = findEl(S.sel);
+    if (sel && sel.owner) layerOpen.add(sel.owner); // show the selected piece inside its group
+    const lh = document.createElement('h5'); lh.textContent = `圖層 Layers (${items.length})`; wrap.appendChild(lh);
     const ul = document.createElement('ul'); ul.className = 'layers';
-    S.els.slice().reverse().filter((e) => e.type !== 'lanemask' && e.type !== 'mediancut').forEach((e) => { // internal cut-outs aren't layers
-      const li = document.createElement('li'); if (e.id === S.sel) li.className = 'sel';
+    let selRow = null;
+    const row = (e, opts) => {
+      const li = document.createElement('li');
+      if (e.id === S.sel) { li.classList.add('sel'); selRow = li; }
+      if (opts.child) li.classList.add('child');
+      const locked = opts.members.every((m) => m.locked);
+      if (locked) li.classList.add('locked');
+      const tg = document.createElement('button'); tg.className = 'tg';
+      if (opts.group) { const open = layerOpen.has(opts.group); tg.textContent = open ? '▾' : '▸'; tg.title = open ? '收合 Collapse' : '展開 Expand'; tg.onclick = (ev) => { ev.stopPropagation(); open ? layerOpen.delete(opts.group) : layerOpen.add(opts.group); renderProps(); }; }
+      else tg.disabled = true;
       const sp = document.createElement('span');
-      let extra = '';
-      if (e.type === 'line') extra = P().lineStyles[e.style].name;
-      if (e.type === 'text') extra = e.text;
-      if (e.type === 'crosswalk') extra = P().crosswalk[e.kind].name;
-      sp.textContent = (P().typeNames[e.type] || e.type).split(' ')[0] + (extra ? ' · ' + extra : '');
-      li.appendChild(sp);
-      const up = document.createElement('button'); up.textContent = '↑'; up.title = '上移 Bring forward (畫在上層 drawn on top)';
-      up.onclick = (ev) => { ev.stopPropagation(); const i = S.els.indexOf(e); if (i < S.els.length - 1) { S.els.splice(i, 1); S.els.splice(i + 1, 0, e); commit(); } };
-      const dn = document.createElement('button'); dn.textContent = '↓'; dn.title = '下移 Send backward (畫在下層 drawn underneath)';
-      dn.onclick = (ev) => { ev.stopPropagation(); const i = S.els.indexOf(e); if (i > 0) { S.els.splice(i, 1); S.els.splice(i - 1, 0, e); commit(); } };
-      const x = document.createElement('button'); x.textContent = '✕'; x.onclick = (ev) => { ev.stopPropagation(); deleteEl(e.id); };
-      li.append(up, dn, x);
+      const ex = extraName(e);
+      sp.textContent = shortName(e) + ' ' + (opts.child ? opts.idx : e.num || '') + (ex ? ' · ' + ex : '') + (opts.group ? `  (${opts.members.length - 1})` : '');
+      const lk = document.createElement('button'); lk.className = 'lk' + (locked ? ' on' : ''); lk.innerHTML = LOCK_SVG(locked);
+      lk.title = locked ? '解鎖 Unlock' : '鎖定 Lock (不能在圖上選取、移動或刪除 can\'t be picked, moved or deleted)';
+      lk.onclick = (ev) => { ev.stopPropagation(); for (const m of opts.members) { if (locked) delete m.locked; else m.locked = true; } commit(); };
+      const up = document.createElement('button'); up.textContent = '↑'; up.title = '上移 Bring forward (畫在上層 drawn on top)'; up.disabled = locked;
+      const dn = document.createElement('button'); dn.textContent = '↓'; dn.title = '下移 Send backward (畫在下層 drawn underneath)'; dn.disabled = locked;
+      up.onclick = (ev) => { ev.stopPropagation(); opts.move(true); };
+      dn.onclick = (ev) => { ev.stopPropagation(); opts.move(false); };
+      const x = document.createElement('button'); x.textContent = '✕'; x.title = '刪除 Delete'; x.disabled = locked;
+      x.onclick = (ev) => { ev.stopPropagation(); deleteEl(e.id); };
+      li.append(tg, sp, lk, up, dn, x);
       li.onclick = () => { if (S.tool !== 'select') setTool('select'); S.sel = e.id; renderProps(); redraw(); };
       ul.appendChild(li);
+    };
+    items.forEach((it, k) => {
+      const above = items[k - 1], below = items[k + 1];
+      const move = (up) => { const o = up ? above : below; if (o) moveBlock(it.members, o.members, up); };
+      if (!it.group) { row(it.el, { members: it.members, move }); return; }
+      row(it.parent, { group: it.group, members: it.members, move });
+      if (!layerOpen.has(it.group)) return;
+      // the group's pieces, top first, numbered per kind within the group
+      const kids = it.members.slice(1), count = {}, idxOf = new Map();
+      for (const e of kids) { count[e.type] = (count[e.type] || 0) + 1; idxOf.set(e, count[e.type]); }
+      for (let i = kids.length - 1; i >= 0; i--) {
+        const e = kids[i];
+        const moveChild = (up) => { const o = kids[up ? i + 1 : i - 1]; if (o) moveBlock([e], [o], up); };
+        row(e, { child: true, idx: idxOf.get(e), members: [e], move: moveChild });
+      }
     });
-    box.appendChild(ul);
+    wrap.appendChild(ul);
+    // keep the list where it was, and bring the selected row into view
+    requestAnimationFrame(() => {
+      wrap.scrollTop = prevScroll;
+      if (selRow) {
+        const r = selRow.getBoundingClientRect().top - wrap.getBoundingClientRect().top + wrap.scrollTop; // row position inside the list
+        if (r < wrap.scrollTop + 30 || r > wrap.scrollTop + wrap.clientHeight - 30) wrap.scrollTop = r - wrap.clientHeight / 2;
+      }
+    });
+    return wrap;
   }
 
   // ---------------- files ----------------
