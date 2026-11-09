@@ -1020,13 +1020,20 @@
   // Curved kerb returns where each road meets the ring: a fillet circle of radius rf tangent to the road
   // edge and to the ring. Stored in px on the roundabout for drawing (paving, edge line, cut-outs, ring gaps).
   function rbCorners(rb, legs) {
-    const m = ppm(), C = rb.p, rf = (rb.cornerR != null ? rb.cornerR : 12) * m;
+    const m = ppm(), C0 = rb.p, rf = (rb.cornerR != null ? rb.cornerR : 12) * m;
     rb.corners = []; rb.cornerMasks = [];
+    if (rb.turbo) { // the half-angle of the main road's mouth (the leg on the spiral axis): the edge's step stays inside it
+      const g = R.turboGeom(rb); let best = null;
+      for (const lg of legs) { const a = G.angle(G.sub(lg.X, C0)), d = Math.abs(Math.atan2(Math.sin(a - g.al), Math.cos(a - g.al))), dd = Math.min(d, Math.PI - d); if (!best || dd < best.dd) best = { dd, lg }; }
+      if (best) rb.turboMouth = Math.asin(Math.min(0.95, (Math.max(best.lg.leftExt, best.lg.rightExt) + 0.3) / g.Rout));
+    }
     legs.forEach((lg, li) => {
-      const Rb = G.dist(lg.X, C);
       const angs = [];
       for (const side of [1, -1]) {
         const ext = (side > 0 ? lg.rightExt : lg.leftExt) * m;
+        // the ring edge this corner meets: a circle about the centre — or, on a turbo, the shifted half-circle on its side
+        let C = C0, Rb = G.dist(lg.X, C0);
+        if (rb.turbo) { const ep0 = G.add(lg.X, G.mul(lg.nv, side * ext)), sh = R.turboHalfCentre(rb, G.angle(G.sub(ep0, C0))); C = { x: C0.x + sh.dx * m, y: C0.y + sh.dy * m }; Rb = R.turboGeom(rb).Rout * m; }
         const base = G.sub(G.add(lg.X, G.mul(lg.nv, side * (ext + rf))), C);
         const b = G.dot(base, lg.v), q = b * b - (G.dot(base, base) - (Rb + rf) ** 2);
         if (q < 0) continue;
@@ -1048,7 +1055,7 @@
         if (curve && sL > s0) (rb.cornerMasks = rb.cornerMasks || []).push([at(s0, 0), at(sL, 0), at(sL, lo), at(s0, lo)]);
         rb.corners.push({ leg: li, side, Q, rf: rb.cornerR != null ? rb.cornerR : 12, T1, T2, E, C: G.copy(C), Rb: Rb / m,
           sAlong: sq / m, sT2: G.dot(G.sub(T2, lg.X), lg.v) / m, ext: ext / m, mask: [at(s0, lo), at(s1, lo), at(s1, hi), at(s0, hi)] });
-        angs.push(G.angle(G.sub(T2, C)));
+        angs.push(G.angle(G.sub(T2, C0)));
       }
       if (angs.length === 2) { // exact ring edge-line gap for this leg: between its two corner tangent points
         const d = Math.atan2(Math.sin(angs[1] - angs[0]), Math.cos(angs[1] - angs[0]));
@@ -1330,7 +1337,10 @@
   function syncRoundabout(rb) {
     if (rb.curvedYield === undefined) rb.curvedYield = true;
     const m = ppm(), legs = rbLegs(rb);
-    rb.legs = legs.map((lg) => ({ ang: G.angle(G.sub(lg.X, rb.p)), w: Math.max(lg.rightExt, lg.leftExt) }));
+    // per leg: where it meets the ring, its direction and lane extents (left / right of the outward direction v),
+    // and which side carries traffic into the ring — for the cycle path crossings drawn by the renderer
+    rb.legs = legs.map((lg) => ({ ang: G.angle(G.sub(lg.X, rb.p)), w: Math.max(lg.rightExt, lg.leftExt),
+      X: G.copy(lg.X), v: G.copy(lg.v), le: lg.leftExt, re: lg.rightExt, oneWay: !!lg.oneWay, inc: !!lg.incoming }));
     legs.forEach((lg, i) => { lg.li = i; });
     rb.legSecIds = [...new Set(legs.map((lg) => lg.el.id))]; // roads joining the ring: their outline is part of the kerb
     rbCorners(rb, legs);
@@ -1366,6 +1376,7 @@
       if (rb.crosswalks && !removed.includes('crosswalk:' + lg.key)) {
         let c = kids.find((k) => k.type === 'crosswalk' && k.legKey === lg.key);
         if (!c) { c = { id: newId(), type: 'crosswalk', owner: rb.id, legKey: lg.key, kind: rb.cwKind || 'ties', width: rb.cwWidth || 4, gap: 0.4, green: false, setback: rb.cwSetback != null ? rb.cwSetback : 6.5 }; S.els.push(c); }
+        if (rb.bikeRing) c.setback = Math.max(c.setback, (rb.bikeGap || 5) + (rb.bikeW || 2) + 1.3 - (RB_YD + 0.54)); // outside the cycle path and its shark teeth
         const dc = RB_YD + 0.54 + c.setback + c.width / 2;
         c.a = at(dc, -lg.leftExt + 0.05); c.b = at(dc, lg.rightExt - 0.05); c.dir = G.angle(lg.v);
         c.anchor = { X: G.copy(lg.X), v: G.copy(lg.v), w: c.width };
@@ -1574,7 +1585,8 @@
   function buildRoundabout(C, prm) {
     return { id: newId(), type: 'roundabout', p: G.copy(C), R: prm.R, lanes: prm.turbo ? 2 : prm.lanes, laneWidth: prm.laneWidth, apron: prm.turbo ? 0 : prm.apron,
       turbo: !!prm.turbo, divider: prm.divider || 'raised', turboAxis: prm.turboAxis || 0, turboTaper: 20, cornerR: prm.cornerR != null ? prm.cornerR : 12, laneStop: prm.laneStop !== false, solidApproach: prm.solidApproach === true, solidLen: prm.solidLen != null ? prm.solidLen : 30, stopLines: prm.stopLines !== false, stopGap: prm.stopGap != null ? prm.stopGap : 2, curveLanes: prm.curveLanes !== false, splitters: prm.splitters !== false, curvedYield: prm.curvedYield !== false,
-      island: prm.island || 'island', legs: [], yields: prm.yields, crosswalks: prm.crosswalks, cwKind: prm.cwKind, cwWidth: prm.cwWidth, cwSetback: prm.cwSetback, removed: [] };
+      island: prm.island || 'island', legs: [], yields: prm.yields, crosswalks: prm.crosswalks, cwKind: prm.cwKind, cwWidth: prm.cwWidth, cwSetback: prm.cwSetback, removed: [],
+      bikeRing: !!prm.bikeRing, bikeW: prm.bikeW || 2, bikeGap: prm.bikeGap != null ? prm.bikeGap : 5, bikePrio: prm.bikePrio !== false };
   }
 
   // ---------------- intersection generator ----------------
@@ -2301,6 +2313,9 @@
       f.options.forEach(([v, l]) => { const o = document.createElement('option'); o.value = v; o.textContent = l; inp.appendChild(o); });
       inp.value = f.value != null ? f.value : target[f.key];
       inp.onchange = () => onChange(f.key, inp.value);
+    } else if (f.kind === 'chknum') { // a toggle for a width: on = the given default width, off = 0
+      inp = document.createElement('input'); inp.type = 'checkbox'; inp.checked = +target[f.key] > 0;
+      inp.onchange = () => onChange(f.key, inp.checked ? f.on : 0);
     } else if (f.kind === 'chk') {
       inp = document.createElement('input'); inp.type = 'checkbox'; inp.checked = !!target[f.key];
       inp.onchange = () => onChange(f.key, inp.checked);

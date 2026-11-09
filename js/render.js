@@ -556,15 +556,33 @@ window.Render = (function () {
     return { S: [shaft(2.95), head], R: R1, L: R1.map(mirror), SR: SR1, SL: SR1.map(mirror),
       LR: [shaft(2.55)].concat(arm(2.55), arm(2.55).map(mirror)), SLR: [shaft(2.95), head].concat(arm(0.35), arm(0.35).map(mirror)), U: ARROWS.U };
   })();
-  // ---- Japan: 標識令 別表第6 「進行方向」(204) — 5 m long, 0.15 m shaft; straight head 2.5 m × 0.45 m; a turn
-  // arrow's 2.2 m head leans toward the turn (tip 0.30 m to the side, outer corner 0.6 m out), joined by R 1.0/0.5. ----
+  // ---- Japan: 標識令 別表第6 「進行方向」(204) — 5 m long, 0.15 m shaft; straight head 2.5 m × 0.45 m. A turn head (2.2 m)
+  // leans toward the turn: the shaft curves (R ≈ 0.75 m on its centre line) by a small angle, so the tip ends 0.3 m
+  // (turn arrow) or 0.6 m (side head of a combined arrow) to the side, as in the figure. ----
   const JP_ARROWS = (() => {
-    const TURN = [[-0.075, 0], [0.075, 0], [0.075, 3.55], [-0.225, 5.0], [-0.64, 3.95], [-0.25, 2.81], [-0.12, 3.25], [-0.075, 2.9]]; // left
-    const S = [[[-0.075, 0], [0.075, 0], [0.075, 2.5], [0.225, 2.5], [0, 5.0], [-0.225, 2.5], [-0.075, 2.5]]];
-    const SHEAD = [[-0.075, 0], [0.075, 0], [0.075, 2.8], [0.225, 2.8], [0, 5.0], [-0.225, 2.8], [-0.075, 2.8]];   // straight with a 2.2 m head
-    const SIDE = [[-0.075, 2.0], [-0.225, 2.5], [-0.64, 1.45], [-0.25, 0.31], [-0.12, 0.75], [-0.075, 0.4]];     // left side head, 0.3 m below the top head
-    return { S, L: [TURN], R: [mirror(TURN)], SL: [SHEAD, SIDE], SR: [mirror(SHEAD), mirror(SIDE)],
-      LR: [TURN, mirror(TURN)], SLR: [SHEAD, SIDE, mirror(SIDE)], U: ARROWS.U };
+    const hw = 0.075, D2R = Math.PI / 180;
+    // one leaning arm, leaving the shaft centre line at height y0, turning left by th; head length hl, base width bw
+    const arm = (y0, th, hl, bw, yTip) => {
+      const r = 0.75, n = 8, cl = [];
+      // straight part so the tip lands at yTip
+      const y1 = yTip - (r * Math.sin(th) + (0.1 + hl) * Math.cos(th));
+      if (y1 > y0) cl.push([0, y0]);
+      for (let k = 0; k <= n; k++) { const a = (th * k) / n; cl.push([-(r - r * Math.cos(a)), Math.max(y0, y1) + r * Math.sin(a)]); }
+      const d = [-Math.sin(th), Math.cos(th)], nr = [d[1], -d[0]]; // direction and its right normal
+      const last = cl[cl.length - 1], B = [last[0] + d[0] * 0.1, last[1] + d[1] * 0.1];
+      cl.push(B);
+      const off = (p, k, s) => { // offset the centre line by s at point k (normal from the local direction)
+        const q = cl[Math.min(k + 1, cl.length - 1)], o = cl[Math.max(k - 1, 0)], t = [q[0] - o[0], q[1] - o[1]], L = Math.hypot(t[0], t[1]) || 1;
+        return [p[0] + (t[1] / L) * s, p[1] - (t[0] / L) * s];
+      };
+      const left = cl.map((p, k) => off(p, k, -hw)), right = cl.map((p, k) => off(p, k, hw));
+      const tip = [B[0] + d[0] * hl, B[1] + d[1] * hl];
+      return left.concat([[B[0] - nr[0] * bw / 2, B[1] - nr[1] * bw / 2], tip, [B[0] + nr[0] * bw / 2, B[1] + nr[1] * bw / 2]], right.reverse());
+    };
+    const straight = (yb) => [[-hw, 0], [hw, 0], [hw, yb], [0.225, yb], [0, 5.0], [-0.225, yb], [-hw, yb]];
+    const L = [arm(0, 8 * D2R, 2.2, 0.55, 5.0)], SIDE = arm(0.3, 15 * D2R, 2.2, 0.5, 2.5);
+    return { S: [straight(2.5)], L, R: L.map(mirror), SL: [straight(2.8), SIDE], SR: [straight(2.8), SIDE].map(mirror),
+      LR: [arm(0, 15 * D2R, 2.2, 0.5, 5.0), mirror(arm(0, 15 * D2R, 2.2, 0.5, 5.0))], SLR: [straight(2.8), SIDE, mirror(SIDE)], U: ARROWS.U };
   })();
   const ARROW_SETS = { TW: ARROWS, NL: NL_ARROWS, JP: JP_ARROWS };
   const ARROW_ANCHOR = { NL: { R: 0.30, SR: 0.30, L: -0.30, SL: -0.30 } }; // lane centre relative to the shaft (else: outline centre)
@@ -728,8 +746,12 @@ window.Render = (function () {
   R.turboGeom = (el) => {
     const w = el.laneWidth, sep = el.divider === 'double' ? 0.3 : 0.45, D = w + sep;
     const Rout = el.R - D / 2, Rdo = Rout - w, Rdi = Rdo - sep, R1 = Math.max(3, Rdi - w);
-    const tau = ((el.turboTaper || 20) * Math.PI) / 180;
-    return { w, sep, D, Rout, Rdo, Rdi, R1, al: el.turboAxis || 0, tau, nose: Math.min(tau, (12 * Math.PI) / 180) };
+    // the outer edge steps by D across the main road's mouth: keep that step inside the (open) mouth, so the kerb on
+    // both sides is a clean half-circle (turboMouth: the mouth's half-angle, worked out from the road each sync)
+    let tau = ((el.turboTaper || 20) * Math.PI) / 180;
+    if (el.turboMouth) tau = Math.min(tau, Math.max((4 * Math.PI) / 180, el.turboMouth * 0.7));
+    // the island's step is rounded over a wider angle, like the S-shaped nose of a real turbo island
+    return { w, sep, D, Rout, Rdo, Rdi, R1, al: el.turboAxis || 0, tau, nose: (25 * Math.PI) / 180 };
   };
   // distance (m) from the centre to a spiral boundary of nominal radius r, at screen angle th
   R.turboR = (g, r, th, tauOverride) => {
@@ -748,6 +770,12 @@ window.Render = (function () {
     return o;
   };
   R.turboEdgeAt = (el, g, th, rM, ppm) => R.turboR(g, rM, th) * ppm;
+  // outside the step, each half of a turbo boundary is a circle of nominal radius r about a centre shifted ±D/2
+  // along the axis: the one on the side of angle th
+  R.turboHalfCentre = (el, th) => {
+    const g = R.turboGeom(el), d = Math.atan2(Math.sin(th - g.al), Math.cos(th - g.al)), sg = d >= 0 ? 1 : -1;
+    return { dx: sg * (g.D / 2) * Math.cos(g.al), dy: sg * (g.D / 2) * Math.sin(g.al) };
+  };
   R.rbOutline = (el, ppm, extraM = 0) => {
     if (!el.turbo) return R.circlePts(el.p, (el.R + extraM) * ppm);
     const g = R.turboGeom(el), o = ringPts(el, g, g.Rout + extraM, ppm);
@@ -800,6 +828,39 @@ window.Render = (function () {
     if (el.divider !== 'double') for (const [d0, d1] of dividerRanges(g)) drawSidewalk(ctx, { pts: dividerPoly(el, g, ppm, d0, d1), style: 'concrete' }, ppm, P); // raised lane divider
   }
 
+
+  // ---------- cycle path around a roundabout (NL fietspad rondom) ----------
+  // A red one-way cycle path bikeGap m outside the ring (≈ 5 m: room for one car between ring and crossing), bikeW
+  // wide. Where cyclists have priority (bibeko) each road crossing gets 0.50 m blocks along both edges (RBBV 2.2c)
+  // and haaientanden for drivers: outside the crossing on the way in, inside it on the way out.
+  function drawBikeRing(ctx, el, ppm, P) {
+    const C = el.p, gap = el.bikeGap != null ? el.bikeGap : 5, w = el.bikeW || 2;
+    const r0 = (el.R + gap) * ppm, r1 = (el.R + gap + w) * ppm, flip = R.LHT ? -1 : 1;
+    ctx.save();
+    ctx.fillStyle = P.colors.bike;
+    ctx.beginPath(); ctx.arc(C.x, C.y, r1, 0, 2 * Math.PI); ctx.arc(C.x, C.y, r0, 0, 2 * Math.PI, true); ctx.fill();
+    if (el.bikePrio !== false) {
+      ctx.fillStyle = ctx.strokeStyle = P.colors.white;
+      const Y = { base: 0.5, height: 0.5 };
+      for (const lg of el.legs || []) {
+        if (!lg.v || !lg.X) continue;
+        const nv = G.rightN(lg.v), mid = gap + w / 2;
+        const across = (rr, l0, l1) => { // points on the circle of radius rr (px) across the road, lateral l0 → l1 (m, leg frame)
+          const o = []; for (let k = 0; k <= 16; k++) { const lat = l0 + ((l1 - l0) * k) / 16, q = G.add(G.add(lg.X, G.mul(lg.v, mid * ppm)), G.mul(nv, flip * lat * ppm)); o.push(G.add(C, G.mul(G.norm(G.sub(q, C)), rr))); }
+          return o;
+        };
+        const lo = -lg.le + 0.3, hi = lg.re - 0.3;
+        ctx.lineWidth = 0.5 * ppm; ctx.lineCap = 'butt'; ctx.setLineDash([0.5 * ppm, 0.5 * ppm]);
+        for (const rr of [r0 + 0.25 * ppm, r1 - 0.25 * ppm]) { path(ctx, across(rr, lo, hi)); ctx.stroke(); }
+        ctx.setLineDash([]);
+        const inSpan = lg.oneWay ? (lg.inc ? [lo, hi] : null) : [lo, -0.3], outSpan = lg.oneWay ? (lg.inc ? null : [lo, hi]) : [0.3, hi];
+        const out = (q) => G.norm(G.sub(q.p, C)), inw = (q) => G.mul(G.norm(G.sub(q.p, C)), -1);
+        if (inSpan && inSpan[1] > inSpan[0]) teethAlong(ctx, across(r1 + 0.3 * ppm, inSpan[0], inSpan[1]), out, Y, ppm);
+        if (outSpan && outSpan[1] > outSpan[0]) teethAlong(ctx, across(r0 - 0.3 * ppm, outSpan[0], outSpan[1]), inw, Y, ppm);
+      }
+    }
+    ctx.restore();
+  }
 
   // ---------- roundabout corners (curved kerb returns) ----------
   const shortArc = (c, r, p0, p1) => {
@@ -1417,6 +1478,7 @@ window.Render = (function () {
           ctx.restore();
           drawRoundaboutIsland(ctx, el, ppm, P);
           for (const sp of el.splits || []) { ctx.save(); for (const c of crossCuts) clipOutside(c); drawSidewalk(ctx, { pts: sp, style: 'island' }, ppm, P); ctx.restore(); }
+          if (el.bikeRing) drawBikeRing(ctx, el, ppm, P);
           break;
         case 'surface': clipRoad(); yieldToRoundabouts(el); drawSurface(ctx, el, ppm, P); break;
         case 'buslane': clipRoad(); for (const c of crossCuts) clipOutside(c); cutJunctions(); drawBikeSurface(ctx, el, ppm, P); markLane(el); break;

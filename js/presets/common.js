@@ -52,7 +52,10 @@ window.RoadPresetKit = (function () {
             { kind: 'num', key: 'lanesB', label: '對向車道數 (0 = 單行道)', min: 0, max: 6, step: 1 });
           if (el.lanesB > 0) f.push({ kind: 'sel', key: 'centerType', label: '中央 Centre', options: K.centerTypes });
           if (el.lanesB > 0 && el.centerType === 'median') f.push(num('medianWidth', '分隔島寬 Median', 0.5, 10, 0.1));
-          f.push(num('bikeLane', T.bikeLane || '自行車道寬 Bike lane (0 = 無)', 0, 3, 0.1, T.bikeLaneLaw));
+          if (T.bikeToggle) { // a switch, and the width once it is on
+            f.push({ kind: 'chknum', key: 'bikeLane', label: T.bikeToggle.label, on: T.bikeToggle.on });
+            if (+el.bikeLane > 0) f.push(num('bikeLane', T.bikeLane || '自行車道寬 Bike lane width', 0.75, 3, 0.05, T.bikeLaneLaw));
+          } else f.push(num('bikeLane', T.bikeLane || '自行車道寬 Bike lane (0 = 無)', 0, 3, 0.1, T.bikeLaneLaw));
           if (T.slowLane !== false) f.push(num('slowLane', T.slowLane || '機慢車道寬 Slow lane (0 = 無)', 0, 4, 0.1));
           f.push({ kind: 'chk', key: 'pave', label: '鋪路面 Pave' }, { kind: 'chk', key: 'edge', label: T.edge || '路面邊線 Edge lines' }, { kind: 'chk', key: 'smooth', label: '平滑曲線 Smooth curve' },
             { kind: 'head', label: '更多 More', fold: true },
@@ -122,6 +125,12 @@ window.RoadPresetKit = (function () {
             { kind: 'chk', key: 'stopLines', label: '停止線 Stop lines before crosswalks' }, num('stopGap', '停止線淨距 Stop gap', 1, 3, 0.1, T.stopGap),
             { kind: 'chk', key: 'solidApproach', label: '近圓環改實線 Solid lane lines on approach' }, num('solidLen', '實線長度 Solid length', 0, 60, 1, '≈'));
           if (!tool) f.push({ kind: 'sel', key: 'island', label: '中央島 Island', options: K.sidewalkStyles });
+          if (T.bikeRing) {
+            f.push({ kind: 'head', label: T.bikeRing.head }, { kind: 'chk', key: 'bikeRing', label: T.bikeRing.label });
+            if (el.bikeRing) f.push(num('bikeW', T.bikeRing.width, 1.5, 4, 0.1, T.bikeRing.widthLaw), num('bikeGap', T.bikeRing.gap, 2, 10, 0.5, T.bikeRing.gapLaw),
+              { kind: 'chk', key: 'bikePrio', label: T.bikeRing.prio }, ...law(T.bikeRing.law));
+            f.push({ kind: 'head', label: '入口 Entries' });
+          }
           f.push({ kind: 'chk', key: 'yields', label: T.yieldLabel || '入口讓路線 Yield lines' },
             { kind: 'chk', key: 'curvedYield', label: '沿圓環弧線 Follow the circle' },
             { kind: 'chk', key: 'crosswalks', label: '行人穿越道 Crosswalks' });
