@@ -923,15 +923,24 @@ window.Render = (function () {
       ctx.restore();
     };
     const hasDiamonds = el.kind !== 'priority' && el.diamonds !== false;
+    // §175 bus-lane wording, written along the lane: always whole. A diamond starts each run (after every
+    // intersection, §174); the wording follows it, repeats between diamonds, and is repeated just before the end.
+    const txt = el.text || '公車專用', nTxt = Array.from(txt).length, tLen = nTxt * 2.5 + (nTxt - 1) * 1.0;
+    const words = [];
+    const putWords = (mid) => { if (mid - tLen / 2 > 0.5 && mid + tLen / 2 < total - 0.5 && words.every((w) => Math.abs(w - mid) > tLen + 2)) words.push(mid); };
     for (let sd = Math.min(2, total / 4); sd < total - 1.3; sd += sp) {
       if (hasDiamonds) diamond(sd);
-      const mid = sd + sp / 2;
-      if (el.type === 'buslane') { // §175 white lane wording, written along the lane
-        const txt = el.text || '公車專用', n = Array.from(txt).length, len = n * 2.5 + (n - 1) * 1.0;
-        if (mid + len / 2 < total - 1) { const q = atLen(pts, cum, mid * ppm); drawText(ctx, P, q.p, G.angle(q.t), txt, 2.5 * ppm, 1.0 * ppm, white, 'far', 1.0 * ppm); }
+      let mid = sd + sp / 2;
+      if (el.type === 'buslane') {
+        if (mid + tLen / 2 >= total - 1 && !words.length) mid = sd + 1.25 + 1.5 + tLen / 2; // short run: right after the diamond
+        putWords(mid);
       } else if (el.icons !== false && mid < total - 1.5) {
         if (el.twoWay) { icon(mid, w / 4, false); icon(mid, -w / 4, true); } else icon(mid, 0, false);
       }
+    }
+    if (el.type === 'buslane') {
+      putWords(total - 2 - tLen / 2); // whole wording just before the lane ends (e.g. before the next intersection)
+      for (const mid of words) { const q = atLen(pts, cum, mid * ppm); drawText(ctx, P, q.p, G.angle(q.t), txt, 2.5 * ppm, 1.0 * ppm, white, 'far', 1.0 * ppm); }
     }
   }
 
@@ -1074,6 +1083,24 @@ window.Render = (function () {
     if (cl > 0.5) drawText(ctx, P, g.boxMid, g.travelDir, txt, cl * ppm, Math.min(1.0, g.lw * 0.35) * ppm, white, 'far', cl * 0.4 * ppm);
   }
 
+  // Split a lane's centre line into the runs that lie outside the given areas (intersections, crosswalks), so each
+  // run can be marked on its own: §174 re-marks a lane after every intersection, and wording is never cut in half.
+  R.splitRuns = function (pts, areas, ppm, minLenM = 3) {
+    if (!areas.length || pts.length < 2) return [pts];
+    const dense = [pts[0]];
+    for (let i = 1; i < pts.length; i++) {
+      const n = Math.max(1, Math.ceil(G.dist(pts[i - 1], pts[i]) / (0.5 * ppm)));
+      for (let k = 1; k <= n; k++) dense.push(G.add(pts[i - 1], G.mul(G.sub(pts[i], pts[i - 1]), k / n)));
+    }
+    const boxes = areas.map((a) => { let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity; for (const p of a) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); } return { a, x0, y0, x1, y1 }; });
+    const inside = (p) => boxes.some((b) => p.x >= b.x0 && p.x <= b.x1 && p.y >= b.y0 && p.y <= b.y1 && G.pointInPoly(p, b.a));
+    const runs = []; let cur = [];
+    for (const p of dense) { if (inside(p)) { if (cur.length) runs.push(cur); cur = []; } else cur.push(p); }
+    if (cur.length) runs.push(cur);
+    const lenOf = (r) => { let L = 0; for (let i = 1; i < r.length; i++) L += G.dist(r[i - 1], r[i]); return L; };
+    return runs.filter((r) => r.length > 1 && lenOf(r) >= minLenM * ppm);
+  };
+
   // ---------- scene ----------
   const MARK = new Set(['buslane', 'bikelane', 'roundabout', 'yield', 'symbol', 'line', 'section', 'crosswalk', 'stopline', 'scooterbox', 'arrow', 'text', 'chevron', 'yellowbox']);
 
@@ -1112,6 +1139,15 @@ window.Render = (function () {
       .concat(els.filter((e) => e.type === 'roundabout').map((e) => ({ pts: R.rbOutline(e, ppm, 1.2) })))
       .concat(els.filter((e) => e.type === 'roundabout').flatMap((e) => (e.corners || []).map((k) => ({ pts: k.mask })).concat((e.legMasks || []).concat(e.cornerMasks || []).map((pts) => ({ pts })))));
     const cutJunctions = () => { for (const j of junctions) clipOutside(j.pts); }; // one clip per area: overlaps can't cancel
+    // where bus / bike lanes are broken: intersection areas (not the approach lane masks), roundabouts, crosswalks
+    const laneBreaks = els.filter((e) => e.type === 'junction' && e.pts.length >= 3).map((e) => e.pts)
+      .concat(els.filter((e) => e.type === 'junction').flatMap((e) => e.cornerCuts || []))
+      .concat(els.filter((e) => e.type === 'roundabout').map((e) => R.rbOutline(e, ppm, 1.2)))
+      .concat(crossCuts);
+    const markLane = (d) => { // lines and symbols of a bus / bike lane, run by run
+      const base = R.basePts(d, ppm);
+      for (const run of R.splitRuns(base, laneBreaks, ppm)) drawBikeLane(ctx, Object.assign({}, d, { pts: run, smooth: false, tanS: null, tanE: null }), ppm, P);
+    };
     // medians end flush with a roundabout's yield line (0.6 m outside the ring), and the splitter replaces them there
     const medianCuts = els.filter((e) => (e.type === 'junction' || e.type === 'mediancut') && e.pts.length >= 3).map((e) => e.pts)
       .concat(els.filter((e) => e.type === 'roundabout').map((e) => R.rbOutline(e, ppm, 0.6)))
@@ -1232,7 +1268,7 @@ window.Render = (function () {
           for (const sp of el.splits || []) { ctx.save(); for (const c of crossCuts) clipOutside(c); drawSidewalk(ctx, { pts: sp, style: 'island' }, ppm, P); ctx.restore(); }
           break;
         case 'surface': clipRoad(); yieldToRoundabouts(el); drawSurface(ctx, el, ppm, P); break;
-        case 'buslane': clipRoad(); for (const c of crossCuts) clipOutside(c); drawBikeSurface(ctx, el, ppm, P); drawBikeLane(ctx, el, ppm, P); break;
+        case 'buslane': clipRoad(); for (const c of crossCuts) clipOutside(c); cutJunctions(); drawBikeSurface(ctx, el, ppm, P); markLane(el); break;
         case 'sidewalk':
           yieldToRoundabouts(el);
           // a junction's corner sidewalk opens wherever another road (ramp, slip road, driveway) crosses it
@@ -1249,7 +1285,7 @@ window.Render = (function () {
           yieldToRoundabouts(el); for (const c of crossCuts) clipOutside(c);
           for (const b of busStops) if (b.g.through === el) clipOutside(b.g.mask); // detoured behind the bus stop
           const d = merged.has(el) ? Object.assign({}, el, { pts: merged.get(el), smooth: false, tanS: null, tanE: null }) : el;
-          drawBikeSurface(ctx, d, ppm, P); drawBikeLane(ctx, d, ppm, P);
+          drawBikeSurface(ctx, d, ppm, P); markLane(d);
           ctx.restore(); ctx.save();
           for (const [sid, owner] of stopTaken) if (owner === el) drawStopCrossing(ctx, stopById.get(sid).g, ppm, P); // passengers' crossing on top
           break;

@@ -71,15 +71,22 @@
     for (const q of queue.values()) out.push(...q);
     S.els = out;
   }
+  // a junction-made piece the user has changed (moved, reshaped, re-set) is marked edited, so rebuilds keep it
+  let ownedSnap = new Map();
+  const isJunctionPiece = (e) => e.owner && e.jkey && S.els.some((j) => j.id === e.owner && j.type === 'junction');
+  const pieceSig = (e) => { const c = Object.assign({}, e); delete c.edited; return JSON.stringify(c); };
+  const snapOwned = () => { ownedSnap = new Map(S.els.filter(isJunctionPiece).map((e) => [e.id, pieceSig(e)])); };
   function commit() {
+    for (const e of S.els) if (ownedSnap.has(e.id) && !e.edited && ownedSnap.get(e.id) !== pieceSig(e)) e.edited = true;
     syncAll();
     placeNew();
+    snapOwned();
     const now = snapshot();
     if (now !== S.cur) { S.hist.push(S.cur); if (S.hist.length > 300) S.hist.shift(); S.cur = now; S.fut = []; autosave(); }
     renderProps(); redraw();
   }
   function restore(snap) {
-    const o = JSON.parse(snap); S.els = o.els || []; S.ppm = o.ppm || 0; S.cur = snap; resetKnown();
+    const o = JSON.parse(snap); S.els = o.els || []; S.ppm = o.ppm || 0; S.cur = snap; resetKnown(); snapOwned();
     if (!S.els.find((e) => e.id === S.sel)) S.sel = null;
     renderProps(); redraw(); autosave();
   }
@@ -721,7 +728,11 @@
 
   function deleteEl(id) {
     const el = findEl(id);
-    if (el && el.owner) { const o = findEl(el.owner); if (o && o.type === 'roundabout' && el.legKey) (o.removed = o.removed || []).push(el.type + ':' + el.legKey); }
+    if (el && el.owner) {
+      const o = findEl(el.owner);
+      if (o && o.type === 'roundabout' && el.legKey) (o.removed = o.removed || []).push(el.type + ':' + el.legKey);
+      if (o && o.type === 'junction' && el.jkey) (o.removed = o.removed || []).push(el.jkey); // stays deleted when the junction rebuilds
+    }
     // deleting an intersection or roundabout also deletes the markings it generated
     S.els = S.els.filter((e) => e.id !== id && e.owner !== id);
     if (S.sel === id || !findEl(S.sel)) S.sel = null;
@@ -1374,6 +1385,12 @@
     if (!made) return;
     const fresh = made[0], oldId = j.id;
     for (const e of made) if (e.owner === fresh.id) e.owner = oldId;
+    // keep what the user did to this intersection's pieces: deleted ones stay deleted, edited ones stay as edited
+    const old = S.els.filter((e) => e.owner === oldId), oldByKey = new Map(old.filter((e) => e.jkey).map((e) => [e.jkey, e]));
+    const removed = new Set(j.removed || []);
+    const pieces = made.slice(1).filter((e) => !removed.has(e.jkey)).map((e) => { const o = oldByKey.get(e.jkey); return o && o.edited ? o : e; });
+    for (const o of old) if (o.edited && !pieces.includes(o)) pieces.push(o);
+    made.length = 1; made.push(...pieces);
     j.pts = fresh.pts; j.corners = fresh.corners; j.cornerCuts = fresh.cornerCuts; j.legSecIds = fresh.legSecIds;
     replaceOwned((e) => e.owner === oldId, made.slice(1));
   }
@@ -1812,6 +1829,29 @@
         }
       }
     }
+    // stable keys: which approach a piece belongs to, what it is, and its place there (so a rebuild can keep
+    // the pieces the user deleted or edited)
+    {
+      const posOf = (e) => (e.a && e.b ? G.mid(e.a, e.b) : e.p ? e.p : e.pts ? e.pts[Math.floor(e.pts.length / 2)] : null);
+      const groups = new Map();
+      for (const e of out) {
+        const q = posOf(e); if (!q) continue;
+        let best = null;
+        for (const lg of legs) {
+          const r = G.nearestOnPolyline(q, lg.path.pts); if (!r) continue;
+          const sQ = lg.path.cum[r.i] + G.dist(lg.path.pts[r.i], r.proj);
+          if (!best || r.d < best.d) best = { d: r.d, lg, sQ, lat: G.dot(G.sub(q, r.proj), lg.nv) };
+        }
+        if (!best) continue;
+        const g = best.lg.rd.src.id + ':' + best.lg.sgn + '|' + e.type + '|' + (e.style || e.kind || '');
+        if (!groups.has(g)) groups.set(g, []);
+        groups.get(g).push({ e, sQ: best.sQ, lat: best.lat });
+      }
+      for (const [g, list] of groups) {
+        list.sort((u, v) => Math.round(u.sQ / (2 * m)) - Math.round(v.sQ / (2 * m)) || u.lat - v.lat); // by distance out (2 m steps), then across
+        list.forEach((x, k) => { x.e.jkey = g + '|' + k; });
+      }
+    }
     const own = {}; for (const k of J_KEYS) if (prm[k] !== undefined) own[k] = prm[k];
     out.unshift(Object.assign({ id: jid, type: 'junction', pts: poly, corners, cornerCuts, legSecIds, genClick: G.copy(click), genPrm: clone(prm) }, own));
     return out;
@@ -2010,7 +2050,7 @@
         info.textContent = '🔗 此物件由路口/圓環自動產生並連動；刪除路口/圓環時會一併刪除。Linked to its intersection/roundabout.';
         box.insertBefore(info, box.children[1] || null);
         const dt = document.createElement('button'); dt.textContent = '解除連動 Detach';
-        dt.onclick = () => { const o = findEl(el.owner); if (o && o.type === 'roundabout' && el.legKey) (o.removed = o.removed || []).push(el.type + ':' + el.legKey); delete el.owner; delete el.legKey; delete el.anchor; commit(); };
+        dt.onclick = () => { const o = findEl(el.owner); if (o && o.type === 'roundabout' && el.legKey) (o.removed = o.removed || []).push(el.type + ':' + el.legKey); if (o && o.type === 'junction' && el.jkey) (o.removed = o.removed || []).push(el.jkey); delete el.owner; delete el.legKey; delete el.anchor; delete el.jkey; delete el.edited; commit(); };
         btns.appendChild(dt);
       }
       if (el && canAlign(el) && !S.align) {
@@ -2123,7 +2163,7 @@
       try {
         const d = JSON.parse(fr.result);
         S.country = d.country && window.RoadPresets[d.country] ? d.country : 'TW';
-        S.els = d.els || []; S.ppm = d.ppm || 0; S.sel = null; S.hist = []; S.fut = []; migrateOrder(d); resetKnown(); syncAll(); placeNew(); S.cur = snapshot();
+        S.els = d.els || []; S.ppm = d.ppm || 0; S.sel = null; S.hist = []; S.fut = []; migrateOrder(d); resetKnown(); syncAll(); placeNew(); snapOwned(); S.cur = snapshot();
         if (d.imgSrc) await loadImageSrc(d.imgSrc); else { S.img = null; S.imgSrc = null; stage.classList.remove('has-image'); }
         buildLibrary(); setTool('select'); autosave();
       } catch (e) { alert('專案檔格式錯誤 Invalid project file'); }
@@ -2169,7 +2209,7 @@
       S.els = d.els || []; S.ppm = d.ppm || 0; migrateOrder(d);
       if (d.imgSrc) await loadImageSrc(d.imgSrc);
     }
-    resetKnown(); syncAll(); placeNew();
+    resetKnown(); syncAll(); placeNew(); snapOwned();
     S.cur = snapshot();
     if (!S.img) fitView();
     setTool('select');
