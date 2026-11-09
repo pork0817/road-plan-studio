@@ -1169,7 +1169,13 @@
         const cR = bendPath(rb, lg, bySide[1], b0, endR), cL = bendPath(rb, lg, bySide[-1], b0, endR);
         const nose = shortArcPts(rb.p, endR * m, cR[cR.length - 1], cL[cL.length - 1]);
         const poly = [], atL = (sA, off) => G.add(G.add(lg.X, G.mul(lg.v, sA * m)), G.mul(lg.nv, off * m));
-        if (!lg.median) { // tapered tail back along the centre line
+        if (!lg.median && rb.bikeRing) { // a refuge island running out through the cycle crossing and the zebra (NL)
+          const cw = S.els.find((e) => e.owner === rb.id && e.type === 'crosswalk' && e.legKey === lg.key);
+          const sOut = cw ? RB_YD + 0.54 + (cw.setback || 0) + cw.width + 2 : Math.max(bySide[1].sAlong, bySide[-1].sAlong) + 12, hwT = 0.8;
+          const sStart = Math.max(bySide[1].sAlong, bySide[-1].sAlong);
+          poly.push(atL(sOut + 6, 0), atL(sOut, hwT), atL(sStart, hwT));
+          poly.push(...cR, ...nose.slice(1, -1), ...cL.slice().reverse(), atL(sStart, -hwT), atL(sOut, -hwT));
+        } else if (!lg.median) { // tapered tail back along the centre line
           const sT = Math.max(bySide[1].sAlong, bySide[-1].sAlong) + 12;
           poly.push(atL(sT, 0));
           poly.push(...cR, ...nose.slice(1, -1), ...cL.slice().reverse());

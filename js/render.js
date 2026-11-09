@@ -733,7 +733,14 @@ window.Render = (function () {
   function drawRoundaboutIsland(ctx, el, ppm, P) {
     if (el.turbo) { drawTurboIsland(ctx, el, ppm, P); return; }
     const { Ri, Ra } = R.rbRadii(el);
-    if (el.apron > 0) drawSidewalk(ctx, { pts: R.circlePts(el.p, Ra * ppm), style: 'concrete' }, ppm, P); // mountable truck apron
+    if (el.apron > 0) {
+      drawSidewalk(ctx, { pts: R.circlePts(el.p, Ra * ppm), style: 'concrete' }, ppm, P); // mountable truck apron
+      if (P.apronStyle === 'ribbed') { // NL: ribbed apron, white rings on grey (≈ 0.25 m every 0.6 m)
+        ctx.save(); ctx.strokeStyle = 'rgba(244,244,239,0.9)'; ctx.lineWidth = 0.25 * ppm; ctx.setLineDash([]);
+        for (let r = Ri + 0.35; r < Ra - 0.15; r += 0.6) { ctx.beginPath(); ctx.arc(el.p.x, el.p.y, r * ppm, 0, 2 * Math.PI); ctx.stroke(); }
+        ctx.restore();
+      }
+    }
     drawSidewalk(ctx, { pts: R.circlePts(el.p, Ri * ppm), style: el.island || 'island' }, ppm, P);
   }
 
@@ -837,9 +844,20 @@ window.Render = (function () {
   // (zebra's outer edge + 1 m: where the link has moved off the road, + 7 m for that sideways move)
   const RING_SHIFT = 7;
   R.bikeRingCutR = (el) => el.R + (el.bikeGap != null ? el.bikeGap : 5) + (el.bikeW || 2) + 1.3 + (el.cwWidth || 4) + 1.0 + RING_SHIFT;
-  function drawBikeRing(ctx, el, ppm, P) {
+  function drawBikeRing(ctx, el, ppm, P, offRoad) {
     const C = el.p, gap = el.bikeGap != null ? el.bikeGap : 5, w = el.bikeW || 2;
     const r0 = (el.R + gap) * ppm, r1 = (el.R + gap + w) * ppm, flip = R.LHT ? -1 : 1;
+    // Off the roads (as built in the Netherlands): grass verges between the ring and the cycle path, and a footpath
+    // ring outside it that runs into the zebras, with a strip of grass between path and footpath.
+    if (offRoad && el.walkRing !== false) {
+      const cwW = el.cwWidth || 4, zc = el.R + gap + w + 1.3 + cwW / 2, ww = Math.min(cwW, 2.5);   // footpath centred on the zebras
+      const ring = (ra, rb2) => { ctx.beginPath(); ctx.arc(C.x, C.y, rb2 * ppm, 0, 2 * Math.PI); ctx.arc(C.x, C.y, ra * ppm, 0, 2 * Math.PI, true); };
+      ctx.save(); offRoad();
+      ring(el.R + 0.3, zc + ww / 2 + 1.5); ctx.fillStyle = '#6f9a4f'; ctx.fill();                       // grass
+      ring(zc - ww / 2, zc + ww / 2); ctx.save(); ctx.clip('evenodd');
+      drawSidewalk(ctx, { pts: R.circlePts(C, (zc + ww / 2) * ppm, 96), style: 'pavers' }, ppm, P); ctx.restore();
+      ctx.restore();
+    }
     ctx.save();
     ctx.fillStyle = ctx.strokeStyle = P.colors.bike;
     ctx.beginPath(); ctx.arc(C.x, C.y, r1, 0, 2 * Math.PI); ctx.arc(C.x, C.y, r0, 0, 2 * Math.PI, true); ctx.fill();
@@ -1598,7 +1616,8 @@ window.Render = (function () {
     }
     // cycle paths around roundabouts (and their links from the roads' bike lanes) go over every road, whatever the
     // layer order: a road listed above the roundabout must not pave over them
-    for (const el of els) if (el.type === 'roundabout' && el.bikeRing) drawBikeRing(ctx, el, ppm, P);
+    const offRoad = () => { for (const q of roadPolys) clipOutside(q); };
+    for (const el of els) if (el.type === 'roundabout' && el.bikeRing) drawBikeRing(ctx, el, ppm, P, offRoad);
   };
 
   // ---------- shapes for hit-testing & selection outline ----------

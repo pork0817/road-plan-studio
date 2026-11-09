@@ -87,7 +87,7 @@ window.RoadPresets = window.RoadPresets || {};
       { id: 'junction', label: 'Kruispunt', en: 'Intersection: click crossing', mode: 'junction', icon: { glyph: '✚' },
         defaults: { type: 'junctionTool', cwKind: 'ties', cwWidth: 4, setback: 3, stopGap: 1.5, crosswalks: true, stops: true, cornerR: 6, sidewalks: true, swWidth: 2.5, bikeCross: true } },
       { id: 'roundabout', label: 'Rotonde', en: 'Roundabout: click centre', mode: 'roundabout', icon: { glyph: '◎' },
-        defaults: { type: 'roundaboutTool', bikeRing: true, bikeW: 2.0, bikeGap: 5, bikePrio: true, R: 18, lanes: 1, laneWidth: 5.5, apron: 2, island: 'island', yields: true, curvedYield: true, crosswalks: true, cwKind: 'ties', cwWidth: 4, cwSetback: 5, cornerR: 12, curveLanes: true, splitters: true, laneStop: true, solidApproach: false, solidLen: 20, stopLines: false, stopGap: 1.5 } },
+        defaults: { type: 'roundaboutTool', bikeRing: true, bikeW: 2.0, bikeGap: 5, bikePrio: true, cornerR: 8, R: 18, lanes: 1, laneWidth: 5.5, apron: 2, island: 'island', yields: true, curvedYield: true, crosswalks: true, cwKind: 'ties', cwWidth: 4, cwSetback: 5, curveLanes: true, splitters: true, laneStop: true, solidApproach: false, solidLen: 20, stopLines: false, stopGap: 1.5 } },
       { id: 'turbo', label: 'Turborotonde', en: 'Turbo roundabout', mode: 'roundabout', icon: { glyph: '◉' },
         defaults: { type: 'roundaboutTool', turbo: true, bikeRing: false, bikeW: 2.0, bikeGap: 5, bikePrio: false, R: 24, lanes: 2, laneWidth: 5, apron: 0, divider: 'raised', island: 'island', yields: true, curvedYield: true, crosswalks: true, cwKind: 'ties', cwWidth: 4, cwSetback: 5, cornerR: 12, curveLanes: true, splitters: true, laneStop: true, solidApproach: false, solidLen: 20, stopLines: false, stopGap: 1.5 } },
     ] },
@@ -163,6 +163,6 @@ window.RoadPresets = window.RoadPresets || {};
     box: { front: 0, back: 0.15, backDouble: true, sides: false, fill: C.bike, icon: 'bike' }, boxRange: [4, 5],
     bikeCross: { line: 'blocks50', lineW: 0.50, gap: 0.50, minW: 1.5, pad: 1.0, symbols: false },
     iconSizes: { bike: [0.75, 1.5], warnTri: [1.0, 4.0] },
-    twoStageBox: false,
+    twoStageBox: false, apronStyle: 'ribbed',
   };
 })();
