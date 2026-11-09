@@ -50,7 +50,7 @@ Crosswalks, stop lines and yield lines made by the intersection or roundabout to
 - Alt+click a point to delete it.
 
 ## Trapezoid crosswalks
-Set a crosswalk's 形狀 Shape to 梯形 Trapezoid, then drag its four corners to fit odd-shaped junctions. 枕木紋 bars fan out across it and stay 40 cm wide at the legal gap; 斑馬紋 edge lines follow the slanted edges. The green base, median openings, lane-line cut-outs, ＋停止線 and alignment all follow the shape. (A roundabout's crosswalk becomes independent when made a trapezoid.)
+Set a crosswalk's 形狀 Shape to 梯形 Trapezoid, then drag its four corners to fit odd-shaped junctions. 枕木紋 bars stay parallel to traffic, 40 cm wide with the same legal gap between every pair (as in Japan's trapezoid crossings); only their length changes, ending on the slanted edges, and slivers at a slanted side are left out; 斑馬紋 edge lines follow the slanted edges. The green base, median openings, lane-line cut-outs, ＋停止線 and alignment all follow the shape. (A roundabout's crosswalk becomes independent when made a trapezoid.)
 
 ## Bike lanes
 Pick 自行車道, 雙向自行車道 or 自行車優先 and draw along the lane's centre line (straight or curved). The standard lane has a brick-red surface (§174), a thin white solid line along each edge and bike symbols (§183-1). In its panel, 邊線 Edge lines can switch to the §174 雙白實線 separator (left, right or both) and 菱形標記 adds the 2.5 × 1.0 m diamonds every 30–60 m. Priority lanes get two white solid lines (§174-4). Bike lanes are visible on any surface (road, sidewalk or bare image). Road lane lines underneath give way, and the markings break at crosswalks. Widths follow the design manual (≈ one-way ≥ 1.2 m, two-way ≥ 2.5 m).

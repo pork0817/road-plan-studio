@@ -267,14 +267,33 @@ window.Render = (function () {
     ctx.strokeStyle = ctx.fillStyle = P.colors.white; ctx.lineCap = 'butt'; ctx.setLineDash([]);
     const ext = (a, b, m) => { const d = G.mul(G.norm(G.sub(b, a)), m); return [G.sub(a, d), G.add(b, d)]; };
     if (el.kind === 'ties') {
-      // bars fan between the two edges; each stays 40 cm wide, spaced by the gap along the centre line
-      const bar = spec.bar, gap = el.gap, pitch = bar + gap, n = Math.max(0, Math.floor((L + gap) / pitch));
-      const s0 = (L - (n * pitch - gap)) / 2;
-      ctx.lineWidth = bar * ppm;
+      // Bars stay parallel to traffic, 40 cm wide with the same gap between every pair (as in Japan's
+      // trapezoid crossings); only their length changes, ending on the slanted edges of the shape.
+      const bar = spec.bar * ppm, gap = el.gap * ppm, pitch = bar + gap;
+      const d = G.fromAngle(el.dir != null ? el.dir : G.angle(G.sub(G.mid(c3, c2), G.mid(c0, c1))));
+      let u = G.rightN(d); if (G.dot(G.sub(G.mid(c1, c2), G.mid(c0, c3)), u) < 0) u = G.mul(u, -1);
+      const cen = G.centroid(el.quad), us = el.quad.map((c) => G.dot(G.sub(c, cen), u));
+      const lo = Math.min(...us), hi = Math.max(...us), n = Math.max(0, Math.floor((hi - lo + gap) / pitch));
+      const first = lo + ((hi - lo) - (n * pitch - gap)) / 2;
+      // length (px) of a line across the shape (along d) at lateral position uu
+      const spanAt = (uu) => {
+        const O = G.add(cen, G.mul(u, uu)); let tMin = Infinity, tMax = -Infinity;
+        for (let k = 0; k < 4; k++) {
+          const a = el.quad[k], b = el.quad[(k + 1) % 4], r = G.sub(b, a), den = G.cross(d, r);
+          if (Math.abs(den) < 1e-9) continue;
+          const t = G.cross(G.sub(a, O), r) / den, s = G.cross(G.sub(a, O), d) / den;
+          if (s >= -1e-9 && s <= 1 + 1e-9) { tMin = Math.min(tMin, t); tMax = Math.max(tMax, t); }
+        }
+        return tMax > tMin ? tMax - tMin : 0;
+      };
       for (let i = 0; i < n; i++) {
-        const tc = (s0 + i * pitch + bar / 2) / L;
-        const [p0, p1] = ext(back(tc), front(tc), 2 * ppm);
-        path(ctx, [p0, p1]); ctx.stroke();
+        const u0 = first + i * pitch;
+        // a bar that would only be a sliver at a slanted side is left out
+        if (Math.min(spanAt(u0 + 0.05 * bar), spanAt(u0 + 0.95 * bar)) < 1.0 * ppm) continue;
+        const far = 1e4;
+        const a0 = G.add(cen, G.mul(u, u0)), a1 = G.add(cen, G.mul(u, u0 + bar));
+        path(ctx, [G.add(a0, G.mul(d, -far)), G.add(a1, G.mul(d, -far)), G.add(a1, G.mul(d, far)), G.add(a0, G.mul(d, far))], true);
+        ctx.fill();
       }
     } else {
       // edge lines (10 cm) along both edges, inside the shape; 45° stripes between them
