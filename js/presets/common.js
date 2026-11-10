@@ -15,7 +15,8 @@ window.RoadPresetKit = (function () {
       const kind = K.crosswalk[el.cwKind] ? el.cwKind : Object.keys(K.crosswalk)[0], spec = K.crosswalk[kind];
       return [
         { kind: 'sel', key: 'control', label: '路口型式 Type', options: [['signal', T.ctrlSignal || '各向停止線 All approaches stop'], ['priority', T.ctrlPriority || '支道讓幹道 Side street gives way']], value: el.control || 'signal' },
-        ...(el.control === 'priority' ? [{ kind: 'sel', key: 'minorCtrl', label: '支道 Side street', options: T.minorOpts || [['yield', '讓路 Give way'], ['stop', '停車 Stop']], value: el.minorCtrl || K.minorCtrl || 'yield' },
+        ...(el.control === 'priority' && T.contSidewalk ? [{ kind: 'chk', key: 'contSidewalk', label: T.contSidewalk }] : []),
+        ...(el.control === 'priority' && !el.contSidewalk ? [{ kind: 'sel', key: 'minorCtrl', label: '支道 Side street', options: T.minorOpts || [['yield', '讓路 Give way'], ['stop', '停車 Stop']], value: el.minorCtrl || K.minorCtrl || 'yield' },
           { kind: 'chk', key: 'cwMain', label: '幹道也畫行人穿越道 Crosswalks on the main road' },
           ...info(T.priorityInfo || '車道數最多、穿過路口的道路為幹道：標線不中斷、不畫停止線；支道依所選方式讓路。The road with most lanes runs through untouched.')] : []),
         { kind: 'chk', key: 'crosswalks', label: '自動行人穿越道 Crosswalks' },
@@ -96,6 +97,11 @@ window.RoadPresetKit = (function () {
             { kind: 'btn', action: 'addStop', label: `＋停止線 Stop line (${K.stopLine.toCrosswalk.min} m)` }, ...(trap ? [] : [{ kind: 'btn', action: 'flip', label: '反轉車流方向 Flip' }]));
           return f;
         }
+        case 'bump': return [{ kind: 'sel', key: 'kind', label: '種類 Kind', options: T.bumpKinds || [['bump', '減速丘 Speed bump'], ['plateau', '平台 Plateau']] },
+          num('ramp', '坡長 Ramp length', 0.3, 3, 0.05, T.bumpRamp), num('top', '頂部長 Flat top', 0, 30, 0.1, T.bumpTop),
+          { kind: 'sel', key: 'surface', label: '鋪面 Surface', options: [['none', '瀝青 Asphalt'], ['pavers', '磚 Pavers'], ['redbrick', '紅磚 Red brick'], ['concrete', '混凝土 Concrete']] },
+          { kind: 'deg', key: 'dir', label: '方向 Angle' }, ...law(T.bumpLaw),
+          { kind: 'btn', action: 'realign', label: '對齊車道 Align to lanes' }];
         case 'stopline': return [num('width', '線寬 Width', K.stopLine.width.min, K.stopLine.width.max, 0.01, `${K.stopLine.width.min.toFixed(2)}–${K.stopLine.width.max.toFixed(2)} m`), ...law(K.stopLine.ref),
           { kind: 'btn', action: 'realign', label: '對齊車道 Align to lanes' }];
         case 'arrow': return [{ kind: 'sel', key: 'kind', label: '種類 Kind', options: K.arrowKinds }, num('length', '長度 Length', K.arrowLenRange[0], K.arrowLenRange[1], 0.5, T.arrowLen),

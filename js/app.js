@@ -190,7 +190,7 @@
   // ---------------- elements ----------------
   function buildElement(item, geom) {
     const el = Object.assign({ id: newId() }, clone(S.params || item.defaults), geom);
-    if (el.type === 'crosswalk' || el.type === 'stopline' || el.type === 'scooterbox' || el.type === 'yield') { el.dir = null; alignTwo(el, false); }
+    if (el.type === 'crosswalk' || el.type === 'stopline' || el.type === 'scooterbox' || el.type === 'yield' || el.type === 'bump') { el.dir = null; alignTwo(el, false); }
     if (el.type === 'yield') el.lanes = Math.max(1, Math.round(G.dist(el.a, el.b) / ppm() / 3.25));
     if (el.type === 'busstop') { // attach to the nearest road section; the stop is drawn along its kerb
       const mid = G.mid(el.a, el.b); let best = null;
@@ -245,7 +245,7 @@
     if (el.type === 'busstop') return [{ key: 'a', p: el.a }, { key: 'b', p: el.b }];
     if (el.a) {
       const m = G.mid(el.a, el.b), t = G.fromAngle(el.dir || 0);
-      const ext = (el.type === 'crosswalk' ? el.width / 2 : el.type === 'scooterbox' ? el.depth : el.type === 'yield' ? 0 : el.width / 2) + 1.5;
+      const ext = (el.type === 'crosswalk' ? el.width / 2 : el.type === 'bump' ? R.bumpDepth(el) / 2 : el.type === 'scooterbox' ? el.depth : el.type === 'yield' ? 0 : el.width / 2) + 1.5;
       return [{ key: 'a', p: el.a }, { key: 'b', p: el.b }, { key: 'rot2', p: G.add(m, G.mul(t, ext * ppm())) }];
     }
     if (el.p) {
@@ -835,7 +835,7 @@
 
 
   // ---------------- align two objects ----------------
-  const BAND = new Set(['crosswalk', 'stopline', 'scooterbox', 'yield']);
+  const BAND = new Set(['crosswalk', 'stopline', 'scooterbox', 'yield', 'bump']);
   const POINT = new Set(['arrow', 'text', 'symbol']);
   const canAlign = (el) => el && el.type !== 'junction';
   const centerOf = (el) => (el.a ? G.mid(el.a, el.b) : el.p ? el.p : G.centroid(el.pts));
@@ -1438,7 +1438,7 @@
   // An intersection keeps the click and settings it was made with; whenever one of the roads it is built from
   // changes (shape, lanes, lane use, arrow / box / guide options …) its markings are rebuilt straight away.
   const SEC_KEYS = ['pts', 'smooth', 'lanesF', 'lanesB', 'laneWidth', 'centerType', 'medianWidth', 'slowLane', 'bikeLane', 'edge', 'autoArrows', 'autoBox', 'boxDepth', 'solidLen', 'laneUse', 'leftGuide', 'leftTurn', 'pocketLen', 'pocketTaper', 'lanesF2', 'lanesB2', 'changeAt', 'taper', 'laneUseF', 'laneUseB', 'pocketLF', 'pocketLB', 'pocketRF', 'pocketRB', 'rightGuide'];
-  const J_KEYS = ['control', 'minorCtrl', 'cwMain', 'crosswalks', 'cwKind', 'cwWidth', 'setback', 'stops', 'stopGap', 'cornerR', 'sidewalks', 'swWidth', 'bikeCross'];
+  const J_KEYS = ['control', 'minorCtrl', 'cwMain', 'contSidewalk', 'crosswalks', 'cwKind', 'cwWidth', 'setback', 'stops', 'stopGap', 'cornerR', 'sidewalks', 'swWidth', 'bikeCross'];
   const junctionPrm = (j) => { const o = Object.assign({}, j.genPrm || {}); for (const k of J_KEYS) if (j[k] !== undefined) o[k] = j[k]; return o; };
   // JGEN: bumped when the generator's output changes (e.g. stop lines now flush with the lane lines), so every
   // junction rebuilds once — edited, locked and deleted pieces are still kept as the user left them.
@@ -1553,7 +1553,7 @@
     }
     for (const o of old) if ((o.edited || o.locked) && !taken.has(o)) pieces.push(o); // edited / locked pieces the rebuild no longer makes: kept
     made.length = 1; made.push(...pieces);
-    j.control = fresh.control; j.mainSecIds = fresh.mainSecIds;
+    j.control = fresh.control; j.mainSecIds = fresh.mainSecIds; j.contSidewalk = fresh.contSidewalk;
     j.pts = fresh.pts; j.corners = fresh.corners; j.cornerCuts = fresh.cornerCuts; j.pocketCuts = fresh.pocketCuts; j.legSecIds = fresh.legSecIds;
     replaceOwned((e) => e.owner === oldId, made.slice(1));
   }
@@ -1731,11 +1731,17 @@
     for (const lg of legs) {
       const el = lg.rd.el;
       const at = (d, off) => legPt(lg, d, off); // along the road's own line (carriageways may sit off-centre)
-      const isMain = pri && mainRd.has(lg.rd), cwHere = prm.crosswalks && (!isMain || prm.cwMain);
+      const isMain = pri && mainRd.has(lg.rd);
+      // doorgaand trottoir / uitritconstructie: the footway runs straight across the side street's mouth at pavement level;
+      // cars cross over it (no give-way marking needed, no crosswalk, tight corners)
+      const contSW = pri && !isMain && !!prm.contSidewalk;
+      const cwHere = prm.crosswalks && (!isMain || prm.cwMain) && !contSW;
+      // NL order on a side street: haaientanden at the main road's edge first, the zebra right behind them
+      const teethFirst = pri && !isMain && cwHere && minorCtrl === 'yield' && R.yieldStyle(PR).style === 'teeth';
       lg.cwHere = cwHere;
       // no crosswalk at a priority junction: nothing to set back from — the side street's give-way / stop marking sits
       // right at the main road's edge (behind its edge line or bike lane, as haaientanden are laid in NL)
-      let cwIn = lg.E + (pri && !cwHere ? 0 : prm.setback * m), cwOut = cwIn + (cwHere ? prm.cwWidth * m : 0), hasCw = !!cwHere;
+      let cwIn = lg.E + (teethFirst ? 1.3 * m : pri && !cwHere ? 0 : prm.setback * m), cwOut = cwIn + (cwHere ? prm.cwWidth * m : 0), hasCw = !!cwHere;
       if (!prm.crosswalks && !isMain) { // the user's own crosswalk on this leg (nearest the junction): stop lines go behind it
         let best = null;
         for (const c of S.els) {
@@ -1769,7 +1775,12 @@
           a: legPt(lg, d, -lg.leftExt + 0.05 - lg.pocketRt), b: legPt(lg, d, lg.rightExt - 0.05 + lg.pocketOne), dir: G.angle(onLeg(lg, d, 0).t) });
       }
       // stop line across every entering lane, 2–3 m before the crosswalk (§170)
-      const ds = cwOut + (hasCw ? prm.stopGap * m : pri && !isMain ? 0.3 * m : 0) + (stopW * m) / 2;
+      const ds = teethFirst ? lg.E + 0.3 * m + (stopW * m) / 2 : cwOut + (hasCw ? prm.stopGap * m : pri && !isMain ? 0.3 * m : 0) + (stopW * m) / 2;
+      if (contSW) { // the footway across the mouth (drawn above the road), from the main road's edge back swWidth
+        const sw = G.clamp(prm.swWidth || 2.5, 1.5, 10);
+        out.push({ id: newId(), owner: jid, type: 'sidewalk', style: 'pavers', pts: [legPt(lg, lg.E, -lg.leftExt), legPt(lg, lg.E, lg.rightExt), legPt(lg, lg.E + sw * m, lg.rightExt), legPt(lg, lg.E + sw * m, -lg.leftExt)] });
+        cwIn = cwOut = lg.E + sw * m;
+      }
       // 左轉附加車道 (pocket): an extra left-turn lane carved out of the median next to the incoming lanes
       const mhalf = el.centerType === 'median' && el.lanesB > 0 ? el.medianWidth / 2 : 0;
       const fitN = mhalf > 0 ? Math.min(nPL, Math.floor((2 * mhalf - 0.5) / 2.75)) : 0; // pocket lanes the median can give
@@ -1788,7 +1799,7 @@
         : -ctrHalf;
       const outerLat = laneEdgeL - edgeW - lg.pocketRt;
       const travel = G.angle(G.mul(onLeg(lg, ds, 0).t, -1));
-      if (prm.stops && incoming && !isMain) {
+      if (prm.stops && incoming && !isMain && !contSW) {
         if (pri && minorCtrl === 'yield') { // give way: the country's yield marking across the entering lanes
           const nIn = oneWay ? el.lanesF : (lg.sgn > 0 ? el.lanesB : el.lanesF);
           // close to the main road the kerb has already curved away (corner radius cRm): run the line across the whole
@@ -1809,8 +1820,8 @@
       }
       if (incoming && !isMain) lg.entry = { ds, inner, oneWay, el, priority: pri };
       lg.cwIn = cwIn;
-      const dIn = prm.stops && incoming && !isMain ? ds + (stopW * m) / 2 : cwOut;
-      const dOut = oneWay && incoming && prm.stops ? dIn : cwOut;
+      const dIn = prm.stops && incoming && !isMain && !contSW ? ds + (stopW * m) / 2 : cwOut;
+      const dOut = oneWay && incoming && prm.stops && !contSW ? dIn : teethFirst ? Math.max(cwOut, dIn) : cwOut;
       // Outline steps from the stop line (incoming half) to the crosswalk edge (outgoing half).
       // With a median the step sits on the median's incoming edge, so the median ends at the crosswalk;
       // otherwise just past the centre line, so the centre line ends at the stop line.
@@ -1821,7 +1832,7 @@
     }
     // ---- corners: rounded kerb returns (paved), optional corner sidewalks, §186-1 自行車穿越道線 ----
     const corners = [], walks = [], cornerCuts = [], pocketCuts = [];
-    const cR = G.clamp(prm.cornerR != null ? prm.cornerR : 8, 0, 30), swW = G.clamp(prm.swWidth || 4, 1.5, 10);
+    const cR = pri && prm.contSidewalk ? 0.5 : G.clamp(prm.cornerR != null ? prm.cornerR : 8, 0, 30), swW = G.clamp(prm.swWidth || 4, 1.5, 10);
     const kerbOf = (lg, side, s) => { // + = right of outward; follows lane-change tapers along the road
       if (s == null || !R.hasLaneChange(lg.rd.src)) return side > 0 ? lg.rightExt : -lg.leftExt;
       const e = R.sectionExtAt(lg.rd.src, lg.rd.sM + (lg.sgn * s) / m);
@@ -1910,6 +1921,7 @@
       const W = Math.max(BX.minW, bikeW + BX.pad);
       for (const lg of legs) {
         if (!lg.cwHere || !roads.some((rd) => rd !== lg.rd && (rd.el.bikeLane || 0) > 0)) continue;
+        if (pri) continue; // priority junction: the main road's bike lane runs on across the mouth (marked by the renderer)
         const s1 = lg.cwIn - (BX.gap + BX.lineW / 2) * m, s0 = s1 - (W - BX.lineW) * m;
         if (s0 < lg.E * 0.6) continue;
         const l0 = -lg.leftExt + 0.3, l1 = lg.rightExt - 0.3;
@@ -2175,7 +2187,7 @@
     }
     const own = {}; for (const k of J_KEYS) if (prm[k] !== undefined) own[k] = prm[k];
     const laneSig0 = laneSigNow();
-    out.unshift(Object.assign({ id: jid, type: 'junction', control: pri ? 'priority' : 'signal', mainSecIds: [...mainRd].map((rd) => rd.src.id), laneSig: laneSig0, pts: poly, corners, cornerCuts, pocketCuts, legSecIds, genClick: G.copy(click), genPrm: clone(prm) }, own));
+    out.unshift(Object.assign({ id: jid, type: 'junction', control: pri ? 'priority' : 'signal', contSidewalk: pri && !!prm.contSidewalk, mainSecIds: [...mainRd].map((rd) => rd.src.id), laneSig: laneSig0, pts: poly, corners, cornerCuts, pocketCuts, legSecIds, genClick: G.copy(click), genPrm: clone(prm) }, own));
     return out;
   }
 

@@ -363,6 +363,34 @@ window.Render = (function () {
     }
   }
 
+  // ---------- verkeersdrempel / plateau (NL RBBV 3.30) ----------
+  // A raised strip across the road: ramps (ramp m) either side of a flat top (top m). Each ramp carries the
+  // taludmarkering — alternating short and long white stripes along the road (0.10 m wide, 0.20 m apart, 0.40 / 1.00 m,
+  // ratio ≈ 2:5) hanging from a 0.20 m line across the full width at the top of the ramp.
+  R.bumpDepth = (el) => 2 * (el.ramp != null ? +el.ramp : 1) + (el.top != null ? +el.top : 0.4);
+  function drawBump(ctx, el, ppm, P) {
+    const ramp = el.ramp != null ? +el.ramp : 1, top = el.top != null ? +el.top : 0.4, D = R.bumpDepth(el);
+    const f = R.frame(el, ppm, D, false), sx = 1 / f.sin;
+    const quad = (o0, o1) => [G.add(el.a, G.mul(f.t, o0)), G.add(el.b, G.mul(f.t, o0)), G.add(el.b, G.mul(f.t, o1)), G.add(el.a, G.mul(f.t, o1))];
+    if (el.surface && el.surface !== 'none') drawSidewalk(ctx, { pts: quad(-f.back, f.fwd), style: el.surface }, ppm, P);
+    else { ctx.fillStyle = 'rgba(255,255,255,0.08)'; path(ctx, quad(-f.back, f.fwd), true); ctx.fill(); } // asphalt hump: a slightly lighter strip
+    ctx.fillStyle = P.colors.white;
+    const longL = Math.min(1.0, ramp), shortL = longL * 0.4, rampPx = ramp * ppm * sx, topLine = 0.2 * ppm * sx;
+    const n = Math.max(1, Math.floor((f.L / ppm + 0.2) / 0.3));
+    const u0 = (f.L - (n * 0.3 - 0.2) * ppm) / 2;
+    for (const side of [-1, 1]) { // -1: the ramp at the back, +1: the front ramp
+      const edge = side < 0 ? -f.back + rampPx : f.fwd - rampPx;        // top of this ramp (where it meets the flat top)
+      const down = side < 0 ? -1 : 1;                                     // down the slope
+      const tl = side < 0 ? [edge, edge + topLine] : [edge - topLine, edge];
+      path(ctx, quad(Math.min(...tl), Math.max(...tl)), true); ctx.fill(); // 0.20 m line across the full width
+      for (let i = 0; i < n; i++) {
+        const L = (i % 2 ? shortL : longL) * ppm * sx, s0 = u0 + i * 0.3 * ppm;
+        const p0 = G.add(el.a, G.mul(f.u, s0)), p1 = G.add(el.a, G.mul(f.u, s0 + 0.1 * ppm));
+        const o0 = edge, o1 = edge + down * L;
+        path(ctx, [G.add(p0, G.mul(f.t, o0)), G.add(p1, G.mul(f.t, o0)), G.add(p1, G.mul(f.t, o1)), G.add(p0, G.mul(f.t, o1))], true); ctx.fill();
+      }
+    }
+  }
   function drawStopLine(ctx, el, ppm, P) {
     ctx.save();
     ctx.strokeStyle = P.colors.white; ctx.lineWidth = el.width * ppm; ctx.lineCap = 'butt'; ctx.setLineDash([]);
@@ -1387,13 +1415,13 @@ window.Render = (function () {
   };
 
   // ---------- scene ----------
-  const MARK = new Set(['buslane', 'bikelane', 'roundabout', 'yield', 'symbol', 'line', 'section', 'crosswalk', 'stopline', 'scooterbox', 'arrow', 'text', 'chevron', 'yellowbox']);
+  const MARK = new Set(['bump', 'buslane', 'bikelane', 'roundabout', 'yield', 'symbol', 'line', 'section', 'crosswalk', 'stopline', 'scooterbox', 'arrow', 'text', 'chevron', 'yellowbox']);
 
   const ppm_ = (o) => o.ppm;
   // Default stacking level of each kind of element (bottom → top). New elements are inserted at the top of their
   // level, and older projects are sorted this way once; after that the list order is the drawing order.
   R.RANK = { road: 0, section: 0, roundabout: 0, junction: 0, lanemask: 0, mediancut: 0, buslane: 1, surface: 1,
-    line: 2, crosswalk: 2, stopline: 2, scooterbox: 2, arrow: 2, symbol: 2, text: 2, yield: 2, chevron: 2, yellowbox: 2,
+    line: 2, bump: 2, crosswalk: 2, stopline: 2, scooterbox: 2, arrow: 2, symbol: 2, text: 2, yield: 2, chevron: 2, yellowbox: 2,
     sidewalk: 3, busstop: 4, bikelane: 5 };
   R.rankOf = (el) => (R.RANK[el.type] != null ? R.RANK[el.type] : 2);
   const PAVER = new Set(['road', 'section', 'roundabout', 'junction', 'lanemask', 'mediancut']);
@@ -1429,8 +1457,10 @@ window.Render = (function () {
     const cutJunctions = (forEl) => { for (const j of junctions) if (!(forEl && j.main && j.main.has(forEl.id))) clipOutside(j.pts); }; // one clip per area: overlaps can't cancel
     // main road ↔ side streets of priority junctions: the side street's lines stop at the main road's edge, and the main
     // road's edge line turns dashed across the side street's mouth (as where a smaller road joins a bigger one)
-    const priMinor = new Map(), priMajor = new Map();
-    for (const e of els) if (e.type === 'junction' && e.control === 'priority' && e.mainSecIds) for (const sid of e.legSecIds || []) {
+    const priMinor = new Map(), priMajor = new Map(), priCont = new Map(); // priCont: side streets behind a continuous sidewalk
+    for (const e of els) if (e.type === 'junction' && e.control === 'priority' && e.mainSecIds && e.contSidewalk) for (const sid of e.legSecIds || [])
+      if (!e.mainSecIds.includes(sid)) for (const mid of e.mainSecIds) (priCont.get(mid) || priCont.set(mid, new Set()).get(mid)).add(sid);
+    for (const e of els) if (e.type === 'junction' && e.control === 'priority' && e.mainSecIds && !e.contSidewalk) for (const sid of e.legSecIds || []) {
       if (e.mainSecIds.includes(sid)) continue;
       for (const mid of e.mainSecIds) { (priMinor.get(mid) || priMinor.set(mid, new Set()).get(mid)).add(sid); (priMajor.get(sid) || priMajor.set(sid, new Set()).get(sid)).add(mid); }
     }
@@ -1527,9 +1557,9 @@ window.Render = (function () {
       ctx.save(); clipRoad(); lineCuts(el);
       const lanesOf = (e) => (e.lanesF | 0) + (e.lanesB | 0);
       const others = els.filter((e) => e.type === 'section' && e !== el);
-      const pMaj = priMajor.get(el.id), pMin = priMinor.get(el.id);
+      const pMaj = priMajor.get(el.id), pMin = priMinor.get(el.id), pCont = priCont.get(el.id);
       const major = others.filter((e) => (pMin && pMin.has(e.id) ? false : lanesOf(e) > lanesOf(el)) || (pMaj && pMaj.has(e.id))).map((e) => R.sectionPoly(e, ppm)).filter(Boolean);
-      const minor = others.filter((e) => (pMaj && pMaj.has(e.id) ? false : lanesOf(e) < lanesOf(el)) || (pMin && pMin.has(e.id))).map((e) => R.sectionPoly(e, ppm)).filter(Boolean);
+      const minor = others.filter((e) => !(pCont && pCont.has(e.id)) && ((pMaj && pMaj.has(e.id) ? false : lanesOf(e) < lanesOf(el)) || (pMin && pMin.has(e.id)))).map((e) => R.sectionPoly(e, ppm)).filter(Boolean);
       for (const q of major) clipOutside(q);
       for (const st of busStops) if (st.g.host === el) clipOutside(st.g.mask);
       for (const { l, pts: line } of g.lines) {
@@ -1537,7 +1567,9 @@ window.Render = (function () {
         if (l.style === 'bikeSep' && bikeRingCuts.length) { ctx.save(); for (const c of bikeRingCuts) clipOutside(c); R.drawStyled(ctx, line, sty, ppm); ctx.restore(); continue; }
         if ((l.style !== 'edge' && l.style !== 'bikeSep') || !minor.length) { R.drawStyled(ctx, line, sty, ppm); continue; }
         ctx.save(); for (const q of minor) clipOutside(q); R.drawStyled(ctx, line, sty, ppm); ctx.restore();
-        for (const q of minor) { ctx.save(); path(ctx, q, true); ctx.clip(); R.drawStyled(ctx, line, P.lineStyles.lane, ppm); ctx.restore(); }
+        // across the mouth: a dashed lane line — or, along a bike lane where the country marks its crossing (NL), blocks
+        const mouthSty = P.mouthBikeLine && (l.style === 'bikeSep' || (l.style === 'edge' && el.bikeLane > 0 && /edge$/.test(l.key || ''))) ? P.lineStyles[P.mouthBikeLine] : P.lineStyles.lane;
+        for (const q of minor) { ctx.save(); path(ctx, q, true); ctx.clip(); R.drawStyled(ctx, line, mouthSty, ppm); ctx.restore(); }
       }
       ctx.restore();
       // medians: opened wherever a crosswalk crosses them (0.3 m clear each side), stopped at junctions / roundabouts
@@ -1598,6 +1630,7 @@ window.Render = (function () {
           switch (el.type) {
             case 'line': R.drawStyled(ctx, R.basePts(el, ppm), P.lineStyles[el.style], ppm); break;
             case 'crosswalk': drawCrosswalk(ctx, el, ppm, P); break;
+            case 'bump': drawBump(ctx, el, ppm, P); break;
             case 'stopline': drawStopLine(ctx, el, ppm, P); break;
             case 'scooterbox': drawScooterBox(ctx, el, ppm, P); break;
             case 'arrow': drawArrow(ctx, el, ppm, P); break;
@@ -1641,6 +1674,7 @@ window.Render = (function () {
       case 'section': { const p = R.sectionPoly(el, ppm); return p ? { poly: p } : { line: el.pts, w: 4 }; }
       case 'busstop': { const g = R.busStopGeom(el, R._els || [], ppm); return g ? { poly: g.mask } : { line: [el.a, el.b], w: 4 }; }
       case 'crosswalk': return { poly: R.crosswalkQuad(el, ppm) };
+      case 'bump': return { poly: R.frame(el, ppm, R.bumpDepth(el), false).corners };
       case 'scooterbox': return { poly: R.frame(el, ppm, el.depth, true).corners };
       case 'roundabout': return { poly: R.circlePts(el.p, el.R * ppm, 48) };
       case 'yield': { const t = G.mul(G.fromAngle(el.dir), -R.YIELD_DEPTH * ppm); return { poly: [el.a, el.b, G.add(el.b, t), G.add(el.a, t)] }; }

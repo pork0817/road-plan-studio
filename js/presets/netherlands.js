@@ -61,7 +61,7 @@ window.RoadPresets = window.RoadPresets || {};
     road: 'Rijbaan 車道範圍 Road area', sidewalk: 'Trottoir/middengeleider 人行道/分隔島', surface: 'Verharding 彩色鋪面 Surface', section: 'Wegvak 路段 Road section',
     line: 'Streep 標線 Line', crosswalk: 'Oversteekplaats 行人穿越道 Crosswalk', stopline: 'Stopstreep 停止線 Stop line', scooterbox: 'OFOS 自行車停等區 Bike box',
     junction: 'Kruispunt 路口範圍 Intersection', roundabout: 'Rotonde 圓環 Roundabout', bikelane: 'Fietsstrook 自行車道 Bike lane', buslane: 'Busstrook 公車道 Bus lane', roundaboutTool: 'Rotonde 圓環',
-    yield: 'Haaientanden 鯊魚齒讓路線', arrow: 'Pijl 指向線 Arrow', symbol: 'Symbool 圖示 Symbol', text: 'Tekst 路面文字 Text', chevron: 'Verdrijvingsvlak 槽化線', yellowbox: 'Afgekruist vak 網狀線', busstop: 'Bushalte 公車站 Bus stop',
+    yield: 'Haaientanden 鯊魚齒讓路線', arrow: 'Pijl 指向線 Arrow', symbol: 'Symbool 圖示 Symbol', text: 'Tekst 路面文字 Text', chevron: 'Verdrijvingsvlak 槽化線', bump: 'Verkeersdrempel 減速丘 Speed bump', yellowbox: 'Afgekruist vak 網狀線', busstop: 'Bushalte 公車站 Bus stop',
   };
 
   const sec = (label, en, o) => ({ id: 'sec_' + label, label, en, mode: 'polyline', icon: { glyph: '═' },
@@ -100,6 +100,10 @@ window.RoadPresets = window.RoadPresets || {};
       { id: 'yield', label: 'Haaientanden', en: 'Shark teeth (give way)', mode: 'two', icon: { glyph: '▽' }, defaults: { type: 'yield', lanes: 1, triangles: true } },
       { id: 'stopline', label: 'Stopstreep', en: 'Stop line', mode: 'two', icon: { glyph: '▬' }, defaults: { type: 'stopline', width: 0.30 } },
       { id: 'scooterbox', label: 'OFOS', en: 'Bike box (4–5 m)', mode: 'two', icon: { glyph: '▭' }, defaults: { type: 'scooterbox', depth: 4, side: '0.10', icon: true, text: '' } },
+      { id: 'bump', label: 'Verkeersdrempel', en: 'Speed bump 30 km/h (across the road)', mode: 'two', icon: { glyph: '⩨' }, defaults: { type: 'bump', kind: 'bump', ramp: 1.0, top: 0.4, surface: 'pavers' } },
+      { id: 'plateau', label: 'Plateau', en: 'Raised plateau (across the road)', mode: 'two', icon: { glyph: '▭' }, defaults: { type: 'bump', kind: 'plateau', ramp: 1.0, top: 6, surface: 'redbrick' } },
+      { id: 'junction_uitrit', label: 'Uitrit (doorgaand trottoir)', en: 'Continuous sidewalk across a side street: click crossing', mode: 'junction', icon: { glyph: '┳' },
+        defaults: { type: 'junctionTool', control: 'priority', contSidewalk: true, minorCtrl: 'yield', cwMain: false, cwKind: 'ties', cwWidth: 4, setback: 0, stopGap: 1.5, crosswalks: false, stops: true, cornerR: 1, sidewalks: true, swWidth: 2.5, bikeCross: false } },
       chev('verdrijf', 'Verdrijvingsvlak', 'Hatched area (bibeko)', { border: 0.10, stripe: 0.20, gap: 2.0 }),
       chev('verdrijf_bu', 'Verdrijvingsvlak bubeko', 'Hatched area (rural)', { border: 0.10, stripe: 0.50, gap: 3.0 }),
     ] },
@@ -125,7 +129,10 @@ window.RoadPresets = window.RoadPresets || {};
     cornerR: '≈ bibeko 5–8 m', swWidth: '≈ trottoir ≥ 1,80 m', bikeCrossLabel: 'Fietsoversteek (blokken 0,50 m) Bike crossing',
     turnHead: 'Linksaf 左轉 Left turn', turnLabel: 'Linksaf', turnOpts: [['shared', 'Volgens de pijlen By lane arrows'], ['dedicated', 'Linker strook alleen linksaf Inner lane only'], ['banned', 'Verbod linksaf No left turn']],
     leftGuide: 'Geleidelijnen linksaf Left-turn guide lines', rightGuide: 'Geleidelijnen rechtsaf Right-turn guide lines',
-    ctrlSignal: 'Verkeerslichten / stopstrepen overal', ctrlPriority: 'Voorrangskruispunt: zijweg verleent voorrang', minorOpts: [['yield', 'Haaientanden (RVV art. 80, bord B6)'], ['stop', 'Stopstreep + STOP (bord B7)']],
+    contSidewalk: 'Doorgaand trottoir (uitritconstructie) Continuous sidewalk',
+    bumpKinds: [['bump', 'Verkeersdrempel Speed bump'], ['plateau', 'Plateau']], bumpRamp: 'RBBV 3.30 / ASVV: 20 / 30 / 50 km/h ≈ 0.7 / 1.0 / 2.4 m', bumpTop: '≈ drempel 0.3–1.0 m, plateau ≥ 4 m',
+    bumpLaw: 'RBBV 3.30 taludmarkering: afwisselend korte en lange strepen evenwijdig aan de wegas, 0,10 m breed, tussenruimte 0,20 m, 0,40 / 1,00 m (≈ 2:5); bovenaan een streep van 0,20 m over de volle breedte',
+        ctrlSignal: 'Verkeerslichten / stopstrepen overal', ctrlPriority: 'Voorrangskruispunt: zijweg verleent voorrang', minorOpts: [['yield', 'Haaientanden (RVV art. 80, bord B6)'], ['stop', 'Stopstreep + STOP (bord B7)']],
     priorityInfo: 'De weg met de meeste rijstroken loopt door: markering niet onderbroken, kantstreep onderbroken bij de zijweg. RBBV 2.2a: haaientanden op de ondergeschikte weg. The main road runs through.',
         pocketLen: 'RONA: deceleratie- + opstellengte', pocketTaper: 'RBBV 3.13: inleiding met verdrijfstrepen', laneWidth: 'RBBV 3.1: min. 2,75 m (bij uitzondering 2,60); linksafvak 0,50 m smaller (min. 2,50)',
     bikeLane: 'Fietsstrook breedte Width', bikeToggle: { label: 'Fietsstroken 自行車道 Bike lanes', on: 1.7 },
@@ -167,6 +174,6 @@ window.RoadPresets = window.RoadPresets || {};
     box: { front: 0, back: 0.15, backDouble: true, sides: false, fill: C.bike, icon: 'bike' }, boxRange: [4, 5],
     bikeCross: { line: 'blocks50', lineW: 0.50, gap: 0.50, minW: 1.5, pad: 1.0, symbols: false },
     iconSizes: { bike: [0.75, 1.5], warnTri: [1.0, 4.0] },
-    twoStageBox: false, apronStyle: 'ribbed', stopText: 'STOP', minorCtrl: 'yield',
+    twoStageBox: false, apronStyle: 'ribbed', mouthBikeLine: 'blocks50', stopText: 'STOP', minorCtrl: 'yield',
   };
 })();
