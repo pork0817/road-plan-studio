@@ -840,10 +840,10 @@ window.Render = (function () {
   // A red one-way cycle path bikeGap m outside the ring (≈ 5 m: room for one car between ring and crossing), bikeW
   // wide. Where cyclists have priority (bibeko) each road crossing gets 0.50 m blocks along both edges (RBBV 2.2c)
   // and haaientanden for drivers: outside the crossing on the way in, inside it on the way out.
-  // road bike lanes stop this far from the centre (just beyond the zebra) and swing out into the cycle path
-  // (zebra's outer edge + 1 m: where the link has moved off the road, + 7 m for that sideways move)
-  const RING_SHIFT = 7;
-  R.bikeRingCutR = (el) => el.R + (el.bikeGap != null ? el.bikeGap : 5) + (el.bikeW || 2) + 1.3 + (el.cwWidth || 4) + 1.0 + RING_SHIFT;
+  // road bike lanes are hidden inside this radius (well beyond the zebra); from there each one is redrawn as a link
+  // that runs straight on, then slides onto the cycle path in one arc tangent to both (like a kerb fillet)
+  const zebraOutR = (el) => el.R + (el.bikeGap != null ? el.bikeGap : 5) + (el.bikeW || 2) + 1.3 + (el.cwWidth || 4);
+  R.bikeRingCutR = (el) => zebraOutR(el) + 14;
   function drawBikeRing(ctx, el, ppm, P, offRoad) {
     const C = el.p, gap = el.bikeGap != null ? el.bikeGap : 5, w = el.bikeW || 2;
     const r0 = (el.R + gap) * ppm, r1 = (el.R + gap + w) * ppm, flip = R.LHT ? -1 : 1;
@@ -863,21 +863,23 @@ window.Render = (function () {
     ctx.beginPath(); ctx.arc(C.x, C.y, r1, 0, 2 * Math.PI); ctx.arc(C.x, C.y, r0, 0, 2 * Math.PI, true); ctx.fill();
     // links from each road bike lane: leave the road beyond the zebra, curve round outside it, and run into the path
     const rCut = R.bikeRingCutR(el), rm = el.R + gap + w / 2;
-    // a red link from a bike lane at P0 (running along v, away from the ring) curving out (side unit vector out)
-    // round the zebra and into the cycle path, joining it tangentially
-    // First an S-bend off the carriageway (offM: from the lane's centre to beyond the kerb), so the link passes the
-    // zebra's end outside the road; then a curve that meets the cycle path along its own direction at the corner.
-    const bez = (A, B, C2, D, n, out) => { for (let i = 1; i <= n; i++) { const u = i / n, a = (1 - u) ** 3, b = 3 * (1 - u) ** 2 * u, c = 3 * (1 - u) * u * u, d = u ** 3;
-      out.push({ x: a * A.x + b * B.x + c * C2.x + d * D.x, y: a * A.y + b * B.y + c * C2.y + d * D.y }); } };
-    const link = (P0, v, out, bw, offM) => {
-      const back = G.mul(v, -1), pts = [G.add(P0, G.mul(v, 0.5 * ppm)), P0]; // starts a little inside the lane: no seam
-      const Q1 = G.add(G.add(P0, G.mul(back, RING_SHIFT * ppm)), G.mul(out, offM * ppm));
-      bez(P0, G.add(P0, G.mul(back, RING_SHIFT * 0.5 * ppm)), G.sub(Q1, G.mul(back, RING_SHIFT * 0.5 * ppm)), Q1, 16, pts);
-      const aim = G.add(G.add(Q1, G.mul(back, (rCut - RING_SHIFT - rm) * ppm)), G.mul(out, (bw / 2 + 4) * ppm));
-      const rad = G.norm(G.sub(aim, C)), P3 = G.add(C, G.mul(rad, rm * ppm));
-      let t3 = G.rightN(rad); if (G.dot(t3, out) < 0) t3 = G.mul(t3, -1);
-      const k = G.dist(Q1, P3) * 0.5;
-      bez(Q1, G.add(Q1, G.mul(back, k)), G.sub(P3, G.mul(t3, k)), P3, 24, pts);
+    // A red link from a bike lane (a point P0 on it, unit v along it away from the ring, unit out = away from the road's
+    // centre line): straight on from the cut radius to T1, then one arc of radius rf tangent to the lane at T1 and to
+    // the cycle path's centre circle at T2 — a smooth slide onto the ring. T1 is placed so that, by the zebra's outer
+    // edge, the arc has moved the lane off the carriageway (need: metres from the lane's centre line to clear it).
+    const zOut = zebraOutR(el) * ppm, rmP = rm * ppm;
+    const link = (P0, v, out, bw, need) => {
+      const L = (sv) => G.add(P0, G.mul(v, sv));
+      const sAtR = (r) => { const f = G.sub(P0, C), b = G.dot(f, v), c = G.dot(f, f) - r * r, disc = b * b - c; return disc < 0 ? null : -b + Math.sqrt(disc); }; // the far crossing
+      const sZ = sAtR(zOut), sCut = sAtR(rCut * ppm); if (sZ == null || sCut == null) return;
+      const rfAt = (sq) => { const A = G.sub(L(sq), C), den = 2 * (rmP - G.dot(A, out)); return den > 1e-6 ? (G.dot(A, A) - rmP * rmP) / den : null; };
+      let sq = sZ, rf = rfAt(sq);
+      for (let it = 0; it < 6 && rf; it++) { sq = Math.min(sCut, sZ + Math.sqrt(2 * rf * need * ppm)); rf = rfAt(sq); }
+      if (!rf || rf <= 0) return;
+      const T1 = L(sq), Q = G.add(T1, G.mul(out, rf)), T2 = G.add(C, G.mul(G.norm(G.sub(Q, C)), rmP));
+      const a1 = Math.atan2(T1.y - Q.y, T1.x - Q.x), a2 = Math.atan2(T2.y - Q.y, T2.x - Q.x), da = Math.atan2(Math.sin(a2 - a1), Math.cos(a2 - a1));
+      const pts = [L(sCut + 0.5 * ppm), T1];
+      for (let k = 1; k <= 32; k++) { const a = a1 + (da * k) / 32; pts.push({ x: Q.x + rf * Math.cos(a), y: Q.y + rf * Math.sin(a) }); }
       ctx.lineWidth = bw * ppm; ctx.lineCap = 'butt'; ctx.lineJoin = 'round'; ctx.setLineDash([]);
       path(ctx, pts); ctx.stroke();
     };
@@ -888,7 +890,7 @@ window.Render = (function () {
         const lat = bk.lat, side = Math.sign(lat) || 1;
         const sA = Math.sqrt(Math.max(0, rCut * rCut - lat * lat)) - d0;
         const ext = side > 0 ? lg.re : lg.le;
-        link(G.add(G.add(lg.X, G.mul(lg.v, sA * ppm)), G.mul(nv, flip * lat * ppm)), lg.v, G.mul(nv, flip * side), bk.w, ext - Math.abs(lat) + bk.w / 2 + 1.0);
+        link(G.add(G.add(lg.X, G.mul(lg.v, sA * ppm)), G.mul(nv, flip * lat * ppm)), lg.v, G.mul(nv, flip * side), bk.w, ext - Math.abs(lat) + bk.w / 2 + 0.2);
       }
     }
     // separately drawn bike lanes (Fietsstrook tool) crossing that radius: the same link, from where they cross it
@@ -907,7 +909,7 @@ window.Render = (function () {
           if (!best || best.score > 0) continue;
           let away = G.norm(G.sub(P0, C)); if (G.dot(away, best.lg.v) < 0.5) away = best.lg.v;
           const sd = Math.sign(best.lt) || 1, extD = (sd * flip > 0 ? best.lg.re : best.lg.le), bw = bl.width || 1.5;
-          link(P0, away, G.mul(G.rightN(best.lg.v), sd), bw, Math.max(bw / 2 + 1.0, extD - Math.abs(best.lt) / ppm + bw / 2 + 1.0));
+          link(P0, away, G.mul(G.rightN(best.lg.v), sd), bw, Math.max(bw / 2 + 0.2, extD - Math.abs(best.lt) / ppm + bw / 2 + 0.2));
         }
       }
     }
