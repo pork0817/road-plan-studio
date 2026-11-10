@@ -1420,11 +1420,20 @@ window.Render = (function () {
     const rbIds = new Set(els.filter((e) => e.type === 'roundabout').map((e) => e.id));
     const rbAreas = els.filter((e) => e.type === 'roundabout').flatMap((e) => [R.rbOutline(e, ppm)].concat(R.cornerPaving(e, ppm), e.splits || []));
     const yieldToRoundabouts = (el) => { if (rbAreas.length && !(el.owner && rbIds.has(el.owner)) && el.type !== 'roundabout') for (const a of rbAreas) clipOutside(a); };
-    const junctions = els.filter((e) => (e.type === 'junction' || e.type === 'lanemask') && e.pts.length >= 3)
-      .concat(els.filter((e) => e.type === 'junction').flatMap((e) => (e.cornerCuts || []).map((pts) => ({ pts }))))
+    // a priority junction leaves its main road's markings whole (main: the road ids that run through untouched)
+    const mainOf = (e) => (e.type === 'junction' && e.control === 'priority' && e.mainSecIds ? new Set(e.mainSecIds) : null);
+    const junctions = els.filter((e) => (e.type === 'junction' || e.type === 'lanemask') && e.pts.length >= 3).map((e) => ({ pts: e.pts, main: mainOf(e) }))
+      .concat(els.filter((e) => e.type === 'junction').flatMap((e) => (e.cornerCuts || []).map((pts) => ({ pts, main: mainOf(e) }))))
       .concat(els.filter((e) => e.type === 'roundabout').map((e) => ({ pts: R.rbOutline(e, ppm, 1.2) })))
       .concat(els.filter((e) => e.type === 'roundabout').flatMap((e) => (e.corners || []).map((k) => ({ pts: k.mask })).concat((e.legMasks || []).concat(e.cornerMasks || []).map((pts) => ({ pts })))));
-    const cutJunctions = () => { for (const j of junctions) clipOutside(j.pts); }; // one clip per area: overlaps can't cancel
+    const cutJunctions = (forEl) => { for (const j of junctions) if (!(forEl && j.main && j.main.has(forEl.id))) clipOutside(j.pts); }; // one clip per area: overlaps can't cancel
+    // main road ↔ side streets of priority junctions: the side street's lines stop at the main road's edge, and the main
+    // road's edge line turns dashed across the side street's mouth (as where a smaller road joins a bigger one)
+    const priMinor = new Map(), priMajor = new Map();
+    for (const e of els) if (e.type === 'junction' && e.control === 'priority' && e.mainSecIds) for (const sid of e.legSecIds || []) {
+      if (e.mainSecIds.includes(sid)) continue;
+      for (const mid of e.mainSecIds) { (priMinor.get(mid) || priMinor.set(mid, new Set()).get(mid)).add(sid); (priMajor.get(sid) || priMajor.set(sid, new Set()).get(sid)).add(mid); }
+    }
     // where bus / bike lanes are broken: intersection areas (not the approach lane masks), roundabouts, crosswalks
     const laneBreaks = els.filter((e) => e.type === 'junction' && e.pts.length >= 3).map((e) => e.pts)
       .concat(els.filter((e) => e.type === 'junction').flatMap((e) => e.cornerCuts || []))
@@ -1502,12 +1511,12 @@ window.Render = (function () {
     };
 
     // ---- one element's own drawing (its pavement is done by pave()) ----
-    const lineCuts = () => { cutJunctions(); for (const c of crossCuts) clipOutside(c); for (const b of bikeMasks) clipOutside(b); };
+    const lineCuts = (forEl) => { cutJunctions(forEl); for (const c of crossCuts) clipOutside(c); for (const b of bikeMasks) clipOutside(b); };
     const bikeRingCuts = els.filter((e) => e.type === 'roundabout' && e.bikeRing).map((e) => R.circlePts(e.p, R.bikeRingCutR(e) * ppm, 72));
     const drawSectionParts = (el) => {
       const g = R.sectionGeom(el, ppm); if (!g) return;
       for (const { b, pts: bp } of g.bands) if (b.kind === 'bike') { // a road's bike lane stops at junctions, crosswalks, bus stops
-        ctx.save(); clipRoad(); cutJunctions(); for (const c of crossCuts) clipOutside(c); for (const c of bikeRingCuts) clipOutside(c);
+        ctx.save(); clipRoad(); cutJunctions(el); for (const c of crossCuts) clipOutside(c); for (const c of bikeRingCuts) clipOutside(c);
         for (const st of busStops) if (st.g.host === el) clipOutside(st.g.mask);
         ctx.strokeStyle = P.colors.bike; ctx.lineWidth = b.width * ppm; ctx.lineCap = 'butt'; ctx.setLineDash([]);
         path(ctx, bp); ctx.stroke(); ctx.restore();
@@ -1515,11 +1524,12 @@ window.Render = (function () {
       // Where two roads overlap outside an intersection (a ramp or slip road joining a bigger road), the road with
       // fewer lanes gives way: its lines stop at the bigger road's edge, and the bigger road's edge line turns into a
       // dashed lane line across the mouth.
-      ctx.save(); clipRoad(); lineCuts();
+      ctx.save(); clipRoad(); lineCuts(el);
       const lanesOf = (e) => (e.lanesF | 0) + (e.lanesB | 0);
       const others = els.filter((e) => e.type === 'section' && e !== el);
-      const major = others.filter((e) => lanesOf(e) > lanesOf(el)).map((e) => R.sectionPoly(e, ppm)).filter(Boolean);
-      const minor = others.filter((e) => lanesOf(e) < lanesOf(el)).map((e) => R.sectionPoly(e, ppm)).filter(Boolean);
+      const pMaj = priMajor.get(el.id), pMin = priMinor.get(el.id);
+      const major = others.filter((e) => (pMin && pMin.has(e.id) ? false : lanesOf(e) > lanesOf(el)) || (pMaj && pMaj.has(e.id))).map((e) => R.sectionPoly(e, ppm)).filter(Boolean);
+      const minor = others.filter((e) => (pMaj && pMaj.has(e.id) ? false : lanesOf(e) < lanesOf(el)) || (pMin && pMin.has(e.id))).map((e) => R.sectionPoly(e, ppm)).filter(Boolean);
       for (const q of major) clipOutside(q);
       for (const st of busStops) if (st.g.host === el) clipOutside(st.g.mask);
       for (const { l, pts: line } of g.lines) {

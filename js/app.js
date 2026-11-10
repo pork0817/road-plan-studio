@@ -1438,7 +1438,7 @@
   // An intersection keeps the click and settings it was made with; whenever one of the roads it is built from
   // changes (shape, lanes, lane use, arrow / box / guide options …) its markings are rebuilt straight away.
   const SEC_KEYS = ['pts', 'smooth', 'lanesF', 'lanesB', 'laneWidth', 'centerType', 'medianWidth', 'slowLane', 'bikeLane', 'edge', 'autoArrows', 'autoBox', 'boxDepth', 'solidLen', 'laneUse', 'leftGuide', 'leftTurn', 'pocketLen', 'pocketTaper', 'lanesF2', 'lanesB2', 'changeAt', 'taper', 'laneUseF', 'laneUseB', 'pocketLF', 'pocketLB', 'pocketRF', 'pocketRB', 'rightGuide'];
-  const J_KEYS = ['crosswalks', 'cwKind', 'cwWidth', 'setback', 'stops', 'stopGap', 'cornerR', 'sidewalks', 'swWidth', 'bikeCross'];
+  const J_KEYS = ['control', 'minorCtrl', 'cwMain', 'crosswalks', 'cwKind', 'cwWidth', 'setback', 'stops', 'stopGap', 'cornerR', 'sidewalks', 'swWidth', 'bikeCross'];
   const junctionPrm = (j) => { const o = Object.assign({}, j.genPrm || {}); for (const k of J_KEYS) if (j[k] !== undefined) o[k] = j[k]; return o; };
   // JGEN: bumped when the generator's output changes (e.g. stop lines now flush with the lane lines), so every
   // junction rebuilds once — edited, locked and deleted pieces are still kept as the user left them.
@@ -1553,6 +1553,7 @@
     }
     for (const o of old) if ((o.edited || o.locked) && !taken.has(o)) pieces.push(o); // edited / locked pieces the rebuild no longer makes: kept
     made.length = 1; made.push(...pieces);
+    j.control = fresh.control; j.mainSecIds = fresh.mainSecIds;
     j.pts = fresh.pts; j.corners = fresh.corners; j.cornerCuts = fresh.cornerCuts; j.pocketCuts = fresh.pocketCuts; j.legSecIds = fresh.legSecIds;
     replaceOwned((e) => e.owner === oldId, made.slice(1));
   }
@@ -1711,6 +1712,16 @@
     const jid = newId();
     const PR = P(), stopW = PR.stopLine.dflt || 0.4, AL = PR.arrowLen || 5; // stop line width, arrow length (m)
     const poly = [];
+    // 優先路口 Priority junction: a side street joins a main road without signals. The main road (most lanes, running
+    // through) keeps its lines through the junction and gets no stop lines, arrows or (unless asked) crosswalks; each
+    // side street gives way — the country's give-way marking, or a stop line with STOP / 停 / 止まれ.
+    const pri = prm.control === 'priority', mainRd = new Set();
+    if (pri) {
+      const score = (rd) => ((rd.el.lanesF | 0) + (rd.el.lanesB | 0)) * 10 + legs.filter((l) => l.rd === rd).length;
+      let best = null; for (const rd of roads) if (!best || score(rd) > score(best)) best = rd;
+      if (best) mainRd.add(best);
+    }
+    const minorCtrl = prm.minorCtrl || PR.minorCtrl || 'yield';
     // order the legs by where they are around the centre (not just their direction), so side-by-side carriageways
     // are in their real order and corners form between the outermost ones
     for (const lg of legs) lg.pa = G.angle(G.sub(legPt(lg, lg.E + 15 * m, 0), C));
@@ -1718,8 +1729,10 @@
     for (const lg of legs) {
       const el = lg.rd.el;
       const at = (d, off) => legPt(lg, d, off); // along the road's own line (carriageways may sit off-centre)
-      let cwIn = lg.E + prm.setback * m, cwOut = cwIn + (prm.crosswalks ? prm.cwWidth * m : 0), hasCw = !!prm.crosswalks;
-      if (!prm.crosswalks) { // the user's own crosswalk on this leg (nearest the junction): stop lines go behind it
+      const isMain = pri && mainRd.has(lg.rd), cwHere = prm.crosswalks && (!isMain || prm.cwMain);
+      lg.cwHere = cwHere;
+      let cwIn = lg.E + (isMain && !cwHere ? 0 : prm.setback * m), cwOut = cwIn + (cwHere ? prm.cwWidth * m : 0), hasCw = !!cwHere;
+      if (!prm.crosswalks && !isMain) { // the user's own crosswalk on this leg (nearest the junction): stop lines go behind it
         let best = null;
         for (const c of S.els) {
           if (c.type !== 'crosswalk' || !c.a || !c.b || (c.owner && c.owner !== jid && S.els.some((j) => j.id === c.owner && j.type === 'junction'))) continue;
@@ -1745,7 +1758,7 @@
       // 右轉附加車道: the road widens on the kerb side (not where a bike / slow lane runs along the kerb)
       lg.pocketRt = nPR > 0 && !(el.bikeLane > 0) && !(el.slowLane > 0) ? nPR * el.laneWidth : 0;
       lg.nPR = lg.pocketRt ? nPR : 0;
-      if (prm.crosswalks) {
+      if (cwHere) {
         const w = G.clamp(prm.cwWidth, P().crosswalk[prm.cwKind].width.min, P().crosswalk[prm.cwKind].width.max);
         const d = cwIn + (w * m) / 2;
         out.push({ id: newId(), owner: jid, type: 'crosswalk', kind: prm.cwKind, width: w, gap: 0.4, green: false,
@@ -1770,12 +1783,24 @@
         : el.centerType === 'median' ? -(mhalf + 0.125)                             // median edge line (centred mh + 0.2)
         : -ctrHalf;
       const outerLat = laneEdgeL - edgeW - lg.pocketRt;
-      if (prm.stops && incoming) {
-        out.push({ id: newId(), owner: jid, type: 'stopline', width: stopW, a: legPt(lg, ds, inner), b: legPt(lg, ds, outerLat), dir: G.angle(G.mul(onLeg(lg, ds, 0).t, -1)) });
+      const travel = G.angle(G.mul(onLeg(lg, ds, 0).t, -1));
+      if (prm.stops && incoming && !isMain) {
+        if (pri && minorCtrl === 'yield') { // give way: the country's yield marking across the entering lanes
+          const nIn = oneWay ? el.lanesF : (lg.sgn > 0 ? el.lanesB : el.lanesF);
+          out.push({ id: newId(), owner: jid, type: 'yield', lanes: Math.max(1, nIn | 0), triangles: true, a: legPt(lg, ds, inner), b: legPt(lg, ds, outerLat), dir: travel });
+        } else {
+          out.push({ id: newId(), owner: jid, type: 'stopline', width: stopW, a: legPt(lg, ds, inner), b: legPt(lg, ds, outerLat), dir: travel });
+          if (pri && PR.stopText) { // STOP / 停 / 止まれ just before the stop line, centred on the entering lanes
+            const T = PR.roadText || { len: 2.5, wid: 1.0, gap: 1.0 }, txt = PR.stopText, row = R.isRowText(txt), nCh = Array.from(txt).length;
+            const len = row ? T.rowLen || 1.6 : nCh * T.len + (nCh - 1) * T.gap, dT = ds + (stopW / 2 + 1.5 + len / 2) * m;
+            out.push({ id: newId(), owner: jid, type: 'text', text: txt, charLen: row ? T.rowLen || 1.6 : T.len, charWid: row ? T.rowWid || 0.45 : T.wid, charGap: row ? T.rowGap || 0.1 : T.gap,
+              color: 'white', order: 'far', p: legPt(lg, dT, (inner + outerLat) / 2), dir: travel });
+          }
+        }
       }
-      if (incoming) lg.entry = { ds, inner, oneWay, el };
+      if (incoming && !isMain) lg.entry = { ds, inner, oneWay, el, priority: pri };
       lg.cwIn = cwIn;
-      const dIn = prm.stops && incoming ? ds + (stopW * m) / 2 : cwOut;
+      const dIn = prm.stops && incoming && !isMain ? ds + (stopW * m) / 2 : cwOut;
       const dOut = oneWay && incoming && prm.stops ? dIn : cwOut;
       // Outline steps from the stop line (incoming half) to the crosswalk edge (outgoing half).
       // With a median the step sits on the median's incoming edge, so the median ends at the crosswalk;
@@ -1875,7 +1900,7 @@
     if (prm.bikeCross !== false && bikeW > 0 && prm.crosswalks) {
       const W = Math.max(BX.minW, bikeW + BX.pad);
       for (const lg of legs) {
-        if (!roads.some((rd) => rd !== lg.rd && (rd.el.bikeLane || 0) > 0)) continue;
+        if (!lg.cwHere || !roads.some((rd) => rd !== lg.rd && (rd.el.bikeLane || 0) > 0)) continue;
         const s1 = lg.cwIn - (BX.gap + BX.lineW / 2) * m, s0 = s1 - (W - BX.lineW) * m;
         if (s0 < lg.E * 0.6) continue;
         const l0 = -lg.leftExt + 0.3, l1 = lg.rightExt - 0.3;
@@ -1988,7 +2013,7 @@
       // §174-2 機慢車停等區: right behind the stop line, over the lanes that go straight on (not turn-only lanes);
       // cars stop at its back edge
       let boxRear = stopRear, kS = -1, kE = -1;
-      if (el.autoBox && prm.stops && n > 0) {
+      if (el.autoBox && prm.stops && n > 0 && !lg.entry.priority) {
         uses.forEach((u, k) => { if (u.includes('S')) { if (kS < 0) kS = k; kE = k; } });
         if (kS >= 0) {
           const BR = PR.boxRange || [2.5, 6], D = G.clamp(el.boxDepth || 3, BR[0], BR[1]);
@@ -2016,7 +2041,7 @@
       // §188 指向線 for each lane's use (tips facing the junction). First set: on lanes under the scooter box 3 m
       // behind it, on the other lanes (e.g. turn-only lanes) 1 m behind the stop line. Second set (§176 repeat):
       // one common position for every lane, just past where the solid lane lines end.
-      if (el.autoArrows !== false && n > 0) {
+      if (el.autoArrows !== false && n > 0 && !lg.entry.priority) { // a side street giving way gets its STOP / give-way marking instead
         const L0 = Math.max(0, el.solidLen != null ? el.solidLen : 30);
         const inBox = (k) => kS >= 0 && k >= kS && k <= kE;
         const tip1 = (k) => (inBox(k) ? boxRear + 3 * m : stopRear + 1 * m);
@@ -2141,7 +2166,7 @@
     }
     const own = {}; for (const k of J_KEYS) if (prm[k] !== undefined) own[k] = prm[k];
     const laneSig0 = laneSigNow();
-    out.unshift(Object.assign({ id: jid, type: 'junction', laneSig: laneSig0, pts: poly, corners, cornerCuts, pocketCuts, legSecIds, genClick: G.copy(click), genPrm: clone(prm) }, own));
+    out.unshift(Object.assign({ id: jid, type: 'junction', control: pri ? 'priority' : 'signal', mainSecIds: [...mainRd].map((rd) => rd.src.id), laneSig: laneSig0, pts: poly, corners, cornerCuts, pocketCuts, legSecIds, genClick: G.copy(click), genPrm: clone(prm) }, own));
     return out;
   }
 

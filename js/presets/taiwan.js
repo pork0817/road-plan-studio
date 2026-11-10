@@ -76,6 +76,8 @@ window.RoadPresets = window.RoadPresets || {};
       sec('自行車道路段', 'With bike lanes', { lanesF: 1, lanesB: 1, laneWidth: 3.25, centerType: 'centerDouble', bikeLane: 1.5 }),
       { id: 'junction', label: '路口', en: 'Intersection: click crossing', mode: 'junction', icon: { glyph: '✚' },
         defaults: { type: 'junctionTool', cwKind: 'ties', cwWidth: 4, setback: 3, stopGap: 2, crosswalks: true, stops: true, cornerR: 8, sidewalks: true, swWidth: 4, bikeCross: true } },
+      { id: 'junction_pri', label: '支道路口', en: 'Side street joins main road: click crossing', mode: 'junction', icon: { glyph: '┣' },
+        defaults: { type: 'junctionTool', control: 'priority', minorCtrl: 'yield', cwMain: false, cwKind: 'ties', cwWidth: 4, setback: 3, stopGap: 2, crosswalks: true, stops: true, cornerR: 8, sidewalks: true, swWidth: 4, bikeCross: true } },
       { id: 'roundabout', label: '圓環', en: 'Roundabout: click centre', mode: 'roundabout', icon: { glyph: '◎' },
         defaults: { type: 'roundaboutTool', R: 18, lanes: 1, laneWidth: 5.5, apron: 2, island: 'island', yields: true, curvedYield: true, crosswalks: true, cwKind: 'ties', cwWidth: 4, cwSetback: 6.5, cornerR: 12, curveLanes: true, splitters: true, laneStop: true, solidApproach: false, solidLen: 30, stopLines: true, stopGap: 2 } },
       { id: 'turbo', label: '渦輪圓環', en: 'Turbo roundabout', mode: 'roundabout', icon: { glyph: '◉' },
@@ -113,6 +115,10 @@ window.RoadPresets = window.RoadPresets || {};
   const num = (key, label, min, max, step, law) => ({ kind: 'num', key, label, min, max, step, unit: 'm', law });
 
   const junctionCross = (el) => [
+    { kind: 'sel', key: 'control', label: '路口型式 Type', options: [['signal', '號誌化 / 各向停止線 All approaches stop'], ['priority', '支道讓幹道 Side street gives way']], value: el.control || 'signal' },
+    ...(el.control === 'priority' ? [{ kind: 'sel', key: 'minorCtrl', label: '支道 Side street', options: [['yield', '讓路線 Give way (§172)'], ['stop', '停止線＋「停」 Stop (§170/§177)']], value: el.minorCtrl || 'yield' },
+      { kind: 'chk', key: 'cwMain', label: '幹道也畫行人穿越道 Crosswalks on the main road' },
+      { kind: 'info', text: '車道數最多、穿過路口的道路為幹道：標線不中斷、無停止線；支道畫讓路線或停止線。The road with most lanes runs through untouched; the side street gives way.' }] : []),
     { kind: 'chk', key: 'crosswalks', label: '自動行人穿越道 Crosswalks' },
     ...(el.crosswalks !== false ? [{ kind: 'sel', key: 'cwKind', label: '型式 Type', options: [['ties', '枕木紋 Ties'], ['zebra', '斑馬紋 Zebra']] },
       num('cwWidth', '穿越道寬 Width', 2, 8, 0.1, '法規 2–8 m')]
@@ -293,6 +299,6 @@ window.RoadPresets = window.RoadPresets || {};
     law: '道路交通標誌標線號誌設置規則 (115.03.11 修正)',
     colors: C, lineStyles, crosswalk, stopLine, typeNames, library, fields,
     fontFamily: '"PingFang TC","Noto Sans TC","Microsoft JhengHei","Heiti TC",sans-serif',
-    arrowSet: 'TW', arrowLen: 5, tracedGlyphs: true, boxRange: [2.5, 6],
+    arrowSet: 'TW', arrowLen: 5, tracedGlyphs: true, boxRange: [2.5, 6], stopText: '停', minorCtrl: 'yield',
   };
 })();

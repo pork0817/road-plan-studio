@@ -14,6 +14,10 @@ window.RoadPresetKit = (function () {
     const junctionCross = (el) => {
       const kind = K.crosswalk[el.cwKind] ? el.cwKind : Object.keys(K.crosswalk)[0], spec = K.crosswalk[kind];
       return [
+        { kind: 'sel', key: 'control', label: '路口型式 Type', options: [['signal', T.ctrlSignal || '各向停止線 All approaches stop'], ['priority', T.ctrlPriority || '支道讓幹道 Side street gives way']], value: el.control || 'signal' },
+        ...(el.control === 'priority' ? [{ kind: 'sel', key: 'minorCtrl', label: '支道 Side street', options: T.minorOpts || [['yield', '讓路 Give way'], ['stop', '停車 Stop']], value: el.minorCtrl || K.minorCtrl || 'yield' },
+          { kind: 'chk', key: 'cwMain', label: '幹道也畫行人穿越道 Crosswalks on the main road' },
+          ...info(T.priorityInfo || '車道數最多、穿過路口的道路為幹道：標線不中斷、不畫停止線；支道依所選方式讓路。The road with most lanes runs through untouched.')] : []),
         { kind: 'chk', key: 'crosswalks', label: '自動行人穿越道 Crosswalks' },
         ...(el.crosswalks !== false ? [{ kind: 'sel', key: 'cwKind', label: '型式 Type', options: cwOpts },
           num('cwWidth', '穿越道寬 Width', spec.width.min, spec.width.max, 0.1, T.cwWidth || `${spec.width.min}–${spec.width.max} m`)]
