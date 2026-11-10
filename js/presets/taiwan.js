@@ -142,6 +142,8 @@ window.RoadPresets = window.RoadPresets || {};
         const f = [
           { kind: 'head', label: '車道 Lanes' },
           { kind: 'laneEditor' },
+            { kind: 'info', text: '雙擊車道加彎曲點，拖曳向外；Alt+點擊刪除。Double-click a lane to add a bend point and drag it outward; Alt+click removes it.' },
+            ...(window.Render && window.Render.hasLaneCurves(el) ? [{ kind: 'btn', action: 'clearCurves', label: '清除車道彎曲 Straighten lanes' }] : []),
           ...(/\bBUS\b/i.test([el.laneUse, el.laneUseF, el.laneUseB].join(',')) ? [{ kind: 'chk', key: 'busSurface', label: '公車道彩色鋪面 Coloured bus lanes (法規未規定)' }] : []),
           { kind: 'head', label: '左轉 Left turn' },
           { kind: 'sel', key: 'leftTurn', label: '左轉方式', options: [['shared', '依車道箭頭 By lane arrows'], ['dedicated', '最內側車道專用 Inner lane only'], ['twoStage', '機車兩段式 Two-stage (scooters)'], ['banned', '禁止左轉 No left turn']] },

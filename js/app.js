@@ -226,8 +226,43 @@
   }
   function hitTest(w) { const h = hitList(w); return h.length ? h[0] : null; }
 
+  // ---- lane bend points (路段: each lane can bend outward on its own) ----
+  function laneFrame(el, w) { // station (m) and signed lateral offset (m, + = right of the drawing) of a point near a section
+    const m = ppm(), pts = R.basePts(el, m), r = G.nearestOnPolyline(w, pts); if (!r) return null;
+    let sm = 0; for (let k = 0; k < r.i; k++) sm += G.dist(pts[k], pts[k + 1]);
+    return { sm: (sm + G.dist(pts[r.i], r.proj)) / m, lat: G.dot(G.sub(w, r.proj), G.rightN(r.tangent)) / m, proj: r.proj, t: r.tangent };
+  }
+  function lanePoint(el, sd, i, sm) { // where lane i (stack order) of side sd has its centre at station sm, bend included
+    const m = ppm(), pts = R.basePts(el, m);
+    let acc = 0, k = 0; while (k < pts.length - 2 && acc + G.dist(pts[k], pts[k + 1]) < sm * m) { acc += G.dist(pts[k], pts[k + 1]); k++; }
+    const t = G.norm(G.sub(pts[k + 1], pts[k])), u = G.clamp((sm * m - acc) / Math.max(1e-6, G.dist(pts[k], pts[k + 1])), 0, 1), base = G.add(pts[k], G.mul(G.sub(pts[k + 1], pts[k]), u));
+    const off = R.laneCentreOff(el, sd, i) + R.outSign(sd) * R.laneShiftAt(el, R.laneDirOfSide(sd), i, sm);
+    return G.add(base, G.mul(G.rightN(t), off * m));
+  }
+  function laneUnder(el, w) { // the lane (side, stack index) the point is on
+    const f = laneFrame(el, w); if (!f) return null;
+    for (const sd of ['R', 'L']) {
+      const n = sd === 'R' ? el.lanesF | 0 : el.lanesB | 0;
+      for (let i = 0; i < n; i++) {
+        const c = R.laneCentreOff(el, sd, i) + R.outSign(sd) * R.laneShiftAt(el, R.laneDirOfSide(sd), i, f.sm);
+        if (Math.abs(f.lat - c) <= el.laneWidth / 2) return { sd, i, f };
+      }
+    }
+    return null;
+  }
   function handlesOf(el) {
     if (!el || isLocked(el)) return [];
+    if (el.type === 'section' && el.pts) { // the road's own points, plus a handle for every lane bend point
+      const hs = handlesOfPts(el);
+      for (const sd of ['R', 'L']) {
+        const dir = R.laneDirOfSide(sd), lanes = ((el.laneCurves || {})[dir]) || [];
+        lanes.forEach((cps, i) => (cps || []).forEach((cp, j) => hs.push({ key: 'lc', sd, dir, i, j, p: lanePoint(el, sd, i, cp.s) })));
+      }
+      return hs;
+    }
+    return handlesOfPts(el);
+  }
+  function handlesOfPts(el) {
     if (el.pts) {
       // vertices, plus a "+" handle in the middle of every segment: drag it to add a point there
       const hs = el.pts.map((p, i) => ({ key: 'pts', i, p }));
@@ -533,6 +568,9 @@
     if (S.tool === 'select') {
       const h = hitHandle(s.x, s.y);
       const sel = findEl(S.sel);
+      if (h && e.altKey && h.key === 'lc') { // Alt+click a lane bend point: remove it
+        const arr = sel.laneCurves[h.dir][h.i]; arr.splice(h.j, 1); commit(); return;
+      }
       if (h && e.altKey && h.key === 'pts') {
         const min = ['line', 'section', 'bikelane', 'buslane'].includes(sel.type) ? 2 : 3;
         if (sel.pts.length > min) {
@@ -646,6 +684,9 @@
           el.bend = el.bend || new Array(n).fill(null);
           while (el.bend.length < n) el.bend.push(null);
           el.bend[h.i] = Math.abs(bn) < 5 / S.view.s ? null : { n: bn, t: e.shiftKey ? 0 : bt };
+        } else if (h.key === 'lc') { // a lane bend point: slides along the road, and only moves the lane outward
+          const f = laneFrame(el, w), cp = el.laneCurves[h.dir][h.i][h.j];
+          if (f) { cp.s = Math.round(f.sm * 10) / 10; cp.d = Math.max(0, Math.round((f.lat - R.laneCentreOff(el, h.sd, h.i)) * R.outSign(h.sd) * 20) / 20); }
         } else if (h.key === 'pts') {
           const nb = o.pts[h.i - 1] || o.pts[h.i + 1];
           el.pts[h.i] = snapW(w, nb, e, el.id);
@@ -713,6 +754,14 @@
       if (el && el.pts) {
         const closed = !['line', 'section', 'bikelane', 'buslane'].includes(el.type);
         const r = G.nearestOnPolyline(w, el.pts, closed);
+        const ln = el.type === 'section' && !(r && r.d < 10 / S.view.s) ? laneUnder(el, w) : null;
+        if (ln) { // double-click inside a lane: a bend point there (then drag it outward)
+          const dir = R.laneDirOfSide(ln.sd);
+          el.laneCurves = el.laneCurves || {}; el.laneCurves[dir] = el.laneCurves[dir] || [];
+          while (el.laneCurves[dir].length <= ln.i) el.laneCurves[dir].push([]);
+          el.laneCurves[dir][ln.i].push({ s: Math.round(ln.f.sm * 10) / 10, d: Math.round(R.laneOwnShift(el, dir, ln.i, ln.f.sm) * 20) / 20 });
+          commit(); return;
+        }
         if (r && r.d < 10 / S.view.s) {
           el.pts.splice(r.i + 1, 0, r.proj);
           if (el.bend) { el.bend[r.i] = null; el.bend.splice(r.i + 1, 0, null); } // splitting a curved edge straightens its halves
@@ -833,6 +882,7 @@
       const s = { id: newId(), type: 'stopline', width: sw, a: G.add(el.a, off), b: G.add(el.b, off), dir: el.dir };
       S.els.push(s); S.sel = s.id;
     }
+    if (a === 'clearCurves' && el.type === 'section') { delete el.laneCurves; commit(); return; }
     if (a === 'regen' && el.type === 'roundabout') { inRHT(() => regenerateRoundabout(el)); return; }
     if (a === 'restoreJunction' && el.type === 'junction') { // bring back deleted pieces, keep every other edit
       el.removed = []; el.removedAt = []; el.sig = ''; commit(); return;

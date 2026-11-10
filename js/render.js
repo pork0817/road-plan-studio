@@ -146,7 +146,7 @@ window.Render = (function () {
         let off = oneWay ? s0 + (i + 0.5) * lw : side * (start + (i + 0.5) * lw);
         if (R.LHT) off = -off;
         const keys = []; if (i > 0) keys.push(sd + 'lane' + (i - 1)); if (i < n - 1) keys.push(sd + 'lane' + i);
-        out.push({ off, travel: dir === 'F' ? 1 : -1, keys, inner: i > 0, outer: i < n - 1, width: lw });
+        out.push({ off, travel: dir === 'F' ? 1 : -1, keys, inner: i > 0, outer: i < n - 1, width: lw, sd, i });
       }
     }
     return out;
@@ -180,31 +180,78 @@ window.Render = (function () {
   // Full geometry of a section: offset polylines for every line and band, and the two pavement edges.
   const geomCache = new WeakMap();
   R.sectionGeom = function (el, ppm) { // cached per element: called many times per frame
-    const sig = JSON.stringify([R.LHT, R.edgeW(), ppm, el.pts, el.smooth, el.lanesF, el.lanesB, el.lanesF2, el.lanesB2, el.changeAt, el.taper, el.laneWidth, el.centerType, el.medianWidth, el.slowLane, el.bikeLane, el.edge]);
+    const sig = JSON.stringify([R.LHT, R.edgeW(), ppm, el.pts, el.smooth, el.lanesF, el.lanesB, el.lanesF2, el.lanesB2, el.changeAt, el.taper, el.laneWidth, el.centerType, el.medianWidth, el.slowLane, el.bikeLane, el.edge, el.laneCurves, el.curveTaper]);
     const c = geomCache.get(el);
     if (c && c.sig === sig) return c.g;
     const g = sectionGeomRaw(el, ppm);
     geomCache.set(el, { sig, g });
     return g;
   };
+  // ---- lanes bent on their own (laneCurves) ----
+  // el.laneCurves = { F: [lane 0 points, lane 1 points, …], B: […] } in stack order (lane 0 next to the centre / the
+  // left edge of a one-way road). Each point { s: station (m), d: outward shift (m) }; between points the shift eases
+  // (smoothstep), and it eases back to 0 over curveTaper (15 m) beyond the first and last point. A lane that moves out
+  // pushes every lane outside it out by at least as much, so lanes never lie on each other.
+  R.hasLaneCurves = (el) => !!(el.laneCurves && ['F', 'B'].some((k) => (el.laneCurves[k] || []).some((c) => c && c.length)));
+  R.laneOwnShift = (el, dir, i, sm) => { // one lane's own outward shift (m) at station sm
+    const cps = ((el.laneCurves || {})[dir] || [])[i];
+    if (!cps || !cps.length) return 0;
+    const T = Math.max(1, +el.curveTaper || 15), a = cps.slice().sort((p, q) => p.s - q.s);
+    const k = [{ s: a[0].s - T, d: 0 }].concat(a, [{ s: a[a.length - 1].s + T, d: 0 }]);
+    if (sm <= k[0].s || sm >= k[k.length - 1].s) return 0;
+    let j = 0; while (j < k.length - 2 && sm > k[j + 1].s) j++;
+    const u = (sm - k[j].s) / Math.max(1e-6, k[j + 1].s - k[j].s), e = u * u * (3 - 2 * u);
+    return Math.max(0, k[j].d + (k[j + 1].d - k[j].d) * e);
+  };
+  R.laneShiftAt = (el, dir, i, sm) => { let m = 0; for (let j = 0; j <= i; j++) m = Math.max(m, R.laneOwnShift(el, dir, j, sm)); return m; }; // pushed out by inner lanes
+  R.outSign = (sd) => (sd === 'R' ? 1 : -1) * (R.LHT ? -1 : 1); // the outward direction of a side's lanes (+ = right of the drawing)
+  R.laneDirOfSide = (sd) => (sd === 'R' ? 'F' : 'B');
+  // a lane's centre line (px, along the drawing direction) and its offset (m) before any bend; i in stack order
+  R.laneCentreOff = (el, sd, i) => {
+    const lw = el.laneWidth, oneWay = (el.lanesB | 0) === 0, start = !oneWay && el.centerType === 'median' ? el.medianWidth / 2 + 0.3 : 0;
+    const W = (el.lanesF | 0) * lw + (el.slowLane || 0) + (el.bikeLane || 0);
+    const off = oneWay ? -W / 2 + (i + 0.5) * lw : (sd === 'R' ? 1 : -1) * (start + (i + 0.5) * lw);
+    return R.LHT ? -off : off;
+  };
+  R.laneCentrePts = (el, ppm, sd, i) => {
+    const g = R.sectionGeom(el, ppm); if (!g) return null;
+    const off = R.laneCentreOff(el, sd, i), sh = g.shift && g.shift[sd] && g.shift[sd][i];
+    return sh ? offsetVar(g.pts, sh.map((v) => (off + R.outSign(sd) * v) * ppm)) : G.offset(g.pts, off * ppm);
+  };
   function sectionGeomRaw(el, ppm) {
     let pts = R.basePts(el, ppm);
     if (pts.length < 2) return null;
-    const ch = R.hasLaneChange(el);
+    const ch = R.hasLaneChange(el), lc = R.hasLaneCurves(el);
     const L0 = R.sectionLayout(el);
-    if (!ch) {
+    if (!ch && !lc) {
       return { pts, L: L0,
         lines: L0.lines.map((l) => ({ l, pts: G.offset(pts, l.off * ppm) })),
         bands: L0.bands.map((b) => ({ b, pts: G.offset(pts, b.off * ppm) })),
         left: G.offset(pts, -L0.left * ppm), right: G.offset(pts, L0.right * ppm) };
     }
     pts = densify(pts, ppm);
-    const e1 = R.sectionEnd(el);
+    const e1 = ch ? R.sectionEnd(el) : el;
     const W0 = el.lanesB === 0 ? el.lanesF * el.laneWidth + (el.slowLane || 0) + (el.bikeLane || 0) : null;
-    const L1 = R.sectionLayout(e1, e1.lanesB === 0 && el.lanesB === 0 ? W0 : undefined);
+    const L1 = ch ? R.sectionLayout(e1, e1.lanesB === 0 && el.lanesB === 0 ? W0 : undefined) : L0;
     const cum = [0]; for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + G.dist(pts[i - 1], pts[i]) / ppm);
     const cA = Math.max(0, +el.changeAt || 0), tp = Math.max(1, +el.taper || 30);
-    const w = cum.map((sm) => G.clamp((sm - cA) / tp, 0, 1));
+    const w = cum.map((sm) => (ch ? G.clamp((sm - cA) / tp, 0, 1) : 0));
+    // per side, per lane: the outward shift (m) at every point
+    const shift = { R: [], L: [] };
+    if (lc) for (const sd of ['R', 'L']) {
+      const n = sd === 'R' ? el.lanesF | 0 : el.lanesB | 0, dir = R.laneDirOfSide(sd);
+      for (let i = 0; i < n; i++) shift[sd].push(cum.map((sm) => R.laneShiftAt(el, dir, i, sm)));
+    }
+    const keyShift = (key) => { // a line / band's outward shift; lane boundaries also give the shift of the lane outside
+      if (!lc) return null;
+      const sd = key[0], arr = shift[sd];
+      if (!arr || !arr.length) return null;
+      const m = /^[RL]lane(\d+)$/.exec(key);
+      if (m) { const i = +m[1]; return { a: arr[i], b: arr[i + 1] || arr[i], sd }; }
+      if (/^[RL](slow|bikeSep|edge|bike)$/.test(key)) return { a: arr[arr.length - 1], sd };
+      return null;
+    };
+    const addShift = (base, ks, which) => (ks ? base.map((v, k) => v + R.outSign(ks.sd) * ks[which][k] * ppm) : base);
     const lerp = (a, b) => w.map((u) => (a + (b - a) * u) * ppm);
     const slice = (poly, from, to) => { // the part of an offset polyline between two stations (m)
       const out = [];
@@ -216,16 +263,38 @@ window.Render = (function () {
       const res = [], bk = new Map(B.map((x) => [x.key, x]));
       for (const a of A) {
         const b = bk.get(a.key);
+        const ks = keyShift(a.key);
+        if (b && ks) { // a bent lane: where the lane outside has moved further out, the boundary splits into two lines
+          bk.delete(a.key); const base = lerp(a.off, b.off), r = make(a, offsetVar(pts, addShift(base, ks, 'a')));
+          if (ks.b && ks.b !== ks.a && ks.b.some((v, k) => v - ks.a[k] > 0.15)) { r.pts2 = offsetVar(pts, addShift(base, ks, 'b')); r.gap = ks.b.map((v, k) => v - ks.a[k] > 0.15); }
+          res.push(r); continue;
+        }
         if (b) { bk.delete(a.key); res.push(make(a, G.trimLoops(offsetVar(pts, lerp(a.off, b.off))))); }
         else { const q = slice(offsetVar(pts, lerp(a.off, a.off)), 0, cA); if (q) res.push(make(a, q)); } // gone after the change
       }
       for (const b of bk.values()) { const q = slice(offsetVar(pts, lerp(b.off, b.off)), cA + tp, total); if (q) res.push(make(b, q)); } // new after the change
       return res;
     };
-    return { pts, L: L0, L1, cum, w,
-      lines: match(L0.lines, L1.lines, (l, q) => ({ l, pts: q })),
+    // the pavement widens wherever the outermost lane of a side has been pushed out
+    let lo = lerp(-L0.left, -L1.left), hi = lerp(L0.right, L1.right);
+    for (const sd of ['R', 'L']) {
+      const a = shift[sd]; if (!a.length) continue;
+      const last = a[a.length - 1], o = R.outSign(sd);
+      if (o > 0) hi = hi.map((v, k) => v + last[k] * ppm); else lo = lo.map((v, k) => v - last[k] * ppm);
+    }
+    // the innermost lane bent away from the centre (or a one-way road's left edge): a solid line along its inner edge
+    const extra = [];
+    if (lc) for (const sd of ['R', 'L']) {
+      const a0 = shift[sd][0]; if (!a0 || !a0.some((v) => v > 0.15)) continue;
+      const oneWay = (el.lanesB | 0) === 0, lw = el.laneWidth, startM = !oneWay && el.centerType === 'median' ? el.medianWidth / 2 + 0.3 : 0;
+      const W = (el.lanesF | 0) * lw + (el.slowLane || 0) + (el.bikeLane || 0);
+      let in0 = oneWay ? -W / 2 : (sd === 'R' ? 1 : -1) * startM; if (R.LHT) in0 = -in0;
+      extra.push({ l: { style: 'laneSolid', key: sd + 'in0' }, pts: offsetVar(pts, a0.map((v) => (in0 + R.outSign(sd) * v) * ppm)), only: a0.map((v) => v > 0.15) });
+    }
+    return { pts, L: L0, L1, cum, w, shift: lc ? shift : null,
+      lines: match(L0.lines, L1.lines, (l, q) => ({ l, pts: q })).concat(extra),
       bands: match(L0.bands, L1.bands, (b, q) => ({ b, pts: q })),
-      left: G.trimLoops(offsetVar(pts, lerp(-L0.left, -L1.left))), right: G.trimLoops(offsetVar(pts, lerp(L0.right, L1.right))) };
+      left: G.trimLoops(offsetVar(pts, lo)), right: G.trimLoops(offsetVar(pts, hi)) };
   }
   // pavement edge distances (m) at a station (m) along the section, following any lane-change taper
   R.sectionExtAt = function (el, sM) {
@@ -1587,9 +1656,30 @@ window.Render = (function () {
       for (const q of major) clipOutside(q);
       for (const st of busStops) if (st.g.host === el) clipOutside(st.g.mask);
       const busL = R.sectionBusLanes(el), busSkip = new Set(busL.flatMap((b) => b.keys));
-      for (const { l, pts: line } of g.lines) {
+      for (const ent of g.lines) {
+        const { l, pts: line } = ent;
         if (busSkip.has(l.key)) continue; // a lane line beside a bus lane: the bus lane draws its own separator there
         const sty = P.lineStyles[l.style];
+        if (ent.only) { // drawn only where the lane has moved away (the inner edge of a bent innermost lane)
+          const solid = P.lineStyles.laneSolid || sty; let k0 = -1;
+          for (let k = 0; k <= ent.only.length; k++) {
+            if (k < ent.only.length && ent.only[k]) { if (k0 < 0) k0 = k; continue; }
+            if (k0 >= 0 && k - k0 > 1) R.drawStyled(ctx, line.slice(k0, k), solid, ppm);
+            k0 = -1;
+          }
+          continue;
+        }
+        if (ent.pts2) { // a lane bent away from the next one: where they part, both edges get a solid line
+          const solid = P.lineStyles.laneSolid || sty;
+          let k0 = 0;
+          for (let k = 1; k <= ent.gap.length; k++) {
+            if (k < ent.gap.length && ent.gap[k] === ent.gap[k0]) continue;
+            const a = line.slice(k0, k + 1), b2 = ent.pts2.slice(k0, k + 1);
+            if (a.length > 1) { if (ent.gap[k0]) { R.drawStyled(ctx, a, solid, ppm); R.drawStyled(ctx, b2, solid, ppm); } else R.drawStyled(ctx, a, sty, ppm); }
+            k0 = k;
+          }
+          continue;
+        }
         if (l.style === 'bikeSep' && bikeRingCuts.length) { ctx.save(); for (const c of bikeRingCuts) clipOutside(c); R.drawStyled(ctx, line, sty, ppm); ctx.restore(); continue; }
         if ((l.style !== 'edge' && l.style !== 'bikeSep') || !minor.length) { R.drawStyled(ctx, line, sty, ppm); continue; }
         ctx.save(); for (const q of minor) clipOutside(q); R.drawStyled(ctx, line, sty, ppm); ctx.restore();
@@ -1600,9 +1690,8 @@ window.Render = (function () {
       ctx.restore();
       // bus-only lanes: the country's bus-lane marking (separators on the sides with general traffic, wording, diamonds)
       if (busL.length) {
-        const base = R.basePts(el, ppm);
         for (const b of busL) {
-          let pts = G.offset(base, b.off * ppm); if (b.travel < 0) pts = pts.slice().reverse();
+          let pts = R.laneCentrePts(el, ppm, b.sd, b.i) || []; if (b.travel < 0) pts = pts.slice().reverse(); // follows a bent lane
           // separators: toward the centre (driver's left in RHT, right in Japan) where b.inner, and outward where b.outer
           const left = R.LHT ? b.outer : b.inner, right = R.LHT ? b.inner : b.outer;
           const d = { type: 'buslane', kind: 'exclusive', pts, smooth: false, width: b.width, sep: left && right ? 'both' : left ? 'left' : right ? 'right' : 'none',
