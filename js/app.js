@@ -733,16 +733,19 @@
     $('#stInfo').textContent = `x ${w.x.toFixed(0)}, y ${w.y.toFixed(0)} px  |  ${S.ppm ? (1 / S.ppm).toFixed(3) + ' m/px' : '未校正比例尺 — not calibrated'}  |  zoom ${(S.view.s * 100).toFixed(0)}%`;
   });
 
+  let cycleTimer = null;
   window.addEventListener('mouseup', () => {
     const d = S.drag;
     if (!d) return;
     S.drag = null;
     if (d.kind === 'pan') stage.style.cursor = S.tool === 'pan' ? 'grab' : S.tool === 'select' ? 'default' : 'crosshair';
     if (d.moved) commit();
-    else if (d.kind === 'move' && d.cycle && findEl(d.cycle)) { S.sel = d.cycle; renderProps(); redraw(); } // clicked again: the next one down
+    // clicked again: the next one down — after a moment, so the first click of a double-click doesn't step away
+    else if (d.kind === 'move' && d.cycle && findEl(d.cycle)) { clearTimeout(cycleTimer); cycleTimer = setTimeout(() => { if (findEl(d.cycle)) { S.sel = d.cycle; renderProps(); redraw(); } }, 320); }
   });
 
   stage.addEventListener('dblclick', (e) => {
+    clearTimeout(cycleTimer); // a double-click: stay on the object that was clicked
     const s = evPos(e), w = toWorld(s.x, s.y);
     if (S.tool === 'item' && S.draft && S.draft.pts) {
       // remove the duplicate point added by the second click
@@ -754,7 +757,8 @@
       if (el && el.pts) {
         const closed = !['line', 'section', 'bikelane', 'buslane'].includes(el.type);
         const r = G.nearestOnPolyline(w, el.pts, closed);
-        const ln = el.type === 'section' && !(r && r.d < 10 / S.view.s) ? laneUnder(el, w) : null;
+        // inside a lane (and not right on the drawn centre line) a double-click bends that lane; on the line it adds a point
+        const ln = el.type === 'section' && !(r && r.d < 4 / S.view.s) ? laneUnder(el, w) : null;
         if (ln) { // double-click inside a lane: a bend point there (then drag it outward)
           const dir = R.laneDirOfSide(ln.sd);
           el.laneCurves = el.laneCurves || {}; el.laneCurves[dir] = el.laneCurves[dir] || [];
