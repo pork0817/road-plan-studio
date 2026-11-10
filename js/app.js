@@ -209,18 +209,22 @@
   function hitRank(el) {
     return { busstop: 3.2, junction: 0.5, roundabout: 0.6, yield: 3.6, sidewalk: 5, arrow: 4, text: 4, stopline: 4, crosswalk: 3.5, scooterbox: 3.4, line: 3, chevron: 2.5, yellowbox: 2.5, surface: 2, section: 1, road: 0 }[el.type] || 0;
   }
-  function hitTest(w) {
-    const tol = 6 / S.view.s;
-    const order = S.els.map((e, i) => [e, i]).sort((a, b) => hitRank(b[0]) - hitRank(a[0]) || b[1] - a[1]);
-    for (const [el] of order) {
+  // Everything under the cursor, topmost first — in drawing order (the layer list), so a click picks what you see on
+  // top. An intersection's area is also picked by its dashed outline (it lies under its own roads and markings).
+  function hitList(w) {
+    const tol = 8 / S.view.s, hits = [], edge = [];
+    for (let i = S.els.length - 1; i >= 0; i--) {
+      const el = S.els[i];
       if (isLocked(el) || isHidden(el)) continue; // locked / hidden: can't be picked on the canvas (select it from the layer list)
       const sh = R.shape(el, ppm(), P());
       if (!sh) continue;
-      if (sh.poly && sh.poly.length >= 3 && G.pointInPoly(w, sh.poly)) return el;
-      if (sh.line && sh.line.length >= 2) { const r = G.nearestOnPolyline(w, sh.line); if (r && r.d <= sh.w / 2 + tol) return el; }
+      if (el.type === 'junction' && sh.poly && sh.poly.length >= 3) { const r = G.nearestOnPolyline(w, sh.poly, true); if (r && r.d <= tol) { edge.push(el); continue; } }
+      if (sh.poly && sh.poly.length >= 3 && G.pointInPoly(w, sh.poly)) hits.push(el);
+      else if (sh.line && sh.line.length >= 2) { const r = G.nearestOnPolyline(w, sh.line); if (r && r.d <= sh.w / 2 + tol) hits.push(el); }
     }
-    return null;
+    return edge.concat(hits);
   }
+  function hitTest(w) { const h = hitList(w); return h.length ? h[0] : null; }
 
   function handlesOf(el) {
     if (!el || isLocked(el)) return [];
@@ -549,8 +553,15 @@
         redraw(); return;
       }
       if (h) { S.drag = { kind: 'handle', h, orig: clone(sel), moved: false }; return; }
-      const el = hitTest(w);
-      if (el) { if (S.align && el.id !== S.align.srcId) endAlign(false); S.sel = el.id; S.drag = { kind: 'move', w0: w, orig: clone(el), moved: false }; renderProps(); redraw(); return; }
+      // Clicking the selected object again keeps it (so it can be dragged); a click that doesn't move it then steps to
+      // the next object underneath, so anything hidden under other things can be reached by clicking again.
+      const hits = hitList(w), cur = hits.find((h) => h.id === S.sel);
+      const el = cur || hits[0];
+      if (el) {
+        if (S.align && el.id !== S.align.srcId) endAlign(false);
+        S.sel = el.id; S.drag = { kind: 'move', w0: w, orig: clone(el), moved: false, cycle: cur && hits.length > 1 ? hits[(hits.indexOf(cur) + 1) % hits.length].id : null };
+        renderProps(); redraw(); return;
+      }
       if (S.align) endAlign(false);
       S.sel = null; renderProps();
       S.drag = { kind: 'pan', s0: s, v0: { ...S.view } };
@@ -620,7 +631,9 @@
     const d = S.drag;
     if (d) {
       if (d.kind === 'pan') { S.view.x = d.v0.x + (s.x - d.s0.x); S.view.y = d.v0.y + (s.y - d.s0.y); }
-      else if (d.kind === 'move') { const el = findEl(S.sel); moveEl(el, d.orig, G.sub(w, d.w0)); d.moved = true; if (el.type === 'roundabout') inRHT(() => syncRoundabout(el)); }
+      else if (d.kind === 'move' && (d.moved || G.dist(w, d.w0) * S.view.s > 3)) { // a click's small jitter is not a drag
+        const el = findEl(S.sel); moveEl(el, d.orig, G.sub(w, d.w0)); d.moved = true; if (el.type === 'roundabout') inRHT(() => syncRoundabout(el));
+      }
       else if (d.kind === 'handle') {
         const el = findEl(S.sel), h = d.h;
         const o = d.orig;
@@ -685,6 +698,7 @@
     S.drag = null;
     if (d.kind === 'pan') stage.style.cursor = S.tool === 'pan' ? 'grab' : S.tool === 'select' ? 'default' : 'crosshair';
     if (d.moved) commit();
+    else if (d.kind === 'move' && d.cycle && findEl(d.cycle)) { S.sel = d.cycle; renderProps(); redraw(); } // clicked again: the next one down
   });
 
   stage.addEventListener('dblclick', (e) => {
@@ -2426,9 +2440,11 @@
     return box;
   }
 
+  let lastSelShown = null; // the layer list scrolls to the selected row only when the selection changes
   function renderProps() {
     const el = findEl(S.sel);
     const box = $('#props');
+    const keepTop = box.scrollTop, sameSel = (el ? el.id : null) === lastSelShown; // rebuilding the panel must not jump it to the top
     box.innerHTML = '';
     const target = el || (S.tool === 'item' ? S.params : null);
     if (target) {
@@ -2518,7 +2534,9 @@
 
     // layers: top of the list = drawn on top. Pieces an intersection / roundabout generated are grouped under it.
     const prevBox = document.querySelector('#props .layerbox'), prevScroll = prevBox ? prevBox.scrollTop : 0;
-    box.appendChild(layersPanel(prevScroll));
+    box.appendChild(layersPanel(prevScroll, !sameSel));
+    lastSelShown = el ? el.id : null;
+    if (sameSel) box.scrollTop = keepTop;
   }
 
   const EYE_SVG = (on) => on
@@ -2560,7 +2578,7 @@
     const ordered = S.els.filter((e) => set.has(e));
     rest.splice(at, 0, ...ordered); S.els = rest; commit();
   }
-  function layersPanel(prevScroll) {
+  function layersPanel(prevScroll, revealSel) {
     numberTopLevel();
     const wrap = document.createElement('div'); wrap.className = 'layerbox';
     const items = layerItems();
@@ -2618,7 +2636,7 @@
     // keep the list where it was, and bring the selected row into view
     requestAnimationFrame(() => {
       wrap.scrollTop = prevScroll;
-      if (selRow) {
+      if (selRow && revealSel) {
         const r = selRow.getBoundingClientRect().top - wrap.getBoundingClientRect().top + wrap.scrollTop; // row position inside the list
         if (r < wrap.scrollTop + 30 || r > wrap.scrollTop + wrap.clientHeight - 30) wrap.scrollTop = r - wrap.clientHeight / 2;
       }
