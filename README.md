@@ -131,7 +131,7 @@ Pick the country at the top (國家). Switching restyles every marking and rebui
 **日本 Japan** (`japan.js`) — 道路標識、区画線及び道路標示に関する命令 (別表第4・第6, figures as reprinted by NILIM). **Left-hand traffic:** a road's drawing-direction lanes sit on the left of its centre line; intersections, turn pockets, guide lines, bus stops and roundabouts (clockwise) are all built for driving on the left.
 - 車線境界線 0.10–0.15 m dashed (3–10 m, gap 1–2 × the dash; 5 m / 5 m used), 中央線 0.12–0.15 m (white dashed / solid / double), はみ出し禁止 yellow 0.15–0.20 m, 進路変更禁止 yellow 0.10–0.15 m, 車道外側線 0.15–0.20 m.
 - 横断歩道: bars and gaps 0.45–0.50 m, 4 m standard. 停止線 0.30–0.45 m, at least 1 m (2 m standard) before the crosswalk. 自転車横断帯 lines 0.15–0.30 m with bike symbols.
-- Arrows (110 / 204): 5 m, 0.15 m shaft, straight head 2.5 × 0.45 m; a turn arrow hooks round into a head pointing 45° to the side; straight + turn has a 45° side head below the straight head.
+- Arrows (110 / 204): 5 m, 0.15 m shaft, straight head 2.5 × 0.45 m. A turn arrow's tip still points straight ahead: the shaft jogs 0.30 m toward the turn (curves R 1.0 / 0.5) and carries a 2.2 m half-head, a blade 0.30 m wide on the turn side. Straight + turn: a straight arrow (2.2 m head) with the same blade below it.
 - 二段停止線 (二輪 / 四輪, 2–5 m apart) instead of a scooter box; 導流帯 (0.45 m stripes every 1.0–1.5 m), 立入り禁止部分 (yellow), 停止禁止部分; ◇ 横断歩道あり (1.5 × 5.0 m), ▽ 前方優先道路, blue 矢羽根; Japanese text stacked along the lane, numbers across it (最高速度 yellow, 5.0 × 1.2 m).
 - The lane cards follow the driver: ＋附加右轉 cuts the median (needs about 2.75 m a lane), ＋附加左轉 widens the kerb side.
 

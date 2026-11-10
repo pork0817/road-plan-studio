@@ -721,31 +721,21 @@ window.Render = (function () {
     return { S: [shaft(2.95), head], R: R1, L: R1.map(mirror), SR: SR1, SL: SR1.map(mirror),
       LR: [shaft(2.55)].concat(arm(2.55), arm(2.55).map(mirror)), SLR: [shaft(2.95), head].concat(arm(0.35), arm(0.35).map(mirror)), U: ARROWS.U };
   })();
-  // ---- Japan: 標識令 別表第6 「進行方向別通行区分」(110) / 「進行方向」(204) — 5 m long, 0.15 m shaft. Straight: head
-  // 2.5 m × 0.45 m. Turn: the shaft hooks round (R ≈ 0.6 m) into a head pointing 45° to the side. Straight + turn:
-  // a straight arrow (2.2 m head) with a 45° side head branching off below it. ----
+  // ---- Japan: 標識令 別表第6 「進行方向別通行区分」(110) / 「進行方向」(204) — 5 m long, 0.15 m shaft.
+  // Straight: head 2.5 m × 0.45 m. Turn: the tip still points straight ahead — the shaft jogs 0.30 m toward the
+  // turn (outer curve R 1.0, inner R 0.5) and carries a 2.2 m half-head: a blade 0.30 m wide on the turn side of
+  // the line under the tip, its barb 0.6 m long. Straight + turn: a straight arrow (2.2 m head) with the same blade
+  // 0.3 m below the head, ending 0.3 m above the foot. ----
   const JP_ARROWS = (() => {
-    const hw = 0.075, D2R = Math.PI / 180;
-    // a left-leaning arm from the shaft centre line at height y0: arc of centre-line radius r turning th, a short
-    // stem, then a head (length hl, base width bw). yTip (optional): add a straight part first so the tip lands there.
-    const arm = (y0, th, r, stem, hl, bw, yTip) => {
-      const rise = r * Math.sin(th) + (stem + hl) * Math.cos(th), y1 = yTip != null ? Math.max(y0, yTip - rise) : y0, cl = [];
-      if (y1 > y0 + 1e-6) cl.push([0, y0]);
-      for (let k = 0; k <= 10; k++) { const a = (th * k) / 10; cl.push([-(r - r * Math.cos(a)), y1 + r * Math.sin(a)]); }
-      const d = [-Math.sin(th), Math.cos(th)], nr = [d[1], -d[0]];
-      const e = cl[cl.length - 1], B = [e[0] + d[0] * stem, e[1] + d[1] * stem];
-      cl.push(B);
-      const off = (k, sd) => {
-        const q = cl[Math.min(k + 1, cl.length - 1)], o = cl[Math.max(k - 1, 0)], t = [q[0] - o[0], q[1] - o[1]], L = Math.hypot(t[0], t[1]) || 1;
-        return [cl[k][0] + (t[1] / L) * sd, cl[k][1] - (t[0] / L) * sd];
-      };
-      const left = cl.map((_, k) => off(k, -hw)), right = cl.map((_, k) => off(k, hw));
-      const tip = [B[0] + d[0] * hl, B[1] + d[1] * hl];
-      return left.concat([[B[0] - nr[0] * bw / 2, B[1] - nr[1] * bw / 2], tip, [B[0] + nr[0] * bw / 2, B[1] + nr[1] * bw / 2]], right.reverse());
-    };
+    const hw = 0.075, tx = hw - 0.30;                                   // tip / barb line of a left blade
     const straight = (yb) => [[-hw, 0], [hw, 0], [hw, yb], [0.225, yb], [0, 5.0], [-0.225, yb], [-hw, yb]];
-    const TURN = arm(0, 45 * D2R, 0.6, 0.15, 1.4, 0.5, 5.0);          // turn arrow: tip 5.0 m up, ≈ 1.3 m to the side
-    const SIDE = arm(1.0, 45 * D2R, 0.3, 0.3, 1.3, 0.45);              // side head of a combined arrow, below the 2.2 m head
+    const aO = Math.acos(0.7), aI = Math.acos(0.75), yi = 3.4 - 0.5 * Math.sin(aI);
+    const TURN = [[-hw, 0], [hw, 0]]
+      .concat(arc(hw - 1.0, 3.0, 1.0, 0, aO))                            // outer curve up to the line under the tip
+      .concat([[tx, 5.0], [tx - 0.30, 3.88], [tx, 2.8]])                 // tip, blade corner, barb
+      .concat(arc(-hw - 0.5, yi, 0.5, aI, 0));                           // inner curve back down to the shaft
+    // side blade of a combined arrow: tip at 2.5, barb at 0.3, joined to the shaft by a short slanted neck
+    const SIDE = [[tx, 2.5], [tx - 0.30, 1.4], [tx, 0.3], [tx + 0.02, 0.95], [-hw, 0.8], [-hw, 1.3], [tx, 1.65]];
     return { S: [straight(2.5)], L: [TURN], R: [mirror(TURN)], SL: [straight(2.8), SIDE], SR: [straight(2.8), SIDE].map(mirror),
       LR: [TURN, mirror(TURN)], SLR: [straight(2.8), SIDE, mirror(SIDE)], U: ARROWS.U };
   })();
