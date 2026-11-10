@@ -174,6 +174,6 @@ window.RoadPresets = window.RoadPresets || {};
     box: { front: 0, back: 0.15, backDouble: true, sides: false, fill: C.bike, icon: 'bike' }, boxRange: [4, 5],
     bikeCross: { line: 'blocks50', lineW: 0.50, gap: 0.50, minW: 1.5, pad: 1.0, symbols: false },
     iconSizes: { bike: [0.75, 1.5], warnTri: [1.0, 4.0] },
-    twoStageBox: false, apronStyle: 'ribbed', mouthBikeLine: 'blocks50', stopText: 'STOP', minorCtrl: 'yield',
+    twoStageBox: false, busSepStyle: 'single', busDiamonds: false, apronStyle: 'ribbed', mouthBikeLine: 'blocks50', stopText: 'STOP', minorCtrl: 'yield',
   };
 })();

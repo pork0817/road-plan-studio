@@ -24,6 +24,8 @@ Select a road section to edit its lanes as cards, one row per traffic direction,
 - Several left- or right-turn lanes are fine (for example `L,L,S,SR`, or two left pockets). 左轉導引線 / 右轉導引線 draw guide lines from every turning lane into the matching lane of the road turned into.
 - The panel is grouped into 車道 Lanes, 左轉 Left turn, 道路 Road and a folded 更多 More.
 
+Bus lanes in the lane cards: pick 公車道 from a card's menu, or press ＋公車道 to add a bus-only lane at the kerb (the driver's right, the left in Japan). It is marked with the country's bus-lane marking (Taiwan: double white lines, §174 diamonds and 公車專用; Netherlands: solid line and BUS; Japan: solid line and バス専用), replaces the dashed lines beside it, gets no lane arrows at intersections, and can be coloured.
+
 ## Intersections
 1. Draw a **road section** (② 路段) along the centre line of each road, running straight through the junction.
 2. Pick **路口 (自動) Intersection** and click where the roads cross.

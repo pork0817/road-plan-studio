@@ -128,6 +128,30 @@ window.Render = (function () {
     return { lines, bands, left, right };
   };
 
+  // ---------- bus-only lanes set in a section's lane cards (laneUseF / laneUseB = "BUS") ----------
+  // Each one: its centre-line offset (m, + = right of the drawing direction), travel direction along the drawing
+  // (+1 / -1), the lane-line keys beside it (those are replaced by the bus lane's own separators) and which sides
+  // have general traffic next to it. Lane cards count from the driver's left.
+  R.sectionBusLanes = function (el) {
+    const out = [], lw = el.laneWidth, oneWay = (el.lanesB | 0) === 0;
+    const start = !oneWay && el.centerType === 'median' ? el.medianWidth / 2 + 0.3 : 0;
+    const W = (el.lanesF | 0) * lw + (el.slowLane || 0) + (el.bikeLane || 0), s0 = -W / 2;
+    for (const dir of oneWay ? ['F'] : ['F', 'B']) {
+      const n = dir === 'F' ? el.lanesF | 0 : el.lanesB | 0;
+      const raw = el['laneUse' + dir] != null && el['laneUse' + dir] !== '' ? el['laneUse' + dir] : el.laneUse;
+      const uses = String(raw || '').toUpperCase().split(/[\s,，、]+/).filter(Boolean);
+      for (let k = 0; k < n; k++) {
+        if (uses[k] !== 'BUS') continue;
+        const i = R.LHT ? n - 1 - k : k, side = dir === 'F' ? 1 : -1, sd = side > 0 ? 'R' : 'L';
+        let off = oneWay ? s0 + (i + 0.5) * lw : side * (start + (i + 0.5) * lw);
+        if (R.LHT) off = -off;
+        const keys = []; if (i > 0) keys.push(sd + 'lane' + (i - 1)); if (i < n - 1) keys.push(sd + 'lane' + i);
+        out.push({ off, travel: dir === 'F' ? 1 : -1, keys, inner: i > 0, outer: i < n - 1, width: lw });
+      }
+    }
+    return out;
+  };
+
   // ---------- lane additions / drops along a section ----------
   // lanesF2 / lanesB2: lane counts after the change; changeAt: where the taper starts (m from the first point);
   // taper: its length (m). Added lanes open on the kerb side; a dropped lane narrows away over the taper.
@@ -1562,7 +1586,9 @@ window.Render = (function () {
       const minor = others.filter((e) => !(pCont && pCont.has(e.id)) && ((pMaj && pMaj.has(e.id) ? false : lanesOf(e) < lanesOf(el)) || (pMin && pMin.has(e.id)))).map((e) => R.sectionPoly(e, ppm)).filter(Boolean);
       for (const q of major) clipOutside(q);
       for (const st of busStops) if (st.g.host === el) clipOutside(st.g.mask);
+      const busL = R.sectionBusLanes(el), busSkip = new Set(busL.flatMap((b) => b.keys));
       for (const { l, pts: line } of g.lines) {
+        if (busSkip.has(l.key)) continue; // a lane line beside a bus lane: the bus lane draws its own separator there
         const sty = P.lineStyles[l.style];
         if (l.style === 'bikeSep' && bikeRingCuts.length) { ctx.save(); for (const c of bikeRingCuts) clipOutside(c); R.drawStyled(ctx, line, sty, ppm); ctx.restore(); continue; }
         if ((l.style !== 'edge' && l.style !== 'bikeSep') || !minor.length) { R.drawStyled(ctx, line, sty, ppm); continue; }
@@ -1572,6 +1598,19 @@ window.Render = (function () {
         for (const q of minor) { ctx.save(); path(ctx, q, true); ctx.clip(); R.drawStyled(ctx, line, mouthSty, ppm); ctx.restore(); }
       }
       ctx.restore();
+      // bus-only lanes: the country's bus-lane marking (separators on the sides with general traffic, wording, diamonds)
+      if (busL.length) {
+        const base = R.basePts(el, ppm);
+        for (const b of busL) {
+          let pts = G.offset(base, b.off * ppm); if (b.travel < 0) pts = pts.slice().reverse();
+          // separators: toward the centre (driver's left in RHT, right in Japan) where b.inner, and outward where b.outer
+          const left = R.LHT ? b.outer : b.inner, right = R.LHT ? b.inner : b.outer;
+          const d = { type: 'buslane', kind: 'exclusive', pts, smooth: false, width: b.width, sep: left && right ? 'both' : left ? 'left' : right ? 'right' : 'none',
+            sepStyle: P.busSepStyle || 'double', diamonds: P.busDiamonds !== false, spacing: 50, text: P.busLaneText, surface: !!el.busSurface, color: P.colors.bus };
+          ctx.save(); clipRoad(); for (const c of crossCuts) clipOutside(c); cutJunctions(el);
+          drawBikeSurface(ctx, d, ppm, P); markLane(d); ctx.restore();
+        }
+      }
       // medians: opened wherever a crosswalk crosses them (0.3 m clear each side), stopped at junctions / roundabouts
       for (const { b, pts: mp } of g.bands) if (b.kind === 'median') {
         const poly = G.offset(mp, -b.width / 2 * ppm).concat(G.offset(mp, b.width / 2 * ppm).reverse());

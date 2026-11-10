@@ -142,6 +142,7 @@ window.RoadPresets = window.RoadPresets || {};
         const f = [
           { kind: 'head', label: '車道 Lanes' },
           { kind: 'laneEditor' },
+          ...(/\bBUS\b/i.test([el.laneUse, el.laneUseF, el.laneUseB].join(',')) ? [{ kind: 'chk', key: 'busSurface', label: '公車道彩色鋪面 Coloured bus lanes (法規未規定)' }] : []),
           { kind: 'head', label: '左轉 Left turn' },
           { kind: 'sel', key: 'leftTurn', label: '左轉方式', options: [['shared', '依車道箭頭 By lane arrows'], ['dedicated', '最內側車道專用 Inner lane only'], ['twoStage', '機車兩段式 Two-stage (scooters)'], ['banned', '禁止左轉 No left turn']] },
           { kind: 'chk', key: 'leftGuide', label: '左轉導引線 Left-turn guide lines' },

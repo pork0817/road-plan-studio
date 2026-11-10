@@ -45,6 +45,7 @@ window.RoadPresetKit = (function () {
           const f = [
             { kind: 'head', label: '車道 Lanes' },
             { kind: 'laneEditor' },
+            ...(/\bBUS\b/i.test([el.laneUse, el.laneUseF, el.laneUseB].join(',')) ? [{ kind: 'chk', key: 'busSurface', label: '公車道彩色鋪面 Coloured bus lanes' }] : []),
             { kind: 'head', label: T.turnHead || '左轉 Left turn' },
             { kind: 'sel', key: 'leftTurn', label: T.turnLabel || '左轉方式', options: T.turnOpts || [['shared', '依車道箭頭 By lane arrows'], ['dedicated', '最內側車道專用 Inner lane only'], ['banned', '禁止左轉 No left turn']] },
             { kind: 'chk', key: 'leftGuide', label: T.leftGuide || '左轉導引線 Left-turn guide lines' },

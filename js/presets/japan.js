@@ -151,6 +151,6 @@ window.RoadPresets = window.RoadPresets || {};
     box: { front: 0, back: 0.30, sides: false, labels: ['二輪', '四輪'] }, boxRange: [2, 5],
     bikeCross: { line: 'bikeXLine', lineW: 0.20, gap: 0.10, minW: 1.5, pad: 0.4, symbols: true },
     iconSizes: { bike: [0.7, 1.0], navi: [0.75, 1.5] },
-    twoStageBox: false, stopText: '止まれ', minorCtrl: 'stop',
+    twoStageBox: false, busSepStyle: 'single', busDiamonds: false, stopText: '止まれ', minorCtrl: 'stop',
   };
 })();

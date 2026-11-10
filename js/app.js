@@ -2021,7 +2021,7 @@
         return sideOf(lo) === sideOf(hi) && sideOf(lo) === sideOf(lg.rd.sM) && sideOf(lo) !== 0.5;
       };
       // what each lane is for, from the driver's left: the road's 車道用途 setting (e.g. "L,L,S,S,R"), else automatic
-      const KINDS = new Set(['L', 'S', 'R', 'SL', 'SR', 'LR', 'SLR', 'U']);
+      const KINDS = new Set(['L', 'S', 'R', 'SL', 'SR', 'LR', 'SLR', 'U', 'BUS']); // BUS: a bus-only lane (marked by the road itself)
       const useStr = el['laneUse' + lg.dirKey] != null && el['laneUse' + lg.dirKey] !== '' ? el['laneUse' + lg.dirKey] : el.laneUse;
       const given = String(useStr || '').toUpperCase().split(/[\s,，、]+/).filter((x) => KINDS.has(x));
       const design = el.leftTurn || 'shared';
@@ -2049,7 +2049,7 @@
       // cars stop at its back edge
       let boxRear = stopRear, kS = -1, kE = -1;
       if (el.autoBox && prm.stops && n > 0 && !lg.entry.priority) {
-        uses.forEach((u, k) => { if (u.includes('S')) { if (kS < 0) kS = k; kE = k; } });
+        uses.forEach((u, k) => { if (u !== 'BUS' && u.includes('S')) { if (kS < 0) kS = k; kE = k; } });
         if (kS >= 0) {
           const BR = PR.boxRange || [2.5, 6], D = G.clamp(el.boxDepth || 3, BR[0], BR[1]);
           boxRear = stopRear + D * m;
@@ -2081,7 +2081,7 @@
         const inBox = (k) => kS >= 0 && k >= kS && k <= kE;
         const tip1 = (k) => (inBox(k) ? boxRear + 3 * m : stopRear + 1 * m);
         const tip2 = Math.max(boxRear + 33 * m, stopRear + (L0 + 3) * m);
-        const put = (k, tip) => { if (tip + AL * m < lg.len && sameLanes(tip, tip + AL * m)) out.push({ id: newId(), owner: jid, type: 'arrow', lane: k, kind: uses[k], length: AL, p: atL(lg, tip + (AL / 2) * m, laneOff(k)), dir: dirAt(tip + (AL / 2) * m) }); };
+        const put = (k, tip) => { if (uses[k] !== 'BUS' && tip + AL * m < lg.len && sameLanes(tip, tip + AL * m)) out.push({ id: newId(), owner: jid, type: 'arrow', lane: k, kind: uses[k], length: AL, p: atL(lg, tip + (AL / 2) * m, laneOff(k)), dir: dirAt(tip + (AL / 2) * m) }); };
         for (let k = 0; k < n; k++) put(k, tip1(k));
         for (let k = 0; k < n; k++) put(k, tip2);
       }
@@ -2275,13 +2275,20 @@
 
   // ---------------- lane cards (路段 → 車道) ----------------
   const foldOpen = new Set();
-  const USE_LABEL = { S: '直行', L: '左轉', R: '右轉', SL: '直左', SR: '直右', LR: '左右', SLR: '直左右', U: '迴轉' };
-  const USE_ORDER = ['S', 'L', 'R', 'SL', 'SR', 'LR', 'SLR', 'U'];
+  const USE_LABEL = { S: '直行', L: '左轉', R: '右轉', SL: '直左', SR: '直右', LR: '左右', SLR: '直左右', U: '迴轉', BUS: '公車道' };
+  const USE_ORDER = ['S', 'L', 'R', 'SL', 'SR', 'LR', 'SLR', 'U', 'BUS'];
   let lanePick = null; // { dir, k } of the card whose arrow menu is open
   function arrowIcon(kind, w = 30, h = 52) {
     const c = document.createElement('canvas'), dpr = window.devicePixelRatio || 1;
     c.width = w * dpr; c.height = h * dpr; c.style.width = w + 'px'; c.style.height = h + 'px';
     const g = c.getContext('2d'); g.scale(dpr, dpr);
+    if (kind === 'BUS') { // bus lane: the lane coloured, with the country's wording
+      g.fillStyle = P().colors.bus; g.beginPath(); g.roundRect ? g.roundRect(3, 3, w - 6, h - 6, 3) : g.rect(3, 3, w - 6, h - 6); g.fill();
+      const txt = P().busLaneText || '公車專用', row = R.isRowText(txt), ch = Array.from(row ? txt : txt.slice(0, 2));
+      g.fillStyle = '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = `700 ${row ? 9 : 11}px ${P().fontFamily}`;
+      if (row) g.fillText(txt, w / 2, h / 2); else ch.forEach((c2, i) => g.fillText(c2, w / 2, h / 2 + (i - (ch.length - 1) / 2) * 13));
+      return c;
+    }
     try { R.drawArrow(g, { kind, length: 5, p: { x: w / 2, y: h / 2 }, dir: -Math.PI / 2 }, (h - 6) / 5, P()); } catch (e) { /* unknown kind */ }
     return c;
   }
@@ -2353,7 +2360,11 @@
       const lab = document.createElement('span'); lab.textContent = `${n} 車道 lanes`;
       const setN = (v) => { lanePick = null; if (custom) { const arr = uses.slice(0, v); while (arr.length < v) arr.push('S'); onChange('laneUse' + dir, arr.join(',')); } onChange(nKey, v); };
       minus.onclick = () => setN(n - 1); plus.onclick = () => setN(n + 1);
-      cnt.append(minus, lab, plus);
+      // ＋公車道: one more lane, on the kerb side, set to bus only (the kerb is the driver's right — or left in Japan)
+      const bus = document.createElement('button'); bus.className = 'linkbtn'; bus.textContent = '＋公車道 Bus lane'; bus.disabled = n >= 6;
+      bus.title = '在路邊加一條公車專用道 Add a bus-only lane at the kerb';
+      bus.onclick = () => { lanePick = null; const arr = uses.slice(); if (R.LHT) arr.unshift('BUS'); else arr.push('BUS'); onChange('laneUse' + dir, arr.join(',')); onChange(nKey, n + 1); };
+      cnt.append(minus, lab, plus, bus);
       wrap.appendChild(cnt);
     }
     return wrap;
