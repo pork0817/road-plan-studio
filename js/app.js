@@ -1731,7 +1731,9 @@
       const at = (d, off) => legPt(lg, d, off); // along the road's own line (carriageways may sit off-centre)
       const isMain = pri && mainRd.has(lg.rd), cwHere = prm.crosswalks && (!isMain || prm.cwMain);
       lg.cwHere = cwHere;
-      let cwIn = lg.E + (isMain && !cwHere ? 0 : prm.setback * m), cwOut = cwIn + (cwHere ? prm.cwWidth * m : 0), hasCw = !!cwHere;
+      // no crosswalk at a priority junction: nothing to set back from — the side street's give-way / stop marking sits
+      // right at the main road's edge (behind its edge line or bike lane, as haaientanden are laid in NL)
+      let cwIn = lg.E + (pri && !cwHere ? 0 : prm.setback * m), cwOut = cwIn + (cwHere ? prm.cwWidth * m : 0), hasCw = !!cwHere;
       if (!prm.crosswalks && !isMain) { // the user's own crosswalk on this leg (nearest the junction): stop lines go behind it
         let best = null;
         for (const c of S.els) {
@@ -1765,7 +1767,7 @@
           a: legPt(lg, d, -lg.leftExt + 0.05 - lg.pocketRt), b: legPt(lg, d, lg.rightExt - 0.05 + lg.pocketOne), dir: G.angle(onLeg(lg, d, 0).t) });
       }
       // stop line across every entering lane, 2–3 m before the crosswalk (§170)
-      const ds = cwOut + (hasCw ? prm.stopGap * m : 0) + (stopW * m) / 2;
+      const ds = cwOut + (hasCw ? prm.stopGap * m : pri && !isMain ? 0.3 * m : 0) + (stopW * m) / 2;
       // 左轉附加車道 (pocket): an extra left-turn lane carved out of the median next to the incoming lanes
       const mhalf = el.centerType === 'median' && el.lanesB > 0 ? el.medianWidth / 2 : 0;
       const fitN = mhalf > 0 ? Math.min(nPL, Math.floor((2 * mhalf - 0.5) / 2.75)) : 0; // pocket lanes the median can give
