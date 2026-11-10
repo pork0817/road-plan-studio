@@ -291,7 +291,51 @@ window.Render = (function () {
       let in0 = oneWay ? -W / 2 : (sd === 'R' ? 1 : -1) * startM; if (R.LHT) in0 = -in0;
       extra.push({ l: { style: 'laneSolid', key: sd + 'in0' }, pts: offsetVar(pts, a0.map((v) => (in0 + R.outSign(sd) * v) * ppm)), only: a0.map((v) => v > 0.15) });
     }
-    return { pts, L: L0, L1, cum, w, shift: lc ? shift : null,
+    // 分隔島: every gap a bend opens (beside the centre line, or between two lanes) becomes a median island, 0.3 m inside
+    // the lane edges, tapering smoothly to a point at both ends (the bend eases in and out)
+    const islands = [];
+    if (lc) {
+      const ins = 0.3 * ppm, minW = 2 * ins + 0.05 * ppm, n = pts.length;
+      const runs = (oA, oB, insA = ins, insB = ins, base = 0) => { // oA, oB: the gap's edges (px offsets per point); base: width that is not a gap
+        const need = insA + insB + 0.05 * ppm + base;
+        for (let k = 0; k < n;) {
+          if (Math.abs(oB[k] - oA[k]) <= need) { k++; continue; }
+          let k1 = k; while (k1 + 1 < n && Math.abs(oB[k1 + 1] - oA[k1 + 1]) > need) k1++;
+          const sg = (q) => Math.sign(oB[q] - oA[q]) || 1, ea = [], eb = [];
+          for (let q = k; q <= k1; q++) { ea.push(oA[q] + sg(q) * insA); eb.push(oB[q] - sg(q) * insB); }
+          const sub = pts.slice(k, k1 + 1);
+          if (sub.length >= 2) {
+            const A = offsetVar(sub, ea), B = offsetVar(sub, eb);
+            const tip = (q0, q1) => offsetVar([pts[q0], pts[q1]], [(oA[q0] + oB[q0]) / 2, (oA[q1] + oB[q1]) / 2])[0]; // the pointed end
+            const head = k > 0 ? [tip(k - 1, k)] : [], tail = k1 < n - 1 ? [offsetVar([pts[k1], pts[k1 + 1]], [(oA[k1] + oB[k1]) / 2, (oA[k1 + 1] + oB[k1 + 1]) / 2])[1]] : [];
+            islands.push(head.concat(A, tail, B.reverse()));
+          }
+          k = k1 + 1;
+        }
+      };
+      const oneWay = (el.lanesB | 0) === 0, lw = el.laneWidth, startM = !oneWay && el.centerType === 'median' ? el.medianWidth / 2 + 0.3 : 0;
+      const W = (el.lanesF | 0) * lw + (el.slowLane || 0) + (el.bikeLane || 0);
+      const in0Of = (sd) => { let v = oneWay ? -W / 2 : (sd === 'R' ? 1 : -1) * startM; return R.LHT ? -v : v; };
+      const inner = (sd) => { const a = shift[sd]; return a.length ? a[0].map((v) => (in0Of(sd) + R.outSign(sd) * v) * ppm) : pts.map(() => in0Of(sd) * ppm); };
+      if (!oneWay && (shift.R.length || shift.L.length)) {
+        if (el.centerType === 'median') { // beside the median: the island grows straight out of it
+          const mh = el.medianWidth / 2;
+          for (const sd of ['R', 'L']) if (shift[sd].length) { const e0 = (R.LHT ? -1 : 1) * (sd === 'R' ? 1 : -1) * mh * ppm; runs(pts.map(() => e0), inner(sd), 0, ins, 0.3 * ppm); }
+        } else { // the space between the two directions' innermost lanes is one island (the centre line runs under it)
+          const iL = inner('L'), iR = inner('R');
+          runs(iL, iR);
+        }
+      }
+      for (const sd of ['R', 'L']) {
+        const a = shift[sd]; if (!a.length) continue;
+        const o = R.outSign(sd);
+        for (let i = 0; i + 1 < a.length; i++) { // between lane i and the lane outside it
+          const ln = L0.lines.find((l) => l.key === sd + 'lane' + i); if (!ln) continue;
+          runs(a[i].map((v) => (ln.off + o * v) * ppm), a[i + 1].map((v) => (ln.off + o * v) * ppm));
+        }
+      }
+    }
+    return { pts, L: L0, L1, cum, w, shift: lc ? shift : null, islands,
       lines: match(L0.lines, L1.lines, (l, q) => ({ l, pts: q })).concat(extra),
       bands: match(L0.bands, L1.bands, (b, q) => ({ b, pts: q })),
       left: G.trimLoops(offsetVar(pts, lo)), right: G.trimLoops(offsetVar(pts, hi)) };
@@ -1699,6 +1743,12 @@ window.Render = (function () {
           ctx.save(); clipRoad(); for (const c of crossCuts) clipOutside(c); cutJunctions(el);
           drawBikeSurface(ctx, d, ppm, P); markLane(d); ctx.restore();
         }
+      }
+      // islands left where lanes bend around something (drawn over the road and its centre line)
+      for (const isl of g.islands || []) {
+        if (isl.length < 3) continue;
+        ctx.save(); for (const c of crossCuts) clipOutside(c); cutJunctions(el);
+        drawSidewalk(ctx, { pts: isl, style: 'island' }, ppm, P); ctx.restore();
       }
       // medians: opened wherever a crosswalk crosses them (0.3 m clear each side), stopped at junctions / roundabouts
       for (const { b, pts: mp } of g.bands) if (b.kind === 'median') {
