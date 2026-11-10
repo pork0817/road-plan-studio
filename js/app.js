@@ -1664,7 +1664,9 @@
       return best;
     };
     const core = roads.filter((rd) => rd.core);
-    roads = roads.filter((rd) => rd.core || core.some((c) => { const X = crossPt(rd, c); return X && G.dist(X, click) < 60 * m; }));
+    // …but only a parallel carriageway of one of them (≤ 25 m beside it): a separate side street nearby is its own junction
+    const besideCore = (rd) => core.some((c) => Math.abs(G.dot(rd.r.tangent, c.r.tangent)) > 0.95 && G.nearestOnPolyline(c.r.proj, rd.pts).d < 25 * m);
+    roads = roads.filter((rd) => rd.core || (besideCore(rd) && core.some((c) => { const X = crossPt(rd, c); return X && G.dist(X, click) < 60 * m; })));
     for (const rd of roads) if (!rd.core) rd.r = G.nearestOnPolyline(click, rd.pts);
     if (roads.length < 2) {
       alert('找不到兩條交會的路段。請先用「② 路段」沿每條道路的中心線畫過路口，再點兩路交會處。\nNeed two road sections crossing here — draw sections along each road first.');
@@ -1789,7 +1791,12 @@
       if (prm.stops && incoming && !isMain) {
         if (pri && minorCtrl === 'yield') { // give way: the country's yield marking across the entering lanes
           const nIn = oneWay ? el.lanesF : (lg.sgn > 0 ? el.lanesB : el.lanesF);
-          out.push({ id: newId(), owner: jid, type: 'yield', lanes: Math.max(1, nIn | 0), triangles: true, a: legPt(lg, ds, inner), b: legPt(lg, ds, outerLat), dir: travel });
+          // close to the main road the kerb has already curved away (corner radius cRm): run the line across the whole
+          // opening there, out to 0.3 m from the curving kerb (both sides on a one-way street, the kerb side otherwise)
+          const cRm = G.clamp(prm.cornerR != null ? prm.cornerR : 8, 0, 30), dl = Math.max(0, (ds - lg.E) / m);
+          const flare = cRm > 0 && dl < cRm ? Math.max(0, cRm - Math.sqrt(cRm * cRm - (cRm - dl) ** 2) - 0.3) : 0;
+          out.push({ id: newId(), owner: jid, type: 'yield', lanes: Math.max(1, nIn | 0), triangles: true,
+            a: legPt(lg, ds, inner + (oneWay ? flare : 0)), b: legPt(lg, ds, outerLat - flare), dir: travel });
         } else {
           out.push({ id: newId(), owner: jid, type: 'stopline', width: stopW, a: legPt(lg, ds, inner), b: legPt(lg, ds, outerLat), dir: travel });
           if (pri && PR.stopText) { // STOP / 停 / 止まれ just before the stop line, centred on the entering lanes
