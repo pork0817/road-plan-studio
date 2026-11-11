@@ -342,13 +342,22 @@ window.Render = (function () {
   }
   // pavement edge distances (m) at a station (m) along the section, following any lane-change taper
   R.sectionExtAt = function (el, sM) {
+    const e = sectionExtBase(el, sM);
+    if (R.hasLaneCurves(el)) for (const sd of ['R', 'L']) { // a bent outermost lane pushes the kerb out
+      const n = sd === 'R' ? el.lanesF | 0 : el.lanesB | 0; if (!n) continue;
+      const sh = R.laneShiftAt(el, R.laneDirOfSide(sd), n - 1, sM);
+      if (R.outSign(sd) > 0) e.right += sh; else e.left += sh;
+    }
+    return e;
+  };
+  function sectionExtBase(el, sM) {
     const L0 = R.sectionLayout(el);
     if (!R.hasLaneChange(el)) return { left: L0.left, right: L0.right };
     const e1 = R.sectionEnd(el), W0 = el.lanesB === 0 ? el.lanesF * el.laneWidth + (el.slowLane || 0) + (el.bikeLane || 0) : null;
     const L1 = R.sectionLayout(e1, e1.lanesB === 0 && el.lanesB === 0 ? W0 : undefined);
     const u = G.clamp((sM - (+el.changeAt || 0)) / Math.max(1, +el.taper || 30), 0, 1);
     return { left: L0.left + (L1.left - L0.left) * u, right: L0.right + (L1.right - L0.right) * u };
-  };
+  }
   // the layout (lane counts and edge distances) in force at a station (m) along the section
   R.sectionAt = function (el, sM) {
     if (!R.hasLaneChange(el)) return { el, L: R.sectionLayout(el) };
@@ -1578,11 +1587,11 @@ window.Render = (function () {
     const yieldToRoundabouts = (el) => { if (rbAreas.length && !(el.owner && rbIds.has(el.owner)) && el.type !== 'roundabout') for (const a of rbAreas) clipOutside(a); };
     // a priority junction leaves its main road's markings whole (main: the road ids that run through untouched)
     const mainOf = (e) => (e.type === 'junction' && e.control === 'priority' && e.mainSecIds ? new Set(e.mainSecIds) : null);
-    const junctions = els.filter((e) => (e.type === 'junction' || e.type === 'lanemask') && e.pts.length >= 3).map((e) => ({ pts: e.pts, main: mainOf(e) }))
+    const junctions = els.filter((e) => (e.type === 'junction' || e.type === 'lanemask') && e.pts.length >= 3).map((e) => ({ pts: e.pts, main: mainOf(e), mask: e.type === 'lanemask' }))
       .concat(els.filter((e) => e.type === 'junction').flatMap((e) => (e.cornerCuts || []).map((pts) => ({ pts, main: mainOf(e) }))))
       .concat(els.filter((e) => e.type === 'roundabout').map((e) => ({ pts: R.rbOutline(e, ppm, 1.2) })))
       .concat(els.filter((e) => e.type === 'roundabout').flatMap((e) => (e.corners || []).map((k) => ({ pts: k.mask })).concat((e.legMasks || []).concat(e.cornerMasks || []).map((pts) => ({ pts })))));
-    const cutJunctions = (forEl) => { for (const j of junctions) if (!(forEl && j.main && j.main.has(forEl.id))) clipOutside(j.pts); }; // one clip per area: overlaps can't cancel
+    const cutJunctions = (forEl, keepMasked) => { for (const j of junctions) if (!(forEl && j.main && j.main.has(forEl.id)) && !(keepMasked && j.mask)) clipOutside(j.pts); }; // one clip per area: overlaps can't cancel
     // main road ↔ side streets of priority junctions: the side street's lines stop at the main road's edge, and the main
     // road's edge line turns dashed across the side street's mouth (as where a smaller road joins a bigger one)
     const priMinor = new Map(), priMajor = new Map(), priCont = new Map(); // priCont: side streets behind a continuous sidewalk
@@ -1738,7 +1747,8 @@ window.Render = (function () {
       // islands left where lanes bend around something (drawn over the road and its centre line)
       for (const isl of g.islands || []) {
         if (isl.length < 3) continue;
-        ctx.save(); for (const c of crossCuts) clipOutside(c); cutJunctions(el);
+        ctx.save(); for (const c of crossCuts) clipOutside(c); cutJunctions(el, true); // runs on beside the solid approach lines
+        for (const b of els) if (b.type === 'scooterbox' && b.a && b.dir != null) clipOutside(R.frame(b, ppm, b.depth + 0.5, true).corners); // ends before a stop box
         drawSidewalk(ctx, { pts: isl, style: 'island' }, ppm, P); ctx.restore();
       }
       // medians: opened wherever a crosswalk crosses them (0.3 m clear each side), stopped at junctions / roundabouts

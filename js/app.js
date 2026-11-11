@@ -1505,12 +1505,12 @@
   }
   // An intersection keeps the click and settings it was made with; whenever one of the roads it is built from
   // changes (shape, lanes, lane use, arrow / box / guide options …) its markings are rebuilt straight away.
-  const SEC_KEYS = ['pts', 'smooth', 'lanesF', 'lanesB', 'laneWidth', 'centerType', 'medianWidth', 'slowLane', 'bikeLane', 'edge', 'autoArrows', 'autoBox', 'boxDepth', 'solidLen', 'laneUse', 'leftGuide', 'leftTurn', 'pocketLen', 'pocketTaper', 'lanesF2', 'lanesB2', 'changeAt', 'taper', 'laneUseF', 'laneUseB', 'pocketLF', 'pocketLB', 'pocketRF', 'pocketRB', 'rightGuide'];
+  const SEC_KEYS = ['pts', 'smooth', 'lanesF', 'lanesB', 'laneWidth', 'centerType', 'medianWidth', 'slowLane', 'bikeLane', 'edge', 'autoArrows', 'autoBox', 'boxDepth', 'solidLen', 'laneUse', 'leftGuide', 'leftTurn', 'pocketLen', 'pocketTaper', 'lanesF2', 'lanesB2', 'changeAt', 'taper', 'laneUseF', 'laneUseB', 'pocketLF', 'pocketLB', 'pocketRF', 'pocketRB', 'rightGuide', 'laneCurves', 'curveTaper'];
   const J_KEYS = ['control', 'minorCtrl', 'cwMain', 'contSidewalk', 'crosswalks', 'cwKind', 'cwWidth', 'setback', 'stops', 'stopGap', 'cornerR', 'sidewalks', 'swWidth', 'bikeCross'];
   const junctionPrm = (j) => { const o = Object.assign({}, j.genPrm || {}); for (const k of J_KEYS) if (j[k] !== undefined) o[k] = j[k]; return o; };
   // JGEN: bumped when the generator's output changes (e.g. stop lines now flush with the lane lines), so every
   // junction rebuilds once — edited, locked and deleted pieces are still kept as the user left them.
-  const JGEN = 4;
+  const JGEN = 5;
   function junctionSig(j, core) { // core: true = before bus lanes were part of it; 'v1' = before JGEN
     const m = ppm(), near = (40 + 60) * m;
     const secs = S.els.filter((e) => e.type === 'section' && e.pts.some((p, i) => {
@@ -1560,7 +1560,7 @@
     for (const o of free) { o.jkey = 'legacy|' + o.id; o.edited = true; } // anything else of the user's is kept as it is
   }
   const piecePos = (e) => (e.a && e.b ? G.mid(e.a, e.b) : e.p ? e.p : e.pts && e.pts.length ? e.pts[Math.floor(e.pts.length / 2)] : null);
-  const LANE_KEYS = ['leftTurn', 'laneUse', 'laneUseF', 'laneUseB', 'pocketLF', 'pocketLB', 'pocketRF', 'pocketRB', 'rightGuide', 'lanesF', 'lanesB', 'lanesF2', 'lanesB2', 'changeAt', 'taper', 'pocketLen', 'pocketTaper', 'autoArrows', 'autoBox', 'boxDepth', 'solidLen', 'leftGuide', 'laneWidth', 'medianWidth', 'centerType'];
+  const LANE_KEYS = ['leftTurn', 'laneUse', 'laneUseF', 'laneUseB', 'pocketLF', 'pocketLB', 'pocketRF', 'pocketRB', 'rightGuide', 'lanesF', 'lanesB', 'lanesF2', 'lanesB2', 'changeAt', 'taper', 'pocketLen', 'pocketTaper', 'autoArrows', 'autoBox', 'boxDepth', 'solidLen', 'leftGuide', 'laneWidth', 'medianWidth', 'centerType', 'laneCurves', 'curveTaper'];
   function laneSigNow() { const o = {}; for (const e of S.els) if (e.type === 'section') o[e.id] = JSON.stringify(LANE_KEYS.map((k) => e[k])); return o; }
   function syncJunction(j) {
     if (!j.genClick) return;
@@ -1701,9 +1701,18 @@
   const legPt = (lg, s, off) => onLeg(lg, s, off).p;
   const legLine = (lg, s0, s1, off) => { // a polyline along the leg's road between s0 and s1 at offset off
     const m = ppm(), n = Math.max(2, Math.ceil(Math.abs(s1 - s0) / m) + 1), out = [];
-    for (let i = 0; i < n; i++) out.push(legPt(lg, s0 + ((s1 - s0) * i) / (n - 1), off));
+    for (let i = 0; i < n; i++) { const sv = s0 + ((s1 - s0) * i) / (n - 1); out.push(legPt(lg, sv, typeof off === 'function' ? off(sv) : off)); } // off may vary along the leg
     return out;
   };
+  // bent lanes (laneCurves): the leg's kerbs at distance s, and one lane's outward shift there (lanes count from the driver's left)
+  const legCurved = (lg) => R.hasLaneCurves(lg.rd.src);
+  const legStation = (lg, s) => lg.rd.sM + (lg.sgn * s) / ppm();
+  const legExt = (lg, s) => {
+    if (!legCurved(lg) && !R.hasLaneChange(lg.rd.src)) return { l: lg.leftExt, r: lg.rightExt };
+    const e = R.sectionExtAt(lg.rd.src, legStation(lg, s));
+    return lg.sgn > 0 ? { l: e.left, r: e.right } : { l: e.right, r: e.left };
+  };
+  const legLaneShift = (lg, k, s) => (legCurved(lg) && k >= 0 ? R.laneShiftAt(lg.rd.src, lg.dirKey, k, legStation(lg, s)) : 0);
   function buildJunction(click, prm) {
     const m = ppm();
     let roads = [];
@@ -1841,7 +1850,7 @@
         const w = G.clamp(prm.cwWidth, P().crosswalk[prm.cwKind].width.min, P().crosswalk[prm.cwKind].width.max);
         const d = cwIn + (w * m) / 2;
         out.push({ id: newId(), owner: jid, type: 'crosswalk', kind: prm.cwKind, width: w, gap: 0.4, green: false,
-          a: legPt(lg, d, -lg.leftExt + 0.05 - lg.pocketRt), b: legPt(lg, d, lg.rightExt - 0.05 + lg.pocketOne), dir: G.angle(onLeg(lg, d, 0).t) });
+          a: legPt(lg, d, -legExt(lg, d).l + 0.05 - lg.pocketRt), b: legPt(lg, d, legExt(lg, d).r - 0.05 + lg.pocketOne), dir: G.angle(onLeg(lg, d, 0).t) });
       }
       // stop line across every entering lane, 2–3 m before the crosswalk (§170)
       const ds = teethFirst ? lg.E + 0.3 * m + (stopW * m) / 2 : cwOut + (hasCw ? prm.stopGap * m : pri && !isMain ? 0.3 * m : 0) + (stopW * m) / 2;
@@ -1861,8 +1870,9 @@
       const edgeW = el.edge ? R.edgeW() : 0;
       const ctrSt = P().lineStyles[el.centerType] || {};
       const ctrHalf = ctrSt.width ? (ctrSt.sep != null ? 2 * ctrSt.width + ctrSt.sep : ctrSt.width) / 2 : 0;
-      const laneEdgeL = -lg.leftExt + (el.edge ? 0.3 : 0), laneEdgeR = lg.rightExt - (el.edge ? 0.3 : 0);
-      const inner = oneWay ? laneEdgeR + edgeW + lg.pocketOne
+      const exS = legExt(lg, ds), sh0 = !oneWay && !lg.pocketW ? legLaneShift(lg, 0, ds) : 0; // bent lanes: the stop line follows them
+      const laneEdgeL = -exS.l + (el.edge ? 0.3 : 0), laneEdgeR = exS.r - (el.edge ? 0.3 : 0);
+      const inner = sh0 > 0.15 ? -((el.centerType === 'median' ? mhalf + 0.3 : 0) + sh0) : oneWay ? laneEdgeR + edgeW + lg.pocketOne
         : lg.pocketW ? -(mhalf - lg.pocketW) - 0.125                               // pocket's new edge line (centred 0.2 m in)
         : el.centerType === 'median' ? -(mhalf + 0.125)                             // median edge line (centred mh + 0.2)
         : -ctrHalf;
@@ -1896,14 +1906,15 @@
       // otherwise just past the centre line, so the centre line ends at the stop line.
       const median = el.lanesB > 0 && el.centerType === 'median';
       const step = median ? -(el.medianWidth / 2) : 0.3;
-      if (oneWay || Math.abs(dIn - dOut) < 1e-6) poly.push(at(dIn, -lg.leftExt - 1 - lg.pocketRt), at(dOut, lg.rightExt + 1 + lg.pocketOne));
-      else poly.push(at(dIn, -lg.leftExt - 1 - lg.pocketRt), at(dIn, step), at(dOut, step), at(dOut, lg.rightExt + 1));
+      const xI = legExt(lg, dIn), xO = legExt(lg, dOut);
+      if (oneWay || Math.abs(dIn - dOut) < 1e-6) poly.push(at(dIn, -xI.l - 1 - lg.pocketRt), at(dOut, xO.r + 1 + lg.pocketOne));
+      else poly.push(at(dIn, -xI.l - 1 - lg.pocketRt), at(dIn, step), at(dOut, step), at(dOut, xO.r + 1));
     }
     // ---- corners: rounded kerb returns (paved), optional corner sidewalks, §186-1 自行車穿越道線 ----
     const corners = [], walks = [], cornerCuts = [], pocketCuts = [], cornerPairs = [];
     const cR = pri && prm.contSidewalk ? 0.5 : G.clamp(prm.cornerR != null ? prm.cornerR : 8, 0, 30), swW = G.clamp(prm.swWidth || 4, 1.5, 10);
     const kerbOf = (lg, side, s) => { // + = right of outward; follows lane-change tapers along the road
-      if (s == null || !R.hasLaneChange(lg.rd.src)) return side > 0 ? lg.rightExt : -lg.leftExt;
+      if (s == null || (!R.hasLaneChange(lg.rd.src) && !legCurved(lg))) return side > 0 ? lg.rightExt : -lg.leftExt;
       const e = R.sectionExtAt(lg.rd.src, lg.rd.sM + (lg.sgn * s) / m);
       return side > 0 ? (lg.sgn > 0 ? e.right : e.left) : -(lg.sgn > 0 ? e.left : e.right);
     };
@@ -2127,7 +2138,7 @@
         if (kS >= 0) {
           const BR = PR.boxRange || [2.5, 6], D = G.clamp(el.boxDepth || 3, BR[0], BR[1]);
           boxRear = stopRear + D * m;
-          const e0 = edgeOff(kS), e1 = edgeOff(kE + 1), inward = Math.sign(e0 - e1); // keep clear of the centre / edge lines
+          const e0 = edgeOff(kS) - legLaneShift(lg, kS, stopRear), e1 = edgeOff(kE + 1) - legLaneShift(lg, kE, stopRear), inward = Math.sign(e0 - e1); // keep clear of the centre / edge lines
           out.push({ id: newId(), owner: jid, type: 'scooterbox', depth: D, side: '0.15', icon: true, text: '',
             // built from its front edge, which lies exactly on the stop line's rear edge (also on a curve or a skew)
             ...(() => { const fa = atL(lg, stopRear, e0 - inward * 0.15), fb = atL(lg, stopRear, e1 + inward * 0.15);
@@ -2139,12 +2150,13 @@
       if (n > 1) {
         const L0 = Math.max(0, el.solidLen != null ? el.solidLen : 30);
         let sEnd = stopRear + L0 * m; while (sEnd > stopRear && !sameLanes(stopRear, sEnd)) sEnd -= m; // not into a lane-change taper
-        const lo = edgeOff(1), hi = edgeOff(n - 1), a0 = Math.min(lo, hi) - 0.3, a1 = Math.max(lo, hi) + 0.3;
+        let mx = 0; if (legCurved(lg)) for (let sv = stopRear; sv <= stopRear + (L0 + 6) * m; sv += 2 * m) mx = Math.max(mx, legLaneShift(lg, n - 1, sv)); // room for bent lanes
+        const lo = edgeOff(1), hi = edgeOff(n - 1), a0 = Math.min(lo, hi) - 0.3 - mx, a1 = Math.max(lo, hi) + 0.3;
         const maskEnd = Math.max(sEnd, boxRear);
         if (maskEnd > stopRear) out.push({ id: newId(), owner: jid, type: 'lanemask', pts: legLine(lg, stopRear - 0.1 * m, maskEnd, a0).concat(legLine(lg, stopRear - 0.1 * m, maskEnd, a1).reverse()) });
         if (L0 > 0) for (let k = 1; k < n; k++) {
           const inBox = kS >= 0 && k > kS && k <= kE, s0 = inBox ? boxRear : stopRear;
-          if (sEnd > s0) out.push({ id: newId(), owner: jid, type: 'line', style: 'laneSolid', smooth: false, jline: true, pts: legLine(lg, s0, sEnd, edgeOff(k)) });
+          if (sEnd > s0) out.push({ id: newId(), owner: jid, type: 'line', style: 'laneSolid', smooth: false, jline: true, pts: legLine(lg, s0, sEnd, legCurved(lg) ? (sv) => edgeOff(k) - legLaneShift(lg, k - 1, sv) : edgeOff(k)) });
         }
       }
       // §188 指向線 for each lane's use (tips facing the junction). First set: on lanes under the scooter box 3 m
@@ -2155,7 +2167,7 @@
         const inBox = (k) => kS >= 0 && k >= kS && k <= kE;
         const tip1 = (k) => (inBox(k) ? boxRear + 3 * m : stopRear + 1 * m);
         const tip2 = Math.max(boxRear + 33 * m, stopRear + (L0 + 3) * m);
-        const put = (k, tip) => { if (uses[k] !== 'BUS' && tip + AL * m < lg.len && sameLanes(tip, tip + AL * m)) out.push({ id: newId(), owner: jid, type: 'arrow', lane: k, kind: uses[k], length: AL, p: atL(lg, tip + (AL / 2) * m, laneOff(k)), dir: dirAt(tip + (AL / 2) * m) }); };
+        const put = (k, tip) => { if (uses[k] !== 'BUS' && tip + AL * m < lg.len && sameLanes(tip, tip + AL * m)) out.push({ id: newId(), owner: jid, type: 'arrow', lane: k, kind: uses[k], length: AL, p: atL(lg, tip + (AL / 2) * m, laneOff(k) - legLaneShift(lg, k, tip + (AL / 2) * m)), dir: dirAt(tip + (AL / 2) * m) }); };
         for (let k = 0; k < n; k++) put(k, tip1(k));
         for (let k = 0; k < n; k++) put(k, tip2);
       }
