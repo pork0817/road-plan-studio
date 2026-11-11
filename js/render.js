@@ -1333,7 +1333,8 @@ window.Render = (function () {
       for (const sg of [-1, 1]) R.drawStyled(ctx, G.offset(pts, sideOff(sg, solid) * ppm), solid, ppm);
     } else {
       if (el.sep === 'edges') { // standard look: one thin white solid line along each edge
-        for (const sg of [-1, 1]) R.drawStyled(ctx, G.offset(pts, sg * (w / 2 - 0.1) * ppm), solid, ppm);
+        const es = (el.edgeStyle && P.lineStyles[el.edgeStyle]) || solid; // a crossing uses the country's crossing line
+        for (const sg of [-1, 1]) R.drawStyled(ctx, G.offset(pts, sg * (w / 2 - es.width / 2 - 0.05) * ppm), es, ppm);
       }
       const sides = el.sep === 'both' ? [-1, 1] : el.sep === 'right' ? [1] : el.sep === 'none' || el.sep === 'edges' ? [] : [-1];
       // §174: 雙白實線; where the lane's vehicles may move to the next lane, 單邊禁止變換車道線 (solid on the
@@ -1780,6 +1781,7 @@ window.Render = (function () {
           break;
         }
         case 'bikelane': {
+          if (el.jb) { drawBikeSurface(ctx, el, ppm, P); drawBikeLane(ctx, el, ppm, P); break; } // an intersection's own crossing / pad: drawn whole
           if (consumed.has(el)) break;
           yieldToRoundabouts(el); for (const c of crossCuts) clipOutside(c);
           for (const c of bikeRingCuts) clipOutside(c); // stops before a roundabout's cycle path and swings into it (drawBikeRing)

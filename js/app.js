@@ -1510,7 +1510,7 @@
   const junctionPrm = (j) => { const o = Object.assign({}, j.genPrm || {}); for (const k of J_KEYS) if (j[k] !== undefined) o[k] = j[k]; return o; };
   // JGEN: bumped when the generator's output changes (e.g. stop lines now flush with the lane lines), so every
   // junction rebuilds once — edited, locked and deleted pieces are still kept as the user left them.
-  const JGEN = 3;
+  const JGEN = 4;
   function junctionSig(j, core) { // core: true = before bus lanes were part of it; 'v1' = before JGEN
     const m = ppm(), near = (40 + 60) * m;
     const secs = S.els.filter((e) => e.type === 'section' && e.pts.some((p, i) => {
@@ -1519,7 +1519,8 @@
     const others = S.els.filter((e) => e !== j && e.type === 'junction' && e.genClick).map((e) => [Math.round(e.genClick.x), Math.round(e.genClick.y)]);
     if (core === true) return JSON.stringify([m, junctionPrm(j), secs.map((e) => SEC_KEYS.map((k) => e[k])), others]);
     const buses = S.els.filter((e) => e.type === 'buslane' && e.pts && e.pts.length > 1 && G.nearestOnPolyline(j.genClick, e.pts).d < 100 * m).map((e) => [e.pts, e.width, e.smooth]);
-    const base = [m, junctionPrm(j), secs.map((e) => SEC_KEYS.map((k) => e[k])), others, buses];
+    const bikes = core === 'v1' ? null : S.els.filter((e) => e.type === 'bikelane' && !e.owner && e.pts && e.pts.length > 1 && G.nearestOnPolyline(j.genClick, e.pts).d < 100 * m).map((e) => [e.pts, e.width, e.smooth]);
+    const base = [m, junctionPrm(j), secs.map((e) => SEC_KEYS.map((k) => e[k])), others, buses].concat(bikes ? [bikes] : []);
     return JSON.stringify(core === 'v1' ? base : base.concat([JGEN, S.country]));
   }
   const sigSame = (j) => j.sig === junctionSig(j) || j.sig === junctionSig(j, 'v1') || j.sig === junctionSig(j, true); // roads unchanged
@@ -1899,7 +1900,7 @@
       else poly.push(at(dIn, -lg.leftExt - 1 - lg.pocketRt), at(dIn, step), at(dOut, step), at(dOut, lg.rightExt + 1));
     }
     // ---- corners: rounded kerb returns (paved), optional corner sidewalks, §186-1 自行車穿越道線 ----
-    const corners = [], walks = [], cornerCuts = [], pocketCuts = [];
+    const corners = [], walks = [], cornerCuts = [], pocketCuts = [], cornerPairs = [];
     const cR = pri && prm.contSidewalk ? 0.5 : G.clamp(prm.cornerR != null ? prm.cornerR : 8, 0, 30), swW = G.clamp(prm.swWidth || 4, 1.5, 10);
     const kerbOf = (lg, side, s) => { // + = right of outward; follows lane-change tapers along the road
       if (s == null || !R.hasLaneChange(lg.rd.src)) return side > 0 ? lg.rightExt : -lg.leftExt;
@@ -1948,6 +1949,7 @@
       if (turn <= 0.05) continue;
       const X = crossK(sample(A, 1, 0, Math.min(A.len, 80 * m)), sample(B, -1, 0, Math.min(B.len, 80 * m)));
       if (!X) continue;
+      cornerPairs.push({ A, B, X: X.X });
       const dA = onLeg(A, X.sA, 0).t, dB = onLeg(B, X.sB, 0).t;
       const phi = Math.acos(G.clamp(G.dot(dA, dB), -1, 1)) / 2;             // half the corner angle
       const tdist = Math.min(cR * m / Math.tan(Math.max(phi, 0.2)), 30 * m, A.len - X.sA - m, B.len - X.sB - m);
@@ -1984,19 +1986,37 @@
     // two 10 cm white lines ≥ 1.2 m apart + bike symbols; NL: 0.50 m blocks with 0.50 m gaps (≥ 1.50 m wide,
     // 0.50 m from the zebra); JP 201の3 自転車横断帯: two 0.15–0.30 m white lines + bike symbols. (P().bikeCross)
     const BX = Object.assign({ line: 'laneSolid', lineW: 0.10, gap: 0.4, minW: 1.2, pad: 0.2, symbols: true }, PR.bikeCross || {});
-    const bikeW = Math.max(0, ...roads.map((rd) => rd.el.bikeLane || 0));
-    if (prm.bikeCross !== false && bikeW > 0 && prm.crosswalks) {
-      const W = Math.max(BX.minW, bikeW + BX.pad);
-      for (const lg of legs) {
-        if (!lg.cwHere || !roads.some((rd) => rd !== lg.rd && (rd.el.bikeLane || 0) > 0)) continue;
-        if (pri) continue; // priority junction: the main road's bike lane runs on across the mouth (marked by the renderer)
-        const s1 = lg.cwIn - (BX.gap + BX.lineW / 2) * m, s0 = s1 - (W - BX.lineW) * m;
-        if (s0 < lg.E * 0.6) continue;
-        const l0 = -lg.leftExt + 0.3, l1 = lg.rightExt - 0.3;
-        for (const s of [s0, s1]) out.push({ id: newId(), owner: jid, type: 'line', style: BX.line, smooth: false, jline: true, pts: [legPt(lg, s, l0), legPt(lg, s, l1)] });
-        const mid = (s0 + s1) / 2, across = G.norm(G.sub(legPt(lg, mid, l1), legPt(lg, mid, l0)));
-        if (BX.symbols) for (const [off, d] of [[l0 + 1.3, across], [l1 - 1.3, G.mul(across, -1)]])
-          out.push({ id: newId(), owner: jid, type: 'symbol', kind: 'bike', small: W < 1.6, p: legPt(lg, mid, off), dir: G.angle(d) });
+    // Bike lanes are carried through the intersection: wherever a road here has bike lanes — in its own settings or
+    // drawn separately along it (e.g. on the sidewalk) — EVERY leg gets a bike crossing beside its crosswalk, and every
+    // corner a waiting pad on the sidewalk where two crossings meet; separately drawn bike lanes are linked into the pads.
+    const drawnBikes = S.els.filter((e) => e.type === 'bikelane' && !e.owner && e.kind !== 'priority' && e.pts && e.pts.length > 1)
+      .map((e) => ({ e, pts: R.basePts(e, m) })).filter((d) => G.nearestOnPolyline(C, d.pts).d < (Math.max(...legs.map((l) => l.E / m)) + 30) * m);
+    const bikeW = Math.max(0, ...roads.map((rd) => rd.el.bikeLane || 0), ...drawnBikes.map((d) => d.e.width || 1.5));
+    if (prm.bikeCross !== false && bikeW > 0 && !pri) {
+      const W = Math.max(BX.minW, bikeW + BX.pad), cl = new Map(), pads = [];
+      for (const lg of legs) { // each leg's crossing line: beside the crosswalk, on the junction side
+        const sc = lg.cwIn - (BX.gap + W / 2) * m;
+        if (sc - (W / 2) * m < lg.E * 0.6) continue;
+        const p0 = legPt(lg, sc, 0);
+        cl.set(lg, { sc, p0, u: G.norm(G.sub(legPt(lg, sc, 1), p0)), L: null, R: null });
+      }
+      for (const cp of cornerPairs) { // where two crossings meet at a corner
+        const a = cl.get(cp.A), b = cl.get(cp.B); if (!a || !b) continue;
+        const Pc = lineIntersect(a.p0, a.u, b.p0, b.u);
+        if (!Pc || G.dist(Pc, cp.X) > 25 * m) continue;
+        a.R = Pc; b.L = Pc; pads.push(Pc);
+      }
+      const bk = (pts, w, o) => out.push(Object.assign({ id: newId(), owner: jid, type: 'bikelane', kind: 'exclusive', jb: true, pts, width: w, twoWay: false,
+        surface: true, sep: 'none', icons: false, diamonds: false, spacing: 30, smooth: false }, o));
+      for (const [lg, c] of cl) {
+        const l = c.L ? G.add(c.L, G.mul(c.u, (-W / 2) * m)) : legPt(lg, c.sc, -lg.leftExt), r = c.R ? G.add(c.R, G.mul(c.u, (W / 2) * m)) : legPt(lg, c.sc, lg.rightExt);
+        bk([l, r], W, { sep: 'edges', edgeStyle: BX.line, icons: BX.symbols, spacing: Math.max(4, G.dist(l, r) / m / 2 - 1) });
+      }
+      for (const Pc of pads) {
+        // links from separately drawn bike lanes that pass this corner, then the pad itself on top
+        for (const d of drawnBikes) { const r = G.nearestOnPolyline(Pc, d.pts); if (r && r.d > 0.5 * m && r.d < 12 * m) bk([Pc, r.proj], d.e.width || 1.5, {}); }
+        const diag = G.norm(G.sub(Pc, C));
+        bk([G.sub(Pc, G.mul(diag, W * 0.75 * m)), G.add(Pc, G.mul(diag, (W * 0.75 + 1.5) * m))], W + 1.0, { pad: true });
       }
     }
     // ---- bus lanes (公車專用道) through the intersection: a stop line on the approach, lined up with the stop lines of
