@@ -168,12 +168,17 @@
   }
 
   function alignTwo(el, square) {
-    const ln = laneAt(G.mid(el.a, el.b), el.id);
+    const mid = G.mid(el.a, el.b), ln = laneAt(mid, el.id);
     const u = G.norm(G.sub(el.b, el.a));
     if (!ln) { if (el.dir == null) el.dir = G.angle(G.leftN(u)); return false; }
     const t = ln.t, n = G.rightN(t);
     const cosA = Math.abs(G.dot(u, n));
-    if (square || cosA > Math.cos((12 * Math.PI) / 180)) {
+    // inside an intersection the nearest lane is just whichever road is closest: follow the line as drawn
+    // (square to it), unless it was drawn (nearly) square to that lane
+    const inJ = S.els.some((j) => j.type === 'junction' && j.pts && j.pts.length > 2 && G.pointInPoly(mid, j.pts));
+    const tol = ((inJ ? 4 : 12) * Math.PI) / 180;
+    if (inJ && !square && cosA <= Math.cos(tol)) { el.dir = G.angle(G.dot(G.leftN(u), t) >= 0 ? G.leftN(u) : G.rightN(u)); return false; }
+    if (square || cosA > Math.cos(tol)) {
       const L = G.dot(G.sub(el.b, el.a), n);
       el.b = G.add(el.a, G.mul(n, L));
     }
@@ -342,6 +347,9 @@
     let best = null, bd = tol;
     for (const el of S.els) {
       if (el.id === excludeId) continue;
+      // an intersection's own generated pieces (sidewalks, bike paths, kerbs, its outline …) are a dense cloud of
+      // points: snapping to them makes the cursor jump from point to point, so only the user's own things snap
+      if (el.owner || el.type === 'junction' || el.type === 'sidewalk' || el.type === 'road') continue;
       if (el.type === 'busstop') { // the open ends of a bus stop's bike lane
         const g = R.busStopGeom(el, S.els, ppm());
         for (const e of (g && g.ends) || []) { const d = G.dist(e.p, w); if (d < bd) { bd = d; best = e.p; } }
@@ -694,11 +702,15 @@
         else if (h.key === 'rad') el.R = G.clamp(Math.round((G.dist(w, el.p) / ppm()) * 2) / 2, el.turbo ? 3 + 2 * el.laneWidth + 0.45 + (el.laneWidth + 0.45) / 2 : 8, 70);
         else if ((h.key === 'a' || h.key === 'b') && el.type === 'busstop') el[h.key] = snapW(w, null, e, el.id); // slides the stop's start / end
         else if (h.key === 'a' || h.key === 'b') {
-          // keep the crossing square to traffic: the dragged end slides along the line through the other end
+          // the end moves freely (the angle magnet snaps it square to the lane / level when close); a crossing that was
+          // square to its own stripes stays square as it turns
           const other = h.key === 'a' ? o.b : o.a;
-          let p = snapW(w, null, e, el.id);
-          if (!e.altKey) { const n = G.rightN(G.fromAngle(o.dir)); p = G.add(other, G.mul(n, G.dot(G.sub(p, other), n))); }
+          const p = snapW(w, other, e, el.id);
           el[h.key] = p;
+          if (o.dir != null && G.dist(el.a, el.b) > 1e-6) {
+            const u0 = G.norm(G.sub(o.b, o.a)), f0 = G.fromAngle(o.dir);
+            if (Math.abs(G.dot(u0, f0)) < 0.05) { const u = G.norm(G.sub(el.b, el.a)); el.dir = G.angle(G.dot(G.leftN(u), f0) >= 0 ? G.leftN(u) : G.rightN(u)); }
+          }
         } else if (h.key === 'rot') {
           el.dir = rotSnap(G.angle(G.sub(w, el.p)), el.p);
         } else if (h.key === 'q') {
@@ -1523,7 +1535,7 @@
     const base = [m, junctionPrm(j), secs.map((e) => SEC_KEYS.map((k) => e[k])), others, buses].concat(bikes ? [bikes] : []);
     // crossings that decide where the stop lines go: moved zebras / bike crossings of this junction, hand-drawn crosswalks
     const marks = S.els.filter((e) => (e.type === 'crosswalk' && (e.owner ? e.owner === j.id && (e.edited || e.locked) : e.a && G.dist(e.a, j.genClick) < 100 * m))
-      || (e.type === 'bikelane' && e.jb && e.sep === 'edges' && e.owner === j.id && (e.edited || e.locked))).map((e) => [e.a, e.b, e.pts, e.width]);
+      || (e.type === 'bikelane' && e.jb && e.sep === 'edges' && e.owner === j.id && (e.edited || e.locked))).map((e) => [e.a, e.b, e.pts, e.width, e.quad]);
     return JSON.stringify(core === 'v1' ? base : base.concat([JGEN, S.country], marks.length ? [marks] : []));
   }
   const sigSame = (j) => j.sig === junctionSig(j) || j.sig === junctionSig(j, 'v1') || j.sig === junctionSig(j, true); // roads unchanged
@@ -1842,24 +1854,35 @@
       // protected: the bike crossing sits nearest the junction (setback from the crossing road), the zebra behind it
       let cwIn = lg.E + (teethFirst ? 1.3 * m : pri && !cwHere ? 0 : prm.setback * m), cwOut = cwIn + (cwHere ? prm.cwWidth * m : 0), hasCw = !!cwHere;
       // The stop line goes behind the crossings actually there: a zebra or bike crossing of this junction that the
-      // user moved (dragged back or forward), or — with automatic crosswalks off — a crosswalk they drew themselves.
+      // user moved or reshaped, or a crosswalk they drew themselves (which then replaces the automatic one).
+      let ownCw = false; // the user drew their own crosswalk across this approach: no automatic one here
       if (!isMain) {
         const moved = (c) => prm._self && c.owner === prm._self && (c.edited || c.locked);
         const stL = (p) => { const r = G.nearestOnPolyline(p, lg.path.pts); return r ? lg.path.cum[r.i] + G.dist(lg.path.pts[r.i], r.proj) : 0; };
-        const span = (c) => { // the stations it covers on this leg, if it lies across this leg's road
-          const ends = c.a && c.b ? [c.a, c.b] : c.pts && c.pts.length > 1 ? [c.pts[0], c.pts[c.pts.length - 1]] : null; if (!ends) return null;
-          const mid = G.mid(ends[0], ends[1]), r = G.nearestOnPolyline(mid, lg.path.pts); if (!r) return null;
-          const sC = lg.path.cum[r.i] + G.dist(lg.path.pts[r.i], r.proj), lat = G.dot(G.sub(mid, r.proj), lg.nv) / m;
-          if (lat < -lg.leftExt - 2 || lat > lg.rightExt + 2 || sC < lg.E * 0.5 || sC > lg.E + 40 * m) return null;
-          const ss = ends.map(stL), w = ((c.width || 4) * m) / 2;
-          return { lo: Math.min(sC, ...ss) - w, hi: Math.max(sC, ...ss) + w };
+        // the stations a crossing covers where it lies over THIS leg's road (sampled over its whole shape, so a slanted
+        // or trapezoid crosswalk spanning several carriageways counts on each of them, with its own extent there)
+        const span = (c) => {
+          let Q = c.quad && c.quad.length === 4 ? c.quad : null;
+          if (!Q && c.a && c.b) { try { Q = R.frame(c, m, c.width || 4, false).corners; } catch (e) { Q = null; } }
+          if (!Q && c.pts && c.pts.length > 1) { const a = c.pts[0], b = c.pts[c.pts.length - 1], n = G.mul(G.rightN(G.norm(G.sub(b, a))), ((c.width || 2) / 2) * m); Q = [G.add(a, n), G.add(b, n), G.sub(b, n), G.sub(a, n)]; }
+          if (!Q) return null;
+          let lo = Infinity, hi = -Infinity;
+          for (let iu = 0; iu <= 12; iu++) for (let iv = 0; iv <= 4; iv++) {
+            const u = iu / 12, v = iv / 4, p = G.add(G.mul(G.add(G.mul(Q[0], 1 - u), G.mul(Q[1], u)), 1 - v), G.mul(G.add(G.mul(Q[3], 1 - u), G.mul(Q[2], u)), v));
+            const r = G.nearestOnPolyline(p, lg.path.pts); if (!r) continue;
+            const sv = lg.path.cum[r.i] + G.dist(lg.path.pts[r.i], r.proj), lat = G.dot(G.sub(p, r.proj), lg.nv) / m;
+            if (lat < -lg.leftExt - 0.3 || lat > lg.rightExt + 0.3) continue;
+            lo = Math.min(lo, sv); hi = Math.max(hi, sv);
+          }
+          if (!(hi > lo) || lo < lg.E * 0.5 || lo > lg.E + 40 * m) return null;
+          return { lo, hi };
         };
         let zeb = null, bikeHi = -Infinity;
         for (const c of S.els) {
-          if (c.type === 'crosswalk' && (c.owner ? moved(c) : !prm.crosswalks)) { const sp = span(c); if (sp && (!zeb || sp.lo < zeb.lo)) zeb = sp; }
+          if (c.type === 'crosswalk' && (c.owner ? moved(c) : true)) { const sp = span(c); if (sp && (!zeb || sp.lo < zeb.lo)) zeb = Object.assign(sp, { mine: !c.owner }); }
           else if (c.type === 'bikelane' && c.jb && c.sep === 'edges' && moved(c)) { const sp = span(c); if (sp) bikeHi = Math.max(bikeHi, sp.hi); }
         }
-        if (zeb) { cwIn = zeb.lo; cwOut = zeb.hi; hasCw = true; }
+        if (zeb) { cwIn = zeb.lo; cwOut = zeb.hi; hasCw = true; if (zeb.mine) ownCw = true; }
         if (bikeHi > cwOut) { cwOut = bikeHi; hasCw = true; }
       }
       // incoming lanes: traffic heading toward C keeps right, i.e. the left side of v
@@ -1876,7 +1899,7 @@
       // 右轉附加車道: the road widens on the kerb side (not where a bike / slow lane runs along the kerb)
       lg.pocketRt = nPR > 0 && !(el.bikeLane > 0) && !(el.slowLane > 0) ? nPR * el.laneWidth : 0;
       lg.nPR = lg.pocketRt ? nPR : 0;
-      if (cwHere) {
+      if (cwHere && !ownCw) {
         const w = G.clamp(prm.cwWidth, P().crosswalk[prm.cwKind].width.min, P().crosswalk[prm.cwKind].width.max);
         const d = cwIn + (w * m) / 2;
         out.push({ id: newId(), owner: jid, type: 'crosswalk', kind: prm.cwKind, width: w, gap: 0.4, green: false,
