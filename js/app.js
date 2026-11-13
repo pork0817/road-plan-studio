@@ -1840,14 +1840,14 @@
     // a carriageway running side by side with another (e.g. a bus road beside the main road): on that side the outline
     // steps exactly on the boundary, so the neighbour's lines run on to ITS own stop line instead of being cut at ours
     for (const lg of legs) {
-      lg.reachL = 1; lg.reachR = 1;
+      lg.reachL = 1; lg.reachR = 1; lg.capL = Infinity; lg.capR = Infinity; // cap: the neighbour's kerb (m from our centre line)
       const p0 = legPt(lg, lg.E, 0);
       for (const o of legs) {
         if (o === lg || G.dot(o.v, lg.v) < 0.95) continue;
         const lat = G.dot(G.sub(legPt(o, o.E, 0), p0), lg.nv) / m;
         // (gap measured from the normal kerbs; added turn lanes near the junction can fill up to ~2 lanes of it)
-        if (lat > 0 && lat - o.leftExt - lg.rightExt < 8) lg.reachR = 0;
-        if (lat < 0 && -lat - o.rightExt - lg.leftExt < 8) lg.reachL = 0;
+        if (lat > 0 && lat - o.leftExt - lg.rightExt < 8) { lg.reachR = 0; lg.capR = Math.min(lg.capR, lat - o.leftExt); }
+        if (lat < 0 && -lat - o.rightExt - lg.leftExt < 8) { lg.reachL = 0; lg.capL = Math.min(lg.capL, -lat - o.rightExt); }
       }
     }
     legs.sort((a, b) => a.pa - b.pa);
@@ -1973,8 +1973,10 @@
       const median = el.lanesB > 0 && el.centerType === 'median';
       const step = median ? -(el.medianWidth / 2) : 0.3;
       const xI = legExt(lg, dIn), xO = legExt(lg, dOut);
-      if (oneWay || Math.abs(dIn - dOut) < 1e-6) poly.push(at(dIn, -xI.l - lg.reachL - lg.pocketRt), at(dOut, xO.r + lg.reachR + lg.pocketOne));
-      else poly.push(at(dIn, -xI.l - lg.reachL - lg.pocketRt), at(dIn, step), at(dOut, step), at(dOut, xO.r + lg.reachR));
+      // (an added turn lane may widen us toward a side-by-side neighbour: never past its kerb)
+      const oL = -Math.min(xI.l + lg.reachL + lg.pocketRt, lg.capL), oR = Math.min(xO.r + lg.reachR + lg.pocketOne, lg.capR), oR2 = Math.min(xO.r + lg.reachR, lg.capR);
+      if (oneWay || Math.abs(dIn - dOut) < 1e-6) poly.push(at(dIn, oL), at(dOut, oR));
+      else poly.push(at(dIn, oL), at(dIn, step), at(dOut, step), at(dOut, oR2));
     }
     // ---- corners: rounded kerb returns (paved), optional corner sidewalks, §186-1 自行車穿越道線 ----
     const corners = [], walks = [], cornerCuts = [], pocketCuts = [], cornerPairs = [], straightSides = [];
