@@ -39,7 +39,7 @@ window.RoadPresets = window.RoadPresets || {};
   const stopLine = { width: { min: 0.30, max: 0.45 }, dflt: 0.45, toCrosswalk: { min: 1, max: 3 },
     ref: '道路標示 203: 白実線 幅0.30–0.45 m (中央線から外側線まで)、横断歩道の手前 1 m 以上 (標準 2 m ≈)' };
 
-  const sidewalkStyles = [['pavers', '歩道 (平板) Pavers'], ['redbrick', 'レンガ Brick'], ['concrete', 'コンクリート Concrete'], ['island', '分離帯・植栽 Island'], ['tactile', '点字ブロック付き Tactile strip']];
+  const sidewalkStyles = [['pavers', '歩道 (平板) Pavers'], ['redbrick', 'レンガ Brick'], ['concrete', 'コンクリート Concrete'], ['island', '分離帯・植栽 Island'], ['chevron', '導流帯 (ゼブラ) Painted'], ['tactile', '点字ブロック付き Tactile strip']];
   const surfaceKinds = [['bike', '自転車レーン 青 Blue bike'], ['ped', 'グリーンベルト 緑 Green'], ['bus', 'バスレーン 赤 Bus'], ['custom', '任意 Custom']];
   const centerTypes = [['centerDash', '中央線 白破線'], ['centerSolid', '中央線 白実線'], ['centerYellow', 'はみ出し禁止 黄実線'], ['centerDouble', '中央線 二重線'], ['centerYellowDouble', 'はみ出し禁止 黄二重線'], ['median', '中央分離帯 Median']];
   const arrowKinds = [['S', '直進 Straight'], ['L', '左折 Left'], ['R', '右折 Right'], ['SL', '直進・左折'], ['SR', '直進・右折'], ['LR', '左折・右折'], ['SLR', '全方向'], ['U', '転回 (≈)']];

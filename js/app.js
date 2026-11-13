@@ -1517,7 +1517,7 @@
   }
   // An intersection keeps the click and settings it was made with; whenever one of the roads it is built from
   // changes (shape, lanes, lane use, arrow / box / guide options …) its markings are rebuilt straight away.
-  const SEC_KEYS = ['pts', 'smooth', 'lanesF', 'lanesB', 'laneWidth', 'centerType', 'medianWidth', 'slowLane', 'bikeLane', 'edge', 'autoArrows', 'autoBox', 'boxDepth', 'solidLen', 'laneUse', 'leftGuide', 'leftTurn', 'pocketLen', 'pocketTaper', 'lanesF2', 'lanesB2', 'changeAt', 'taper', 'laneUseF', 'laneUseB', 'pocketLF', 'pocketLB', 'pocketRF', 'pocketRB', 'rightGuide', 'laneCurves', 'curveTaper'];
+  const SEC_KEYS = ['pts', 'smooth', 'lanesF', 'lanesB', 'laneWidth', 'centerType', 'medianWidth', 'slowLane', 'bikeLane', 'edge', 'autoArrows', 'autoBox', 'boxDepth', 'solidLen', 'laneUse', 'leftGuide', 'leftTurn', 'pocketLen', 'pocketTaper', 'lanesF2', 'lanesB2', 'changeAt', 'taper', 'laneUseF', 'laneUseB', 'pocketLF', 'pocketLB', 'pocketRF', 'pocketRB', 'rightGuide', 'laneCurves', 'curveTaper', 'islandStyle'];
   const J_KEYS = ['control', 'minorCtrl', 'cwMain', 'contSidewalk', 'crosswalks', 'cwKind', 'cwWidth', 'setback', 'stops', 'stopGap', 'cornerR', 'sidewalks', 'swWidth', 'bikeCross', 'bikeLayout', 'trackW', 'trackBuf'];
   const junctionPrm = (j) => { const o = Object.assign({}, j.genPrm || {}); for (const k of J_KEYS) if (j[k] !== undefined) o[k] = j[k]; return o; };
   // JGEN: bumped when the generator's output changes (e.g. stop lines now flush with the lane lines), so every

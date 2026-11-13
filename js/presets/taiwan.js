@@ -36,7 +36,7 @@ window.RoadPresets = window.RoadPresets || {};
 
   const sidewalkStyles = [
     ['pavers', '灰色連鎖磚 Grey pavers'], ['redbrick', '紅磚 Red brick'], ['concrete', '混凝土 Concrete'],
-    ['island', '分隔島/綠帶 Planted island'], ['tactile', '導盲磚帶 With tactile strip'],
+    ['island', '分隔島/綠帶 Planted island'], ['chevron', '槽化線 Channelizing (painted, §171)'], ['tactile', '導盲磚帶 With tactile strip'],
   ];
   const surfaceKinds = [['ped', '人行道標線 (綠, §174-3)'], ['bike', '自行車專用道 磚紅 (§174)'], ['scooter', '機車專用道 藍 (§174)'], ['bus', '公車專用道鋪面'], ['custom', '自訂 Custom']];
   const centerTypes = [
@@ -146,7 +146,8 @@ window.RoadPresets = window.RoadPresets || {};
           { kind: 'head', label: '車道 Lanes' },
           { kind: 'laneEditor' },
             { kind: 'info', text: '雙擊車道加彎曲點，拖曳向外；Alt+點擊刪除。Double-click a lane to add a bend point and drag it outward; Alt+click removes it.' },
-            ...(window.Render && window.Render.hasLaneCurves(el) ? [{ kind: 'btn', action: 'clearCurves', label: '清除車道彎曲 Straighten lanes' }] : []),
+            ...(window.Render && window.Render.hasLaneCurves(el) ? [{ kind: 'sel', key: 'islandStyle', label: '分隔島樣式 Island style', options: [['island', '分隔島 Raised island'], ['chevron', '槽化線 Channelizing (painted)']] },
+              { kind: 'btn', action: 'clearCurves', label: '清除車道彎曲 Straighten lanes' }] : []),
           ...(/\bBUS\b/i.test([el.laneUse, el.laneUseF, el.laneUseB].join(',')) ? [{ kind: 'chk', key: 'busSurface', label: '公車道彩色鋪面 Coloured bus lanes (法規未規定)' }] : []),
           { kind: 'head', label: '左轉 Left turn' },
           { kind: 'sel', key: 'leftTurn', label: '左轉方式', options: [['shared', '依車道箭頭 By lane arrows'], ['dedicated', '最內側車道專用 Inner lane only'], ['twoStage', '機車兩段式 Two-stage (scooters)'], ['banned', '禁止左轉 No left turn']] },

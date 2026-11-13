@@ -855,6 +855,12 @@ window.Render = (function () {
   function drawSidewalk(ctx, el, ppm, P) {
     const aPts = R.areaPts(el);
     if (aPts.length < 3) return;
+    if (el.style === 'chevron') { // 槽化線: painted, not raised — outline + 45° stripes to the island's long axis (§171)
+      const c = G.centroid(aPts); let sxx = 0, syy = 0, sxy = 0;
+      for (const p of aPts) { const dx = p.x - c.x, dy = p.y - c.y; sxx += dx * dx; syy += dy * dy; sxy += dx * dy; }
+      drawHatched(ctx, { pts: aPts, color: el.color || 'white', border: 0.15, stripe: 0.20, gap: 0.30, dir: 0.5 * Math.atan2(2 * sxy, sxx - syy) }, ppm, P, false);
+      return;
+    }
     ctx.save();
     ctx.fillStyle = sidewalkPattern(ctx, el.style, ppm);
     path(ctx, aPts, true); ctx.fill();
@@ -1728,6 +1734,7 @@ window.Render = (function () {
       const minor = others.filter((e) => !(pCont && pCont.has(e.id)) && ((pMaj && pMaj.has(e.id) ? false : lanesOf(e) < lanesOf(el)) || (pMin && pMin.has(e.id)))).map((e) => R.sectionPoly(e, ppm)).filter(Boolean);
       for (const q of major) clipOutside(q);
       for (const st of busStops) if (st.g.host === el) clipOutside(st.g.mask);
+      if (el.islandStyle === 'chevron') for (const isl of g.islands || []) if (isl.length >= 3) clipOutside(isl); // painted islands: no lines run through them
       const busL = R.sectionBusLanes(el), busSkip = new Set(busL.flatMap((b) => b.keys));
       for (const ent of g.lines) {
         const { l, pts: line } = ent;
@@ -1778,7 +1785,7 @@ window.Render = (function () {
         if (isl.length < 3) continue;
         ctx.save(); for (const c of crossCuts) clipOutside(c); cutJunctions(el, true); // runs on beside the solid approach lines
         for (const b of els) if (b.type === 'scooterbox' && b.a && b.dir != null) clipOutside(R.frame(b, ppm, b.depth + 0.5, true).corners); // ends before a stop box
-        drawSidewalk(ctx, { pts: isl, style: 'island' }, ppm, P); ctx.restore();
+        drawSidewalk(ctx, { pts: isl, style: el.islandStyle || 'island' }, ppm, P); ctx.restore();
       }
       // medians: opened wherever a crosswalk crosses them (0.3 m clear each side), stopped at junctions / roundabouts
       for (const { b, pts: mp } of g.bands) if (b.kind === 'median') {

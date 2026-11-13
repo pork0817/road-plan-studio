@@ -49,7 +49,7 @@ window.RoadPresets = window.RoadPresets || {};
   const stopLine = { width: { min: 0.20, max: 0.50 }, dflt: 0.30, toCrosswalk: { min: 1, max: 3 },
     ref: 'RVV art. 79 / RBBV 2.2b: stopstreep 0,30 m binnen de bebouwde kom (≤ 50 km/h), 0,50 m buiten (≥ 70 km/h); bij verkeerslichten ook dubbel 3 × 0,15 / 3 × 0,30 m. CROW 2024: minimaal 0,20 m. Afstand tot de oversteek ≈' };
 
-  const sidewalkStyles = [['pavers', 'Klinkers / tegels Pavers'], ['redbrick', 'Rode klinkers Red brick'], ['concrete', 'Beton Concrete'], ['island', 'Middengeleider / groen Island'], ['tactile', 'Met geleidelijn Tactile strip']];
+  const sidewalkStyles = [['pavers', 'Klinkers / tegels Pavers'], ['redbrick', 'Rode klinkers Red brick'], ['concrete', 'Beton Concrete'], ['island', 'Middengeleider / groen Island'], ['chevron', 'Verdrijvingsvlak 槽化線 Painted'], ['tactile', 'Met geleidelijn Tactile strip']];
   const surfaceKinds = [['bike', 'Fietspad rood asfalt Red bike path'], ['ped', 'Voetpad Footway'], ['bus', 'Busbaan Bus lane'], ['custom', 'Eigen kleur Custom']];
   const centerTypes = [['none', 'Geen asstreep — none'], ['centerDash', 'Asstreep 1-3 (bibeko)'], ['center39', 'Asstreep 3-9 (bubeko)'], ['centerSolid', 'Doorgetrokken asstreep'],
     ['centerMixed', 'Doorgetrokken + 3-1'], ['centerDouble', 'Dubbele asstreep'], ['median', 'Middenberm Median']];
