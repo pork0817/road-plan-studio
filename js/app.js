@@ -2002,6 +2002,7 @@
         cornerCuts.push([X.X].concat(arc).map((p) => G.add(O, G.mul(G.sub(p, O), k))));
       } else arc = [X.X];
       // the bikes' meeting point at this corner: on the corner sidewalk, just behind the middle of the kerb's curve
+      cp.arc = arc.length > 1 ? arc : null;
       cp.D = G.add(X.X, G.mul(G.norm(G.add(dA, dB)), (arc.length > 1 ? G.dist(X.X, arc[8]) : 0) + (BW / 2 + 0.6) * m));
       if (prm.sidewalks) {
         const sa = arc.length > 1 ? X.sA + tdist : X.sA, sb = arc.length > 1 ? X.sB + tdist : X.sB;
@@ -2044,6 +2045,22 @@
         const sc = lg.cwIn - (BX.gap + W / 2) * m; // beside the zebra, on the junction side
         if (sc - (W / 2) * m < lg.E * 0.6) continue;
         cl.set(lg, { sc, l: legPt(lg, sc, kerbOf(lg, -1, sc)), r: legPt(lg, sc, kerbOf(lg, 1, sc)) });
+      }
+      // a crossing inside a rounded corner ends where it meets the curved kerb, not out where the straight kerbs would be
+      const hitArc = (p0, p1, arc) => {
+        let best = null;
+        for (let i = 0; i < arc.length - 1; i++) {
+          const r = G.sub(p1, p0), q = G.sub(arc[i + 1], arc[i]), den = G.cross(r, q); if (Math.abs(den) < 1e-9) continue;
+          const t = G.cross(G.sub(arc[i], p0), q) / den, u = G.cross(G.sub(arc[i], p0), r) / den;
+          if (t >= 0 && t <= 1 && u >= 0 && u <= 1 && (!best || t < best.t)) best = { t, p: G.add(p0, G.mul(r, t)) };
+        }
+        return best && best.p;
+      };
+      for (const cp of cornerPairs) {
+        if (!cp.arc) continue;
+        const a = cl.get(cp.A), b = cl.get(cp.B);
+        if (a) { const h = hitArc(legPt(cp.A, a.sc, 0), a.r, cp.arc); if (h) a.r = h; }
+        if (b) { const h = hitArc(legPt(cp.B, b.sc, 0), b.l, cp.arc); if (h) b.l = h; }
       }
       // side-by-side carriageways (e.g. a bus road beside the main road) share ONE crossing, outer kerb to outer kerb
       const done = new Set();
