@@ -1521,7 +1521,10 @@
     const buses = S.els.filter((e) => e.type === 'buslane' && e.pts && e.pts.length > 1 && G.nearestOnPolyline(j.genClick, e.pts).d < 100 * m).map((e) => [e.pts, e.width, e.smooth]);
     const bikes = core === 'v1' ? null : S.els.filter((e) => e.type === 'bikelane' && !e.owner && e.pts && e.pts.length > 1 && G.nearestOnPolyline(j.genClick, e.pts).d < 100 * m).map((e) => [e.pts, e.width, e.smooth]);
     const base = [m, junctionPrm(j), secs.map((e) => SEC_KEYS.map((k) => e[k])), others, buses].concat(bikes ? [bikes] : []);
-    return JSON.stringify(core === 'v1' ? base : base.concat([JGEN, S.country]));
+    // crossings that decide where the stop lines go: moved zebras / bike crossings of this junction, hand-drawn crosswalks
+    const marks = S.els.filter((e) => (e.type === 'crosswalk' && (e.owner ? e.owner === j.id && (e.edited || e.locked) : e.a && G.dist(e.a, j.genClick) < 100 * m))
+      || (e.type === 'bikelane' && e.jb && e.sep === 'edges' && e.owner === j.id && (e.edited || e.locked))).map((e) => [e.a, e.b, e.pts, e.width]);
+    return JSON.stringify(core === 'v1' ? base : base.concat([JGEN, S.country], marks.length ? [marks] : []));
   }
   const sigSame = (j) => j.sig === junctionSig(j) || j.sig === junctionSig(j, 'v1') || j.sig === junctionSig(j, true); // roads unchanged
   // Junctions made before pieces had keys: while the roads are unchanged, match every existing piece to its rebuilt
@@ -1568,7 +1571,7 @@
     keyLegacyPieces(j);
     const sig = junctionSig(j);
     if (j.sig === sig) return;
-    const made = buildJunction(j.genClick, junctionPrm(j));
+    const made = buildJunction(j.genClick, Object.assign(junctionPrm(j), { _self: j.id }));
     j.sig = sig;
     if (!made) return;
     const fresh = made[0], oldId = j.id;
@@ -1838,17 +1841,26 @@
       // right at the main road's edge (behind its edge line or bike lane, as haaientanden are laid in NL)
       // protected: the bike crossing sits nearest the junction (setback from the crossing road), the zebra behind it
       let cwIn = lg.E + (teethFirst ? 1.3 * m : pri && !cwHere ? 0 : prm.setback * m), cwOut = cwIn + (cwHere ? prm.cwWidth * m : 0), hasCw = !!cwHere;
-      if (!prm.crosswalks && !isMain) { // the user's own crosswalk on this leg (nearest the junction): stop lines go behind it
-        let best = null;
-        for (const c of S.els) {
-          if (c.type !== 'crosswalk' || !c.a || !c.b || (c.owner && c.owner !== jid && S.els.some((j) => j.id === c.owner && j.type === 'junction'))) continue;
-          const mid = G.mid(c.a, c.b), r = G.nearestOnPolyline(mid, lg.path.pts);
-          if (!r) continue;
+      // The stop line goes behind the crossings actually there: a zebra or bike crossing of this junction that the
+      // user moved (dragged back or forward), or — with automatic crosswalks off — a crosswalk they drew themselves.
+      if (!isMain) {
+        const moved = (c) => prm._self && c.owner === prm._self && (c.edited || c.locked);
+        const stL = (p) => { const r = G.nearestOnPolyline(p, lg.path.pts); return r ? lg.path.cum[r.i] + G.dist(lg.path.pts[r.i], r.proj) : 0; };
+        const span = (c) => { // the stations it covers on this leg, if it lies across this leg's road
+          const ends = c.a && c.b ? [c.a, c.b] : c.pts && c.pts.length > 1 ? [c.pts[0], c.pts[c.pts.length - 1]] : null; if (!ends) return null;
+          const mid = G.mid(ends[0], ends[1]), r = G.nearestOnPolyline(mid, lg.path.pts); if (!r) return null;
           const sC = lg.path.cum[r.i] + G.dist(lg.path.pts[r.i], r.proj), lat = G.dot(G.sub(mid, r.proj), lg.nv) / m;
-          if (lat < -lg.leftExt - 2 || lat > lg.rightExt + 2 || sC < lg.E * 0.5 || sC > lg.E + 40 * m) continue;
-          if (!best || sC < best.sC) best = { sC, w: (c.width || 4) * m };
+          if (lat < -lg.leftExt - 2 || lat > lg.rightExt + 2 || sC < lg.E * 0.5 || sC > lg.E + 40 * m) return null;
+          const ss = ends.map(stL), w = ((c.width || 4) * m) / 2;
+          return { lo: Math.min(sC, ...ss) - w, hi: Math.max(sC, ...ss) + w };
+        };
+        let zeb = null, bikeHi = -Infinity;
+        for (const c of S.els) {
+          if (c.type === 'crosswalk' && (c.owner ? moved(c) : !prm.crosswalks)) { const sp = span(c); if (sp && (!zeb || sp.lo < zeb.lo)) zeb = sp; }
+          else if (c.type === 'bikelane' && c.jb && c.sep === 'edges' && moved(c)) { const sp = span(c); if (sp) bikeHi = Math.max(bikeHi, sp.hi); }
         }
-        if (best) { cwIn = best.sC - best.w / 2; cwOut = best.sC + best.w / 2; hasCw = true; }
+        if (zeb) { cwIn = zeb.lo; cwOut = zeb.hi; hasCw = true; }
+        if (bikeHi > cwOut) { cwOut = bikeHi; hasCw = true; }
       }
       // incoming lanes: traffic heading toward C keeps right, i.e. the left side of v
       const oneWay = el.lanesB === 0;
@@ -2368,7 +2380,7 @@
     }
     const own = {}; for (const k of J_KEYS) if (prm[k] !== undefined) own[k] = prm[k];
     const laneSig0 = laneSigNow();
-    out.unshift(Object.assign({ id: jid, type: 'junction', control: pri ? 'priority' : 'signal', contSidewalk: pri && !!prm.contSidewalk, mainSecIds: [...mainRd].map((rd) => rd.src.id), laneSig: laneSig0, pts: poly, corners, cornerCuts, pocketCuts, legSecIds, genClick: G.copy(click), genPrm: clone(prm) }, own));
+    out.unshift(Object.assign({ id: jid, type: 'junction', control: pri ? 'priority' : 'signal', contSidewalk: pri && !!prm.contSidewalk, mainSecIds: [...mainRd].map((rd) => rd.src.id), laneSig: laneSig0, pts: poly, corners, cornerCuts, pocketCuts, legSecIds, genClick: G.copy(click), genPrm: Object.assign(clone(prm), { _self: undefined }) }, own));
     return out;
   }
 
