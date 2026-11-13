@@ -2041,17 +2041,24 @@
       const latOn = (L, p, s) => { const p0 = legPt(L, s, 0); return G.dot(G.sub(p, p0), G.norm(G.sub(legPt(L, s, 1), p0))) / m; };
       const trackOff = (L, side, s) => kerbOf(L, side, s) + side * hw;            // the cycle track's centre line
       const trackPt = (L, side, s) => legPt(L, s, trackOff(L, side, s));
-      const track = (L, side, s0, s1) => { // along the leg on the sidewalk, following the kerb
-        if (s1 - s0 < 1 * m) return;
-        const pts = [], st = Math.max(1 * m, 1); for (let s = s0; s < s1; s += st) pts.push(trackPt(L, side, s)); pts.push(trackPt(L, side, s1));
-        bk(pts, W, { icons: BX.symbols, spacing: 30 });
-      };
-      for (const lg of legs) { // each leg's crossing: kerb to kerb
+      for (const lg of legs) { // each leg's crossing ends: kerb to kerb
         const sc = lg.E + (bxSet + W / 2) * m;
         if (sc - (W / 2) * m < lg.E * 0.6) continue;
-        const l = legPt(lg, sc, kerbOf(lg, -1, sc)), r = legPt(lg, sc, kerbOf(lg, 1, sc));
-        cl.set(lg, { sc, l, r });
-        bk([l, r], W, { sep: 'edges', edgeStyle: BX.line, icons: BX.symbols, spacing: Math.max(4, G.dist(l, r) / m / 2 - 1) });
+        cl.set(lg, { sc, l: legPt(lg, sc, kerbOf(lg, -1, sc)), r: legPt(lg, sc, kerbOf(lg, 1, sc)) });
+      }
+      // side-by-side carriageways (e.g. a bus road beside the main road) share ONE crossing, outer kerb to outer kerb
+      const done = new Set();
+      for (const lg of cl.keys()) {
+        if (done.has(lg)) continue;
+        const grp = [...cl.keys()].filter((o) => !done.has(o) && G.dot(o.v, lg.v) > 0.95 && G.dist(cl.get(o).l, cl.get(lg).l) < 60 * m);
+        grp.forEach((o) => done.add(o));
+        const c0 = cl.get(lg), u = G.norm(G.sub(c0.r, c0.l));
+        let lo = null, hi = null;
+        for (const o of grp) for (const p of [cl.get(o).l, cl.get(o).r]) {
+          const t = G.dot(G.sub(p, c0.l), u);
+          if (!lo || t < lo.t) lo = { t, p }; if (!hi || t > hi.t) hi = { t, p };
+        }
+        bk([lo.p, hi.p], W, { sep: 'edges', edgeStyle: BX.line, icons: BX.symbols, spacing: Math.max(4, G.dist(lo.p, hi.p) / m / 2 - 1) });
       }
       const inward = (L, s) => G.mul(onLeg(L, s, 0).t, -1);
       const links = []; // where separately drawn bike lanes are joined in
@@ -2060,20 +2067,28 @@
         const XA = a.r, XB = b.l; // the crossings' corner ends (A's right kerb, B's left kerb)
         if (G.dist(XA, cp.X) > 30 * m || G.dist(XB, cp.X) > 30 * m) continue;
         const inA = G.norm(G.sub(legPt(A, a.sc, 0), XA)), inB = G.norm(G.sub(legPt(B, b.sc, 0), XB));
-        sweep(bez(XA, G.mul(inA, -1), XB, inB)); // round the corner island, crossing to crossing
-        if (!prot) { links.push(bez(XA, G.mul(inA, -1), XB, inB)[12]); continue; }
-        // where each track leaves the straight: just past the other road's track, longer if it has to swing out
-        const endOn = (L, side, Xo) => {
-          const s0 = stOn(L, Xo), mis = Math.abs(latOn(L, Xo, s0) - trackOff(L, side, s0));
-          return s0 + (hw + G.clamp(2.5 * mis, 3, 15)) * m;
+        const Q = prot ? lineIntersect(XA, inA, XB, inB) : null; // where the two crossing lines meet behind the corner
+        if (!Q || G.dist(Q, cp.X) > 40 * m) { // crossings only: one sweep round the corner island, crossing to crossing
+          const arc = bez(XA, G.mul(inA, -1), XB, inB); sweep(arc); links.push(arc[12]); continue;
+        }
+        // Protected: each track swings out (or in) before the junction so that it runs straight on into the other
+        // road's crossing; the two lines cross at Q behind the corner island. The right turn sweeps round the outside
+        // of Q, and a small fillet rounds the island's back corner.
+        const Rr = 5, Ri = Math.min(3, (0.8 * G.dist(Q, XA)) / m, (0.8 * G.dist(Q, XB)) / m);
+        const swing = (L, side, rch, Xend) => {
+          const sQ = stOn(L, Q), latQ = latOn(L, Q, sQ), sR = sQ + Rr * m;
+          const Ls = G.clamp(3 * Math.abs(latQ - trackOff(L, side, sR)), 8, 25) * m;
+          const off = (s) => { if (s <= sR) return latQ; if (s >= sR + Ls) return trackOff(L, side, s); const t = (s - sR) / Ls, k = t * t * (3 - 2 * t); return latQ + (trackOff(L, side, s) - latQ) * k; };
+          const pts = [];
+          if (rch > sQ + 1 * m) { const st = Math.max(1 * m, 1); for (let s = rch; s > sQ; s -= st) pts.push(legPt(L, s, off(s))); }
+          pts.push(Q, Xend);
+          bk(pts, W, { icons: BX.symbols, spacing: 30 });
+          return { P: legPt(L, sR, latQ), d: inward(L, sR) };
         };
-        const eA = Math.min(endOn(A, 1, XB), cp.rA - 2 * m), eB = Math.min(endOn(B, -1, XA), cp.rB - 2 * m);
-        const TA = trackPt(A, 1, eA), TB = trackPt(B, -1, eB), dA = inward(A, eA), dB = inward(B, eB);
-        sweep(bez(TA, dA, XB, inB));                 // along A, straight on into B's crossing
-        sweep(bez(TB, dB, XA, inA));                 // along B, straight on into A's crossing
-        sweep(bez(TA, dA, TB, G.mul(dB, -1)));       // right turn, round the outside of the island
-        track(A, 1, eA, cp.rA); track(B, -1, eB, cp.rB);
-        links.push(TA, TB);
+        const tA = swing(A, 1, cp.rA, XB), tB = swing(B, -1, cp.rB, XA);
+        sweep(bez(tA.P, tA.d, tB.P, G.mul(tB.d, -1)));                              // right turn round the outside
+        if (Ri > 0.5) sweep(bez(G.add(Q, G.mul(inA, Ri * m)), G.mul(inA, -1), G.add(Q, G.mul(inB, Ri * m)), inB)); // island's back corner
+        links.push(tA.P, tB.P);
       }
       if (prot) for (const sd of straightSides) { // no road on this side: one straight track, the crossings fan into it
         const { A, B } = sd;
