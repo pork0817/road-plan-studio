@@ -2647,11 +2647,11 @@
         if (key === 'shape' && el && el.type === 'crosswalk') {
           if (v === 'trap' && !el.quad) {
             el.quad = R.frame(el, ppm(), el.width, false).corners.map(G.copy);
-            if (el.owner) { // a free shape can't follow its roundabout any more: make it independent
-              const o = findEl(el.owner);
-              if (o && o.type === 'roundabout' && el.legKey) (o.removed = o.removed || []).push('crosswalk:' + el.legKey);
+            const o = el.owner && findEl(el.owner);
+            if (o && o.type === 'roundabout') { // a free shape can't follow its roundabout any more: make it independent
+              if (el.legKey) (o.removed = o.removed || []).push('crosswalk:' + el.legKey);
               delete el.owner; delete el.legKey; delete el.anchor;
-            }
+            } // an intersection's crosswalk stays its own piece (marked edited), so the rebuild keeps it instead of adding another
             syncQuad(el);
           } else if (v === 'rect' && el.quad) { syncQuad(el); delete el.quad; }
           commit(); return;
