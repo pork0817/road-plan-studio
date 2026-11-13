@@ -1837,6 +1837,19 @@
     // order the legs by where they are around the centre (not just their direction), so side-by-side carriageways
     // are in their real order and corners form between the outermost ones
     for (const lg of legs) lg.pa = G.angle(G.sub(legPt(lg, lg.E + 15 * m, 0), C));
+    // a carriageway running side by side with another (e.g. a bus road beside the main road): on that side the outline
+    // steps exactly on the boundary, so the neighbour's lines run on to ITS own stop line instead of being cut at ours
+    for (const lg of legs) {
+      lg.reachL = 1; lg.reachR = 1;
+      const p0 = legPt(lg, lg.E, 0);
+      for (const o of legs) {
+        if (o === lg || G.dot(o.v, lg.v) < 0.95) continue;
+        const lat = G.dot(G.sub(legPt(o, o.E, 0), p0), lg.nv) / m;
+        // (gap measured from the normal kerbs; added turn lanes near the junction can fill up to ~2 lanes of it)
+        if (lat > 0 && lat - o.leftExt - lg.rightExt < 8) lg.reachR = 0;
+        if (lat < 0 && -lat - o.rightExt - lg.leftExt < 8) lg.reachL = 0;
+      }
+    }
     legs.sort((a, b) => a.pa - b.pa);
     for (const lg of legs) {
       const el = lg.rd.el;
@@ -1960,8 +1973,8 @@
       const median = el.lanesB > 0 && el.centerType === 'median';
       const step = median ? -(el.medianWidth / 2) : 0.3;
       const xI = legExt(lg, dIn), xO = legExt(lg, dOut);
-      if (oneWay || Math.abs(dIn - dOut) < 1e-6) poly.push(at(dIn, -xI.l - 1 - lg.pocketRt), at(dOut, xO.r + 1 + lg.pocketOne));
-      else poly.push(at(dIn, -xI.l - 1 - lg.pocketRt), at(dIn, step), at(dOut, step), at(dOut, xO.r + 1));
+      if (oneWay || Math.abs(dIn - dOut) < 1e-6) poly.push(at(dIn, -xI.l - lg.reachL - lg.pocketRt), at(dOut, xO.r + lg.reachR + lg.pocketOne));
+      else poly.push(at(dIn, -xI.l - lg.reachL - lg.pocketRt), at(dIn, step), at(dOut, step), at(dOut, xO.r + lg.reachR));
     }
     // ---- corners: rounded kerb returns (paved), optional corner sidewalks, §186-1 自行車穿越道線 ----
     const corners = [], walks = [], cornerCuts = [], pocketCuts = [], cornerPairs = [], straightSides = [];
