@@ -1819,9 +1819,10 @@
     const prot = bikeOn && bikeLayout !== 'crossings';
     const BW = prot ? Math.max(BX.minW, G.clamp(prm.trackW || 2, 1, 4)) : Math.max(BX.minW, bikeW + BX.pad);
     const bBuf = G.clamp(prm.trackBuf != null ? +prm.trackBuf : 2, 0, 10);
-    // the bike crossing starts where the kerb's corner curve ends (or at the setback, if further), so the path can
-    // sweep round the corner island outside the kerb
-    const bxSet = Math.max(prm.setback || 0, G.clamp(prm.cornerR != null ? prm.cornerR : 8, 0, 30));
+    // where the bike crossing starts, from the crossing road's edge
+    // (protected: just the setback — the tracks cross behind the corner island, so the crossing may start inside the
+    // kerb's curve, as in the Netherlands; crossings only: past the curve, so the corner sweep stays off the road)
+    const bxSet = prot ? Math.max(1, prm.setback || 0) : Math.max(prm.setback || 0, G.clamp(prm.cornerR != null ? prm.cornerR : 8, 0, 30));
     // order the legs by where they are around the centre (not just their direction), so side-by-side carriageways
     // are in their real order and corners form between the outermost ones
     for (const lg of legs) lg.pa = G.angle(G.sub(legPt(lg, lg.E + 15 * m, 0), C));
@@ -1933,7 +1934,8 @@
     }
     // ---- corners: rounded kerb returns (paved), optional corner sidewalks, §186-1 自行車穿越道線 ----
     const corners = [], walks = [], cornerCuts = [], pocketCuts = [], cornerPairs = [], straightSides = [];
-    const cR = pri && prm.contSidewalk ? 0.5 : G.clamp(prm.cornerR != null ? prm.cornerR : 8, 0, 30), swW = G.clamp(prm.swWidth || 4, 1.5, 10);
+    // protected: the car corner stays inside the bike crossings (radius ≤ setback), leaving the corner island
+    const cR = pri && prm.contSidewalk ? 0.5 : Math.min(G.clamp(prm.cornerR != null ? prm.cornerR : 8, 0, 30), prot ? bxSet : 99), swW = G.clamp(prm.swWidth || 4, 1.5, 10);
     const kerbOf = (lg, side, s) => { // + = right of outward; follows lane-change tapers along the road
       if (s == null || (!R.hasLaneChange(lg.rd.src) && !legCurved(lg))) return side > 0 ? lg.rightExt : -lg.leftExt;
       const e = R.sectionExtAt(lg.rd.src, lg.rd.sM + (lg.sgn * s) / m);
