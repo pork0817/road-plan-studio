@@ -1807,6 +1807,10 @@ window.Render = (function () {
           break;
         }
         case 'bikelane': {
+          if (el.jb && el.round) { // a corner sweep: stroked with round ends so the pieces melt into one shape
+            const bp = R.basePts(el, ppm); ctx.save(); ctx.strokeStyle = P.colors.bike; ctx.lineWidth = el.width * ppm; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+            ctx.setLineDash([]); path(ctx, bp, false); ctx.stroke(); ctx.restore(); break;
+          }
           if (el.jb) { drawBikeSurface(ctx, el, ppm, P); drawBikeLane(ctx, el, ppm, P); break; } // an intersection's own crossing / pad: drawn whole
           if (consumed.has(el)) break;
           yieldToRoundabouts(el); for (const c of crossCuts) clipOutside(c);

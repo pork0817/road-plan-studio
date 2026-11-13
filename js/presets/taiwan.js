@@ -75,9 +75,9 @@ window.RoadPresets = window.RoadPresets || {};
       sec('單行道', 'One-way 2 lanes', { lanesF: 2, lanesB: 0, laneWidth: 3.0, slowLane: 0 }),
       sec('自行車道路段', 'With bike lanes', { lanesF: 1, lanesB: 1, laneWidth: 3.25, centerType: 'centerDouble', bikeLane: 1.5 }),
       { id: 'junction', label: '路口', en: 'Intersection: click crossing', mode: 'junction', icon: { glyph: '✚' },
-        defaults: { type: 'junctionTool', cwKind: 'ties', cwWidth: 4, setback: 3, stopGap: 2, crosswalks: true, stops: true, cornerR: 8, sidewalks: true, swWidth: 4, bikeCross: true } },
+        defaults: { type: 'junctionTool', cwKind: 'ties', cwWidth: 4, setback: 3, stopGap: 2, crosswalks: true, stops: true, cornerR: 8, sidewalks: true, swWidth: 4, bikeCross: true, bikeLayout: 'auto', trackW: 2, trackBuf: 2 } },
       { id: 'junction_pri', label: '支道路口', en: 'Side street joins main road: click crossing', mode: 'junction', icon: { glyph: '┣' },
-        defaults: { type: 'junctionTool', control: 'priority', minorCtrl: 'yield', cwMain: false, cwKind: 'ties', cwWidth: 4, setback: 3, stopGap: 2, crosswalks: true, stops: true, cornerR: 8, sidewalks: true, swWidth: 4, bikeCross: true } },
+        defaults: { type: 'junctionTool', control: 'priority', minorCtrl: 'yield', cwMain: false, cwKind: 'ties', cwWidth: 4, setback: 3, stopGap: 2, crosswalks: true, stops: true, cornerR: 8, sidewalks: true, swWidth: 4, bikeCross: true, bikeLayout: 'auto', trackW: 2, trackBuf: 2 } },
       { id: 'roundabout', label: '圓環', en: 'Roundabout: click centre', mode: 'roundabout', icon: { glyph: '◎' },
         defaults: { type: 'roundaboutTool', R: 18, lanes: 1, laneWidth: 5.5, apron: 2, island: 'island', yields: true, curvedYield: true, crosswalks: true, cwKind: 'ties', cwWidth: 4, cwSetback: 6.5, cornerR: 12, curveLanes: true, splitters: true, laneStop: true, solidApproach: false, solidLen: 30, stopLines: true, stopGap: 2 } },
       { id: 'turbo', label: '渦輪圓環', en: 'Turbo roundabout', mode: 'roundabout', icon: { glyph: '◉' },
@@ -130,7 +130,10 @@ window.RoadPresets = window.RoadPresets || {};
     num('cornerR', '轉角半徑 Corner radius', 0, 30, 0.5, '≈ 市區路口常用 5–12 m，0 = 直角'),
     { kind: 'chk', key: 'sidewalks', label: '轉角人行道 Corner sidewalks' },
     num('swWidth', '人行道寬 Sidewalk width', 1.5, 10, 0.1, '≈ 淨寬 ≥ 1.5 m (市區 2.5 m 以上)'),
-    { kind: 'chk', key: 'bikeCross', label: '自行車穿越道 Bike crossings (§186-1)' }];
+    { kind: 'chk', key: 'bikeCross', label: '自行車穿越道 Bike crossings (§186-1)' },
+    { kind: 'sel', key: 'bikeLayout', label: '自行車路口 Bike layout', options: [['auto', '自動 Auto: 受保護 when bike lanes'], ['protected', '受保護路口 Protected (Dutch)'], ['crossings', '僅穿越道 Crossings only']] },
+    num('trackW', '自行車道寬 Cycle track width', 1, 4, 0.1, '≈ 單向 2.0 m'),
+    num('trackBuf', '緩衝帶 Buffer from kerb', 0, 10, 0.1, '≈ 1–5 m (轉角島)')];
   function fields(el) {
     switch (el.type) {
       case 'road': return [{ kind: 'sel', key: 'tone', label: '鋪面 Tone', options: [['asphalt', '新鋪瀝青 New asphalt'], ['worn', '舊瀝青 Worn'], ['concrete', '混凝土 Concrete']] },

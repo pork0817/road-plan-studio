@@ -31,7 +31,10 @@ window.RoadPresetKit = (function () {
       num('cornerR', '轉角半徑 Corner radius', 0, 30, 0.5, T.cornerR || '≈'),
       { kind: 'chk', key: 'sidewalks', label: '轉角人行道 Corner sidewalks' },
       num('swWidth', '人行道寬 Sidewalk width', 1.5, 10, 0.1, T.swWidth || '≈'),
-      { kind: 'chk', key: 'bikeCross', label: T.bikeCrossLabel || '自行車穿越道 Bike crossings' }];
+      { kind: 'chk', key: 'bikeCross', label: T.bikeCrossLabel || '自行車穿越道 Bike crossings' },
+      { kind: 'sel', key: 'bikeLayout', label: '自行車路口 Bike layout', options: [['auto', '自動 Auto: 受保護 when bike lanes'], ['protected', '受保護路口 Protected (Dutch)'], ['crossings', '僅穿越道 Crossings only']] },
+      num('trackW', '自行車道寬 Cycle track width', 1, 4, 0.1, '≈ 單向 2.0 m'),
+      num('trackBuf', '緩衝帶 Buffer from kerb', 0, 10, 0.1, '≈ 1–5 m (轉角島)')];
 
     return function fields(el) {
       if (K.own && K.own[el.type]) return K.own[el.type](el);
