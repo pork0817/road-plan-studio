@@ -203,7 +203,22 @@ window.Render = (function () {
     const u = (sm - k[j].s) / Math.max(1e-6, k[j + 1].s - k[j].s), e = u * u * (3 - 2 * u);
     return Math.max(0, k[j].d + (k[j + 1].d - k[j].d) * e);
   };
-  R.laneShiftAt = (el, dir, i, sm) => { let m = 0; for (let j = 0; j <= i; j++) m = Math.max(m, R.laneOwnShift(el, dir, j, sm)); return m; }; // pushed out by inner lanes
+  const pushed = (el, dir, i, sm) => { let m = 0; for (let j = 0; j <= i; j++) m = Math.max(m, R.laneOwnShift(el, dir, j, sm)); return m; }; // pushed out by inner lanes
+  // All lanes of one direction at station sm, as outward shifts (m) of each lane's centre (cen), inner edge (inn) and
+  // outer edge (out) from their straight positions. Where a lane runs at a slant its sideways width grows by
+  // 1 / cos(slant), so the lane keeps its full width measured square to its own direction; lanes outside make room.
+  R.laneRow = (el, dir, sm) => {
+    const n = dir === 'F' ? el.lanesF | 0 : el.lanesB | 0, lw = el.laneWidth, cen = [], inn = [], out = [];
+    let prev = 0;
+    for (let i = 0; i < n; i++) {
+      const M = pushed(el, dir, i, sm), slope = pushed(el, dir, i, sm + 0.5) - pushed(el, dir, i, sm - 0.5);
+      const hw = (lw / 2) * Math.hypot(1, slope), c = Math.max((i + 0.5) * lw + M, prev + hw);
+      cen.push(c - (i + 0.5) * lw); inn.push(c - hw - i * lw); out.push(c + hw - (i + 1) * lw); prev = c + hw;
+    }
+    return { cen, inn, out };
+  };
+  R.laneShiftAt = (el, dir, i, sm) => R.laneRow(el, dir, sm).cen[i] || 0;
+  R.laneEdgeShift = (el, dir, i, sm, which) => R.laneRow(el, dir, sm)[which][i] || 0;
   R.outSign = (sd) => (sd === 'R' ? 1 : -1) * (R.LHT ? -1 : 1); // the outward direction of a side's lanes (+ = right of the drawing)
   R.laneDirOfSide = (sd) => (sd === 'R' ? 'F' : 'B');
   // a lane's centre line (px, along the drawing direction) and its offset (m) before any bend; i in stack order
@@ -237,17 +252,18 @@ window.Render = (function () {
     const cA = Math.max(0, +el.changeAt || 0), tp = Math.max(1, +el.taper || 30);
     const w = cum.map((sm) => (ch ? G.clamp((sm - cA) / tp, 0, 1) : 0));
     // per side, per lane: the outward shift (m) at every point
-    const shift = { R: [], L: [] };
+    const shift = { R: [], L: [] }, shI = { R: [], L: [] }, shO = { R: [], L: [] }; // centre / inner edge / outer edge
     if (lc) for (const sd of ['R', 'L']) {
       const n = sd === 'R' ? el.lanesF | 0 : el.lanesB | 0, dir = R.laneDirOfSide(sd);
-      for (let i = 0; i < n; i++) shift[sd].push(cum.map((sm) => R.laneShiftAt(el, dir, i, sm)));
+      const rows = cum.map((sm) => R.laneRow(el, dir, sm));
+      for (let i = 0; i < n; i++) { shift[sd].push(rows.map((r) => r.cen[i])); shI[sd].push(rows.map((r) => r.inn[i])); shO[sd].push(rows.map((r) => r.out[i])); }
     }
     const keyShift = (key) => { // a line / band's outward shift; lane boundaries also give the shift of the lane outside
       if (!lc) return null;
-      const sd = key[0], arr = shift[sd];
+      const sd = key[0], arr = shO[sd];
       if (!arr || !arr.length) return null;
       const m = /^[RL]lane(\d+)$/.exec(key);
-      if (m) { const i = +m[1]; return { a: arr[i], b: arr[i + 1] || arr[i], sd }; }
+      if (m) { const i = +m[1]; return { a: arr[i], b: shI[sd][i + 1] || arr[i], sd }; } // lane i's outer edge / the next lane's inner edge
       if (/^[RL](slow|bikeSep|edge|bike)$/.test(key)) return { a: arr[arr.length - 1], sd };
       return null;
     };
@@ -278,14 +294,14 @@ window.Render = (function () {
     // the pavement widens wherever the outermost lane of a side has been pushed out
     let lo = lerp(-L0.left, -L1.left), hi = lerp(L0.right, L1.right);
     for (const sd of ['R', 'L']) {
-      const a = shift[sd]; if (!a.length) continue;
+      const a = shO[sd]; if (!a.length) continue;
       const last = a[a.length - 1], o = R.outSign(sd);
       if (o > 0) hi = hi.map((v, k) => v + last[k] * ppm); else lo = lo.map((v, k) => v - last[k] * ppm);
     }
     // the innermost lane bent away from the centre (or a one-way road's left edge): a solid line along its inner edge
     const extra = [];
     if (lc) for (const sd of ['R', 'L']) {
-      const a0 = shift[sd][0]; if (!a0 || !a0.some((v) => v > 0.15)) continue;
+      const a0 = shI[sd][0]; if (!a0 || !a0.some((v) => v > 0.15)) continue;
       const oneWay = (el.lanesB | 0) === 0, lw = el.laneWidth, startM = !oneWay && el.centerType === 'median' ? el.medianWidth / 2 + 0.3 : 0;
       const W = (el.lanesF | 0) * lw + (el.slowLane || 0) + (el.bikeLane || 0);
       let in0 = oneWay ? -W / 2 : (sd === 'R' ? 1 : -1) * startM; if (R.LHT) in0 = -in0;
@@ -316,7 +332,7 @@ window.Render = (function () {
       const oneWay = (el.lanesB | 0) === 0, lw = el.laneWidth, startM = !oneWay && el.centerType === 'median' ? el.medianWidth / 2 + 0.3 : 0;
       const W = (el.lanesF | 0) * lw + (el.slowLane || 0) + (el.bikeLane || 0);
       const in0Of = (sd) => { let v = oneWay ? -W / 2 : (sd === 'R' ? 1 : -1) * startM; return R.LHT ? -v : v; };
-      const inner = (sd) => { const a = shift[sd]; return a.length ? a[0].map((v) => (in0Of(sd) + R.outSign(sd) * v) * ppm) : pts.map(() => in0Of(sd) * ppm); };
+      const inner = (sd) => { const a = shI[sd]; return a.length ? a[0].map((v) => (in0Of(sd) + R.outSign(sd) * v) * ppm) : pts.map(() => in0Of(sd) * ppm); };
       if (!oneWay && (shift.R.length || shift.L.length)) {
         if (el.centerType === 'median') { // beside the median: the island grows straight out of it
           const mh = el.medianWidth / 2;
@@ -331,7 +347,7 @@ window.Render = (function () {
         const o = R.outSign(sd);
         for (let i = 0; i + 1 < a.length; i++) { // between lane i and the lane outside it
           const ln = L0.lines.find((l) => l.key === sd + 'lane' + i); if (!ln) continue;
-          runs(a[i].map((v) => (ln.off + o * v) * ppm), a[i + 1].map((v) => (ln.off + o * v) * ppm));
+          runs(shO[sd][i].map((v) => (ln.off + o * v) * ppm), shI[sd][i + 1].map((v) => (ln.off + o * v) * ppm));
         }
       }
     }
@@ -345,7 +361,7 @@ window.Render = (function () {
     const e = sectionExtBase(el, sM);
     if (R.hasLaneCurves(el)) for (const sd of ['R', 'L']) { // a bent outermost lane pushes the kerb out
       const n = sd === 'R' ? el.lanesF | 0 : el.lanesB | 0; if (!n) continue;
-      const sh = R.laneShiftAt(el, R.laneDirOfSide(sd), n - 1, sM);
+      const sh = R.laneEdgeShift(el, R.laneDirOfSide(sd), n - 1, sM, 'out');
       if (R.outSign(sd) > 0) e.right += sh; else e.left += sh;
     }
     return e;

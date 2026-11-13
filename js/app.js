@@ -1510,7 +1510,7 @@
   const junctionPrm = (j) => { const o = Object.assign({}, j.genPrm || {}); for (const k of J_KEYS) if (j[k] !== undefined) o[k] = j[k]; return o; };
   // JGEN: bumped when the generator's output changes (e.g. stop lines now flush with the lane lines), so every
   // junction rebuilds once — edited, locked and deleted pieces are still kept as the user left them.
-  const JGEN = 5;
+  const JGEN = 6;
   function junctionSig(j, core) { // core: true = before bus lanes were part of it; 'v1' = before JGEN
     const m = ppm(), near = (40 + 60) * m;
     const secs = S.els.filter((e) => e.type === 'section' && e.pts.some((p, i) => {
@@ -1712,7 +1712,7 @@
     const e = R.sectionExtAt(lg.rd.src, legStation(lg, s));
     return lg.sgn > 0 ? { l: e.left, r: e.right } : { l: e.right, r: e.left };
   };
-  const legLaneShift = (lg, k, s) => (legCurved(lg) && k >= 0 ? R.laneShiftAt(lg.rd.src, lg.dirKey, k, legStation(lg, s)) : 0);
+  const legLaneShift = (lg, k, s, which) => (legCurved(lg) && k >= 0 ? R.laneEdgeShift(lg.rd.src, lg.dirKey, k, legStation(lg, s), which || 'cen') : 0);
   function buildJunction(click, prm) {
     const m = ppm();
     let roads = [];
@@ -1757,7 +1757,10 @@
     }
     if (!cs.length) { alert('這些路段幾乎平行，無法判斷路口。Sections are parallel here.'); return null; }
     const C = { x: cs.reduce((a, p) => a + p.x, 0) / cs.length, y: cs.reduce((a, p) => a + p.y, 0) / cs.length };
-    for (const rd of roads) { rd.r = G.nearestOnPolyline(C, rd.pts); rd.t = rd.r.tangent; rd.n = G.rightN(rd.t); }
+    for (const rd of roads) {
+      rd.r = G.nearestOnPolyline(C, rd.pts); rd.t = rd.r.tangent; rd.n = G.rightN(rd.t);
+      let sM = 0; for (let k = 0; k < rd.r.i; k++) sM += G.dist(rd.pts[k], rd.pts[k + 1]); rd.sM = (sM + G.dist(rd.pts[rd.r.i], rd.r.proj)) / m; // station of the centre, not of the click
+    }
 
     const legs = [];
     for (const rd of roads) {
@@ -1870,7 +1873,7 @@
       const edgeW = el.edge ? R.edgeW() : 0;
       const ctrSt = P().lineStyles[el.centerType] || {};
       const ctrHalf = ctrSt.width ? (ctrSt.sep != null ? 2 * ctrSt.width + ctrSt.sep : ctrSt.width) / 2 : 0;
-      const exS = legExt(lg, ds), sh0 = !oneWay && !lg.pocketW ? legLaneShift(lg, 0, ds) : 0; // bent lanes: the stop line follows them
+      const exS = legExt(lg, ds), sh0 = !oneWay && !lg.pocketW ? legLaneShift(lg, 0, ds, 'inn') : 0; // bent lanes: the stop line follows them
       const laneEdgeL = -exS.l + (el.edge ? 0.3 : 0), laneEdgeR = exS.r - (el.edge ? 0.3 : 0);
       const inner = sh0 > 0.15 ? -((el.centerType === 'median' ? mhalf + 0.3 : 0) + sh0) : oneWay ? laneEdgeR + edgeW + lg.pocketOne
         : lg.pocketW ? -(mhalf - lg.pocketW) - 0.125                               // pocket's new edge line (centred 0.2 m in)
@@ -2138,7 +2141,7 @@
         if (kS >= 0) {
           const BR = PR.boxRange || [2.5, 6], D = G.clamp(el.boxDepth || 3, BR[0], BR[1]);
           boxRear = stopRear + D * m;
-          const e0 = edgeOff(kS) - legLaneShift(lg, kS, stopRear), e1 = edgeOff(kE + 1) - legLaneShift(lg, kE, stopRear), inward = Math.sign(e0 - e1); // keep clear of the centre / edge lines
+          const e0 = edgeOff(kS) - legLaneShift(lg, kS, stopRear, 'inn'), e1 = edgeOff(kE + 1) - legLaneShift(lg, kE, stopRear, 'out'), inward = Math.sign(e0 - e1); // keep clear of the centre / edge lines
           out.push({ id: newId(), owner: jid, type: 'scooterbox', depth: D, side: '0.15', icon: true, text: '',
             // built from its front edge, which lies exactly on the stop line's rear edge (also on a curve or a skew)
             ...(() => { const fa = atL(lg, stopRear, e0 - inward * 0.15), fb = atL(lg, stopRear, e1 + inward * 0.15);
@@ -2150,13 +2153,13 @@
       if (n > 1) {
         const L0 = Math.max(0, el.solidLen != null ? el.solidLen : 30);
         let sEnd = stopRear + L0 * m; while (sEnd > stopRear && !sameLanes(stopRear, sEnd)) sEnd -= m; // not into a lane-change taper
-        let mx = 0; if (legCurved(lg)) for (let sv = stopRear; sv <= stopRear + (L0 + 6) * m; sv += 2 * m) mx = Math.max(mx, legLaneShift(lg, n - 1, sv)); // room for bent lanes
+        let mx = 0; if (legCurved(lg)) for (let sv = stopRear; sv <= stopRear + (L0 + 6) * m; sv += 2 * m) mx = Math.max(mx, legLaneShift(lg, n - 1, sv, 'out')); // room for bent lanes
         const lo = edgeOff(1), hi = edgeOff(n - 1), a0 = Math.min(lo, hi) - 0.3 - mx, a1 = Math.max(lo, hi) + 0.3;
         const maskEnd = Math.max(sEnd, boxRear);
         if (maskEnd > stopRear) out.push({ id: newId(), owner: jid, type: 'lanemask', pts: legLine(lg, stopRear - 0.1 * m, maskEnd, a0).concat(legLine(lg, stopRear - 0.1 * m, maskEnd, a1).reverse()) });
         if (L0 > 0) for (let k = 1; k < n; k++) {
           const inBox = kS >= 0 && k > kS && k <= kE, s0 = inBox ? boxRear : stopRear;
-          if (sEnd > s0) out.push({ id: newId(), owner: jid, type: 'line', style: 'laneSolid', smooth: false, jline: true, pts: legLine(lg, s0, sEnd, legCurved(lg) ? (sv) => edgeOff(k) - legLaneShift(lg, k - 1, sv) : edgeOff(k)) });
+          if (sEnd > s0) out.push({ id: newId(), owner: jid, type: 'line', style: 'laneSolid', smooth: false, jline: true, pts: legLine(lg, s0, sEnd, legCurved(lg) ? (sv) => edgeOff(k) - legLaneShift(lg, k - 1, sv, 'out') : edgeOff(k)) });
         }
       }
       // §188 指向線 for each lane's use (tips facing the junction). First set: on lanes under the scooter box 3 m
@@ -2167,7 +2170,9 @@
         const inBox = (k) => kS >= 0 && k >= kS && k <= kE;
         const tip1 = (k) => (inBox(k) ? boxRear + 3 * m : stopRear + 1 * m);
         const tip2 = Math.max(boxRear + 33 * m, stopRear + (L0 + 3) * m);
-        const put = (k, tip) => { if (uses[k] !== 'BUS' && tip + AL * m < lg.len && sameLanes(tip, tip + AL * m)) out.push({ id: newId(), owner: jid, type: 'arrow', lane: k, kind: uses[k], length: AL, p: atL(lg, tip + (AL / 2) * m, laneOff(k) - legLaneShift(lg, k, tip + (AL / 2) * m)), dir: dirAt(tip + (AL / 2) * m) }); };
+        const lanePt = (k, sv) => atL(lg, sv, laneOff(k) - legLaneShift(lg, k, sv));
+        const put = (k, tip) => { if (uses[k] !== 'BUS' && tip + AL * m < lg.len && sameLanes(tip, tip + AL * m)) out.push({ id: newId(), owner: jid, type: 'arrow', lane: k, kind: uses[k], length: AL, p: lanePt(k, tip + (AL / 2) * m), dir: legCurved(lg) ? G.angle(G.sub(lanePt(k, tip + (AL / 2 - 1) * m), lanePt(k, tip + (AL / 2 + 1) * m))) : dirAt(tip + (AL / 2) * m) }); };
+        // (on a bent lane the arrow sits on the lane's own centre line and points along it)
         for (let k = 0; k < n; k++) put(k, tip1(k));
         for (let k = 0; k < n; k++) put(k, tip2);
       }
