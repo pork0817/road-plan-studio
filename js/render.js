@@ -1386,18 +1386,22 @@ window.Render = (function () {
     };
     const hasDiamonds = el.kind !== 'priority' && el.diamonds !== false;
     // §175 bus-lane wording, written along the lane: always whole. Each run (between intersections / crosswalks) gets
-    // one diamond where it starts (§174) and the wording once, just before it ends.
+    // a set — diamond, wording, diamond — where it starts (§174) and another just before it ends.
     const txt = el.text || (P.busLaneText || '公車專用'), nTxt = Array.from(txt).length;
     const T = P.roadText || { len: 2.5, wid: 1.0, gap: 1.0 }, row = R.isRowText(txt);   // CJK cells / Latin letters (row)
     const tLen = row ? T.rowLen || 1.6 : nTxt * T.len + (nTxt - 1) * T.gap;
     const words = [];
     const putWords = (mid) => { if (mid - tLen / 2 > 0.5 && mid + tLen / 2 < total - 0.5 && words.every((w) => Math.abs(w - mid) > tLen + 2)) words.push(mid); };
-    if (el.type === 'buslane') { // once per run: the diamond where the lane starts, the wording just before it ends
+    if (el.type === 'buslane') { // a set — diamond, wording, diamond — at the start of each run and again at its end
       if (total < 8) return; // a scrap of lane (e.g. between a crosswalk and the intersection): lines only
-      const d0 = Math.min(2, total / 4);
-      if (hasDiamonds) diamond(d0);
-      const mid = total - 2 - tLen / 2;
-      if (mid - tLen / 2 > (hasDiamonds ? d0 + 1.25 + 1 : 0.5)) putWords(mid);
+      const g = 3, dL = hasDiamonds ? 2.5 : 0, setLen = 2 * dL + 2 * (hasDiamonds ? g : 0) + tLen; // diamonds 2.5 m long
+      const drawSet = (a) => {
+        if (hasDiamonds) { diamond(a + 1.25); diamond(a + dL + g + tLen + g + 1.25); }
+        words.push(a + dL + (hasDiamonds ? g : 0) + tLen / 2);
+      };
+      const a0 = Math.min(2, total / 8), a1 = total - 2 - setLen;
+      if (a1 >= a0) { drawSet(a0); if (a1 > a0 + setLen + 6) drawSet(a1); }
+      else { if (hasDiamonds) diamond(a0 + 1.25); if (total - 2 - tLen > a0 + dL + 1) words.push(total - 2 - tLen / 2); } // short run: what fits
       for (const m of words) { const q = atLen(pts, cum, m * ppm); drawText(ctx, P, q.p, G.angle(q.t), txt, (row ? T.rowLen || 1.6 : T.len) * ppm, (row ? T.rowWid || 0.45 : T.wid) * ppm, white, 'far', (row ? T.rowGap || 0.1 : T.gap) * ppm); }
       return;
     }
