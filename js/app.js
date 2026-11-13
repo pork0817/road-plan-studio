@@ -2016,12 +2016,10 @@
     }
     const legSecIds = [...new Set(legs.map((lg) => lg.rd.src.id))];
     for (const w of walks) out.push({ id: newId(), owner: jid, type: 'sidewalk', style: 'pavers', yieldTo: legSecIds, pts: w.filter((_, k) => k % 2 === 0 || k === w.length - 1) });
-    // Bike lanes are carried through the intersection (Dutch style): every leg gets a bike crossing, set back from
-    // the crossing road; at each corner the bike path sweeps smoothly round a corner island from one crossing to
-    // the next. Protected: a cycle track runs along each leg on the sidewalk behind a buffer strip, carries straight
-    // on into the next crossing and curves round the outside of the island for the right turn.
+    // Bike lanes are carried through the intersection: a spot on every corner's sidewalk, each road crossed spot to
+    // spot. Protected: a cycle track runs along each leg on the sidewalk behind a buffer strip and curves into the spots.
     if (bikeOn) {
-      const W = BW, cl = new Map(), hw = (bBuf + W / 2);
+      const W = BW, hw = (bBuf + W / 2);
       const bk = (pts, w, o) => out.push(Object.assign({ id: newId(), owner: jid, type: 'bikelane', kind: 'exclusive', jb: true, pts, width: w, twoWay: false,
         surface: true, sep: 'none', icons: false, diamonds: false, spacing: 30, smooth: false }, o));
       const sweep = (pts) => { if (pts.length > 1) bk(pts, W, { round: true }); };
@@ -2041,12 +2039,10 @@
       const latOn = (L, p, s) => { const p0 = legPt(L, s, 0); return G.dot(G.sub(p, p0), G.norm(G.sub(legPt(L, s, 1), p0))) / m; };
       const trackOff = (L, side, s) => kerbOf(L, side, s) + side * hw;            // the cycle track's centre line
       const trackPt = (L, side, s) => legPt(L, s, trackOff(L, side, s));
-      for (const lg of legs) { // each leg's crossing ends: kerb to kerb
-        const sc = lg.cwIn - (BX.gap + W / 2) * m; // beside the zebra, on the junction side
-        if (sc - (W / 2) * m < lg.E * 0.6) continue;
-        cl.set(lg, { sc, l: legPt(lg, sc, kerbOf(lg, -1, sc)), r: legPt(lg, sc, kerbOf(lg, 1, sc)) });
-      }
-      // a crossing inside a rounded corner ends where it meets the curved kerb, not out where the straight kerbs would be
+      const inward = (L, s) => G.mul(onLeg(L, s, 0).t, -1);
+      const links = []; // where separately drawn bike lanes are joined in
+      // where the segment P→Q first meets the kerb on that side: the rounded corner if there is one, else the
+      // straight kerb (P is off the road on that side, Q beyond the road)
       const hitArc = (p0, p1, arc) => {
         let best = null;
         for (let i = 0; i < arc.length - 1; i++) {
@@ -2056,64 +2052,56 @@
         }
         return best && best.p;
       };
-      for (const cp of cornerPairs) {
-        if (!cp.arc) continue;
-        const a = cl.get(cp.A), b = cl.get(cp.B);
-        if (a) { const h = hitArc(legPt(cp.A, a.sc, 0), a.r, cp.arc); if (h) a.r = h; }
-        if (b) { const h = hitArc(legPt(cp.B, b.sc, 0), b.l, cp.arc); if (h) b.l = h; }
-      }
-      // side-by-side carriageways (e.g. a bus road beside the main road) share ONE crossing, outer kerb to outer kerb
+      const kerbHit = (L, side, P, Q, arc) => {
+        const h = arc && hitArc(P, Q, arc); if (h) return h;
+        const f = (t) => { const p = G.add(P, G.mul(G.sub(Q, P), t)), sv = stOn(L, p); return side * (latOn(L, p, sv) - kerbOf(L, side, sv)); };
+        if (f(0) <= 0) return P;
+        let lo = 0, hi = 1; if (f(1) > 0) return null;
+        for (let k = 0; k < 24; k++) { const mid = (lo + hi) / 2; if (f(mid) > 0) lo = mid; else hi = mid; }
+        return G.add(P, G.mul(G.sub(Q, P), hi));
+      };
+      // Every corner has a spot on its sidewalk (cp.D). Each road is crossed straight from the spot on one side to the
+      // spot on the other — any number of legs, at any angle, not tied to the zebra. Where a side has no corner (a
+      // straight kerb, e.g. a T-junction) the spot sits on that side's sidewalk opposite the other one.
+      const spotOff = prot ? hw : W / 2 + 0.6;
+      const sideSpot = (L, side, s) => legPt(L, s, kerbOf(L, side, s) + side * spotOff);
+      const near = (a, b) => G.dot(a.v, b.v) > 0.95 && G.dist(legPt(a, a.E, 0), legPt(b, b.E, 0)) < 60 * m;
       const done = new Set();
-      for (const lg of cl.keys()) {
+      for (const lg of legs) {
         if (done.has(lg)) continue;
-        const grp = [...cl.keys()].filter((o) => !done.has(o) && G.dot(o.v, lg.v) > 0.95 && G.dist(cl.get(o).l, cl.get(lg).l) < 60 * m);
-        grp.forEach((o) => done.add(o));
-        const c0 = cl.get(lg), u = G.norm(G.sub(c0.r, c0.l));
-        let lo = null, hi = null;
-        for (const o of grp) for (const p of [cl.get(o).l, cl.get(o).r]) {
-          const t = G.dot(G.sub(p, c0.l), u);
-          if (!lo || t < lo.t) lo = { t, p }; if (!hi || t > hi.t) hi = { t, p };
-        }
-        bk([lo.p, hi.p], W, { sep: 'edges', edgeStyle: BX.line, icons: BX.symbols, spacing: Math.max(4, G.dist(lo.p, hi.p) / m / 2 - 1) });
+        const grp = legs.filter((o) => !done.has(o) && near(o, lg)); grp.forEach((o) => done.add(o)); // side-by-side carriageways: one crossing
+        const cL = cornerPairs.find((cp) => grp.includes(cp.B)), cR = cornerPairs.find((cp) => grp.includes(cp.A));
+        const sL = !cL && straightSides.find((sd) => grp.includes(sd.B)), sR = !cR && straightSides.find((sd) => grp.includes(sd.A));
+        if ((!cL && !sL) || (!cR && !sR) || (!cL && !cR)) continue;
+        if ((cL && G.dist(cL.D, C) > 60 * m) || (cR && G.dist(cR.D, C) > 60 * m)) continue;
+        const Ll = cL ? cL.B : sL.B, Lr = cR ? cR.A : sR.A;
+        const Pl = cL ? cL.D : sideSpot(Ll, -1, stOn(Ll, cR.D)), Pr = cR ? cR.D : sideSpot(Lr, 1, stOn(Lr, cL.D));
+        const hl = kerbHit(Ll, -1, Pl, Pr, cL && cL.arc), hr = kerbHit(Lr, 1, Pr, Pl, cR && cR.arc);
+        if (!hl || !hr) continue;
+        if (G.dist(Pl, hl) > 0.05 * m) sweep([Pl, hl]);
+        if (G.dist(Pr, hr) > 0.05 * m) sweep([hr, Pr]);
+        bk([hl, hr], W, { sep: 'edges', edgeStyle: BX.line, icons: BX.symbols, spacing: Math.max(4, G.dist(hl, hr) / m / 2 - 1) });
+        if (!cL) links.push(Pl); if (!cR) links.push(Pr);
       }
-      const inward = (L, s) => G.mul(onLeg(L, s, 0).t, -1);
-      const links = []; // where separately drawn bike lanes are joined in
-      for (const cp of cornerPairs) {
-        const A = cp.A, B = cp.B, a = cl.get(A), b = cl.get(B); if (!a || !b) continue;
-        const XA = a.r, XB = b.l; // the crossings' corner ends (A's right kerb, B's left kerb)
-        if (G.dist(XA, cp.X) > 30 * m || G.dist(XB, cp.X) > 30 * m) continue;
-        const inA = G.norm(G.sub(legPt(A, a.sc, 0), XA)), inB = G.norm(G.sub(legPt(B, b.sc, 0), XB));
-        // every piece runs into the corner's meeting point D with a smooth curve: both crossings (from their kerb
-        // ends) and, protected, both cycle tracks (from where they leave the straight); a round waiting spot sits on D
-        const D = cp.D;
-        const into = (P0, d0) => { // leave P0 heading d0, arrive at D
-          const L = G.dist(P0, D), c1 = G.add(P0, G.mul(d0, L * 0.45)), d1 = G.norm(G.sub(D, c1));
-          return bez(P0, d0, D, d1);
-        };
-        sweep(into(XA, G.mul(inA, -1))); sweep(into(XB, G.mul(inB, -1)));
+      for (const cp of cornerPairs) { // the spot: a round waiting area; protected, both tracks curve into it
+        const D = cp.D, A = cp.A, B = cp.B;
+        if (G.dist(D, C) > 60 * m) continue;
         if (prot) {
-          const lead = (L, side, rch) => { // the track's straight part ends this far out from the corner
+          const lead = (L, side, rch) => { // the track's straight part, then a smooth curve into the spot
             const s1 = Math.min(rch, stOn(L, D) + (hw + 8) * m), pts = [];
             for (let s = rch; s > s1; s -= Math.max(1 * m, 1)) pts.push(trackPt(L, side, s));
             pts.push(trackPt(L, side, s1)); if (pts.length > 1) bk(pts, W, { icons: BX.symbols, spacing: 30 });
-            sweep(into(trackPt(L, side, s1), inward(L, s1)));
+            const P0 = trackPt(L, side, s1), d0 = inward(L, s1), Lc = G.dist(P0, D), c1 = G.add(P0, G.mul(d0, Lc * 0.45));
+            sweep(bez(P0, d0, D, G.norm(G.sub(D, c1))));
           };
           lead(A, 1, cp.rA); lead(B, -1, cp.rB);
         }
-        bk([D, G.add(D, G.mul(inA, 0.01 * m))], W * 1.4, { round: true }); // waiting spot
+        bk([D, G.add(D, G.mul(G.norm(G.sub(D, C)), 0.01 * m))], W * 1.4, { round: true });
         links.push(D);
       }
-      if (prot) for (const sd of straightSides) { // no road on this side: one straight track, the crossings fan into it
+      if (prot) for (const sd of straightSides) { // no road on this side: one straight track; the crossings end on it
         const { A, B } = sd;
-        const pts = legLine(A, sd.rA, 0, (s) => trackOff(A, 1, s)).concat(legLine(B, 0, sd.rB, (s) => trackOff(B, -1, s)).slice(1));
-        bk(pts, W, { icons: BX.symbols, spacing: 30 });
-        for (const [L, c, side] of [[A, cl.get(A), 1], [B, cl.get(B), -1]]) {
-          if (!c) continue;
-          const X = side > 0 ? c.r : c.l, out0 = G.norm(G.sub(X, legPt(L, c.sc, 0))), d = (hw + 3) * m;
-          sweep(bez(X, out0, trackPt(L, side, c.sc + d), G.mul(inward(L, c.sc + d), -1)));
-          const sIn = Math.max(0, c.sc - d); sweep(bez(X, out0, trackPt(L, side, sIn), inward(L, sIn)));
-          links.push(trackPt(L, side, c.sc));
-        }
+        bk(legLine(A, sd.rA, 0, (s) => trackOff(A, 1, s)).concat(legLine(B, 0, sd.rB, (s) => trackOff(B, -1, s)).slice(1)), W, { icons: BX.symbols, spacing: 30 });
       }
       // separately drawn bike lanes that end near a corner are joined in
       for (const d of drawnBikes) for (const p of links) {
